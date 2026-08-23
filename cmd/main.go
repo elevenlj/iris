@@ -28,7 +28,7 @@ var version = "dev"
 
 const (
 	defaultLarkDefaultSessionName          = "默认会话"
-	defaultLarkSessionChatPrefix           = "ET · "
+	defaultLarkSessionChatPrefix           = "Iris · "
 	defaultLarkIgnoreMessagePrefix         = "/i"
 	defaultLarkAutoSummaryPrompt           = session.DefaultLarkAutoSummaryPrompt
 	defaultFastWaitingTransitionMs         = 500
@@ -78,6 +78,12 @@ type Config struct {
 	SessionNamePresets              map[string]session.SessionStartPreset `json:"session_name_presets"`
 	LarkCustomShortcuts             []session.LarkCustomShortcut          `json:"lark_custom_shortcuts"`
 	OnboardingCompleted             bool                                  `json:"onboarding_completed"`
+	AgentKind                       string                                `json:"agent_kind"`
+	AgentCommand                    string                                `json:"agent_command"`
+	WorkspaceOptions                []session.WorkspaceOption             `json:"workspace_options"`
+	SettingsPasswordHash            string                                `json:"settings_password_hash,omitempty"`
+	SettingsPasswordSkipped         bool                                  `json:"settings_password_skipped,omitempty"`
+	SettingsAuthVersion             int64                                 `json:"settings_auth_version,omitempty"`
 }
 
 func main() {
@@ -87,12 +93,35 @@ func main() {
 }
 
 func run() error {
+	if session.IsCodexNotifyInvocation(os.Args[1:]) {
+		if err := session.RunCodexNotify(os.Args[2:]); err != nil {
+			log.Printf("Codex notify callback failed: %v", err)
+		}
+		return nil
+	}
+	if session.IsClaudeStopInvocation(os.Args[1:]) {
+		if err := session.RunClaudeStopHook(os.Stdin); err != nil {
+			log.Printf("Claude Stop callback failed: %v", err)
+		}
+		return nil
+	}
 	opts, err := parseStartupOptions(os.Args[1:])
 	if err != nil {
 		return err
 	}
 	if opts.Version {
-		fmt.Printf("easy_terminal %s\n", version)
+		fmt.Printf("iris %s\n", version)
+		return nil
+	}
+	if opts.InstallAgentHooks {
+		executable, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		if err := session.EnsureAgentCompletionHooks(executable); err != nil {
+			return err
+		}
+		fmt.Println("Iris Agent completion hooks installed.")
 		return nil
 	}
 	configPath := configPathFromDir(opts.ConfigDir)
@@ -100,6 +129,16 @@ func run() error {
 		return err
 	}
 	cfg := loadConfig(configPath)
+	if opts.ResetSettingsPassword {
+		cfg.SettingsPasswordHash = ""
+		cfg.SettingsPasswordSkipped = false
+		cfg.SettingsAuthVersion++
+		if err := writeConfigFile(configPath, cfg); err != nil {
+			return err
+		}
+		fmt.Println("Iris 设置密码已重置，请重新打开设置页完成安全初始化。")
+		return nil
+	}
 	if opts.Port != "" {
 		cfg.Port = opts.Port
 	}
@@ -110,18 +149,21 @@ func run() error {
 	_ = os.MkdirAll(filepath.Dir(dbPath), 0o755)
 	_ = os.MkdirAll(uploadsDir, 0o755)
 	_ = os.MkdirAll(logDir, 0o755)
-	logFile, err := os.OpenFile(filepath.Join(logDir, "easy_terminal.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	logFile, err := os.OpenFile(filepath.Join(logDir, "iris.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		log.Printf("failed to open log file: %v", err)
 	} else {
 		defer logFile.Close()
 		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
-		log.Printf("logging to %s", filepath.Join(logDir, "easy_terminal.log"))
+		log.Printf("logging to %s", filepath.Join(logDir, "iris.log"))
 	}
 	wd, _ := os.Getwd()
-	log.Printf("easy_terminal runtime_logic=%s pid=%d cwd=%s", runtimeLogicVersion, os.Getpid(), wd)
-	if err := session.EnsureCodexTurnHook(); err != nil {
-		log.Printf("failed to install Codex turn hook: %v", err)
+	log.Printf("iris runtime_logic=%s pid=%d cwd=%s", runtimeLogicVersion, os.Getpid(), wd)
+	executable, executableErr := os.Executable()
+	if executableErr != nil {
+		log.Printf("failed to resolve Iris executable for Codex notify: %v", executableErr)
+	} else if err := session.EnsureAgentCompletionHooks(executable); err != nil {
+		log.Printf("failed to install Agent completion hooks: %v", err)
 	}
 
 	st, err := store.Open(dbPath)
@@ -129,6 +171,18 @@ func run() error {
 		return err
 	}
 	defer st.Close()
+	if sessions, listErr := st.ListSessions(context.Background()); listErr != nil {
+		log.Printf("startup Agent upgrade skipped: cannot list sessions: %v", listErr)
+	} else {
+		configuredAgent := session.AgentConfig{Kind: cfg.AgentKind, Command: cfg.AgentCommand}
+		for _, result := range session.UpgradeAgentCLIsOnStartup(context.Background(), sessions, configuredAgent) {
+			if result.Err != nil {
+				log.Printf("startup Agent upgrade failed agent=%s: %v output=%q", result.Kind, result.Err, result.Output)
+				continue
+			}
+			log.Printf("startup Agent upgrade completed agent=%s before=%q after=%q", result.Kind, result.BeforeVersion, result.AfterVersion)
+		}
+	}
 
 	notifier := session.NewLarkAppNotifier(cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkNotifyReceiveID, cfg.LarkMentionEnabled)
 	notifier.SetCustomShortcuts(cfg.LarkCustomShortcuts)
@@ -155,6 +209,7 @@ func run() error {
 			_ = os.RemoveAll(filepath.Join(uploadsDir, sessionID))
 		}),
 	)
+	mgr.SetAgentConfig(session.AgentConfig{Kind: cfg.AgentKind, Command: cfg.AgentCommand}, cfg.WorkspaceOptions)
 
 	bridge := session.NewLarkReplyBridge(cfg.LarkAppID, cfg.LarkAppSecret, mgr, uploadsDir)
 	bridge.SetDefaultStartSessionName(cfg.LarkDefaultSessionName)
@@ -164,6 +219,8 @@ func run() error {
 	bridge.SetStartPresets(cfg.SessionStartPresets)
 	bridge.SetNamePresets(cfg.SessionNamePresets)
 	bridge.SetCustomShortcuts(cfg.LarkCustomShortcuts)
+	bridge.SetDeveloperOpenID(cfg.LarkNotifyReceiveID)
+	bridge.SetWorkspaceOptions(cfg.WorkspaceOptions)
 	if bridge.Available() {
 		go func() {
 			if err := bridge.Start(context.Background()); err != nil {
@@ -175,7 +232,7 @@ func run() error {
 	configSvc := &appConfigService{path: configPath, cfg: &cfg, manager: mgr, bridge: bridge}
 	srv := httpapi.NewServer(mgr, uploadsDir, configSvc)
 	addr := ":" + cfg.Port
-	log.Printf("easy_terminal listening on http://localhost%s", addr)
+	log.Printf("iris listening on http://localhost%s", addr)
 	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
 	errCh := make(chan error, 1)
 	go func() {
@@ -191,7 +248,7 @@ func run() error {
 		}
 		return err
 	case sig := <-sigCh:
-		log.Printf("easy_terminal stopping on signal %s", sig)
+		log.Printf("iris stopping on signal %s", sig)
 		headless.StopAll()
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -203,20 +260,24 @@ func run() error {
 }
 
 type startupOptions struct {
-	Port      string
-	ConfigDir string
-	Version   bool
+	Port                  string
+	ConfigDir             string
+	Version               bool
+	ResetSettingsPassword bool
+	InstallAgentHooks     bool
 }
 
 func parseStartupOptions(args []string) (startupOptions, error) {
 	var opts startupOptions
-	fs := flag.NewFlagSet("easy_terminal", flag.ContinueOnError)
+	fs := flag.NewFlagSet("iris", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&opts.Port, "port", "", "HTTP listen port")
 	fs.StringVar(&opts.Port, "p", "", "HTTP listen port")
 	fs.StringVar(&opts.ConfigDir, "config-dir", "", "config file directory")
 	fs.BoolVar(&opts.Version, "version", false, "print version")
 	fs.BoolVar(&opts.Version, "v", false, "print version")
+	fs.BoolVar(&opts.ResetSettingsPassword, "reset-settings-password", false, "reset the local settings password")
+	fs.BoolVar(&opts.InstallAgentHooks, "install-agent-hooks", false, "install Codex and Claude completion hooks")
 	if err := fs.Parse(args); err != nil {
 		return startupOptions{}, err
 	}
@@ -276,6 +337,19 @@ func loadConfig(path string) Config {
 	}
 	if strings.TrimSpace(cfg.LarkAutoSummaryPrompt) == "" {
 		cfg.LarkAutoSummaryPrompt = defaultLarkAutoSummaryPrompt
+	}
+	if strings.TrimSpace(cfg.AgentKind) == "" || strings.TrimSpace(cfg.AgentCommand) == "" {
+		if preset, ok := cfg.SessionStartPresets["999999"]; ok && len(preset.Commands) > 0 {
+			cfg.AgentCommand = strings.TrimSpace(preset.Commands[len(preset.Commands)-1])
+			if strings.Contains(strings.ToLower(cfg.AgentCommand), "codex") {
+				cfg.AgentKind = "codex"
+			} else if cfg.AgentCommand != "" {
+				cfg.AgentKind = "custom"
+			}
+		}
+	}
+	if cfg.SettingsAuthVersion <= 0 {
+		cfg.SettingsAuthVersion = 1
 	}
 	cfg.LarkNotifyDropLineRules = mergeRequiredLarkNotifyDropLineRules(cfg.LarkNotifyDropLineRules)
 	cfg.LarkSessionChatPrefix = normalizeLarkSessionChatPrefix(cfg.LarkSessionChatPrefix)
@@ -367,6 +441,9 @@ func configPathFromDir(dir string) string {
 }
 
 func defaultConfigDir() string {
+	if dir := strings.TrimSpace(os.Getenv("IRIS_CONFIG_DIR")); dir != "" {
+		return dir
+	}
 	if dir := strings.TrimSpace(os.Getenv("EASY_TERMINAL_CONFIG_DIR")); dir != "" {
 		return dir
 	}
@@ -386,7 +463,7 @@ func defaultLogDir() string {
 }
 
 func dbPathInDataDir(dir string) string {
-	return filepath.Join(dir, "easy_terminal.db")
+	return filepath.Join(dir, "iris.db")
 }
 
 func uploadsDirInDataDir(dir string) string {
@@ -405,16 +482,22 @@ func dataDirFromConfigDir(dir string) string {
 }
 
 func defaultDataDir() string {
+	if dir := strings.TrimSpace(os.Getenv("IRIS_HOME")); dir != "" {
+		return dir
+	}
 	if dir := strings.TrimSpace(os.Getenv("EASY_TERMINAL_HOME")); dir != "" {
+		return dir
+	}
+	if dir := strings.TrimSpace(os.Getenv("IRIS_CONFIG_DIR")); dir != "" {
 		return dir
 	}
 	if dir := strings.TrimSpace(os.Getenv("EASY_TERMINAL_CONFIG_DIR")); dir != "" {
 		return dir
 	}
 	if dir, err := os.UserHomeDir(); err == nil && dir != "" {
-		return filepath.Join(dir, ".easy_terminal")
+		return filepath.Join(dir, ".iris")
 	}
-	return ".easy_terminal"
+	return ".iris"
 }
 
 type appConfigService struct {
@@ -429,6 +512,33 @@ func (s *appConfigService) RuntimeConfig() httpapi.RuntimeConfig {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return runtimeConfigFromConfig(*s.cfg)
+}
+
+func (s *appConfigService) SettingsSecurity() httpapi.SettingsSecurity {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return httpapi.SettingsSecurity{
+		PasswordHash: s.cfg.SettingsPasswordHash,
+		Skipped:      s.cfg.SettingsPasswordSkipped,
+		AuthVersion:  s.cfg.SettingsAuthVersion,
+	}
+}
+
+func (s *appConfigService) UpdateSettingsSecurity(security httpapi.SettingsSecurity) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cfg := *s.cfg
+	cfg.SettingsPasswordHash = strings.TrimSpace(security.PasswordHash)
+	cfg.SettingsPasswordSkipped = security.Skipped
+	cfg.SettingsAuthVersion = security.AuthVersion
+	if cfg.SettingsAuthVersion <= 0 {
+		cfg.SettingsAuthVersion = 1
+	}
+	if err := writeConfigFile(s.path, cfg); err != nil {
+		return err
+	}
+	*s.cfg = cfg
+	return nil
 }
 
 func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpapi.RuntimeConfig, error) {
@@ -451,6 +561,21 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 	if req.SessionNamePresets == nil {
 		req.SessionNamePresets = map[string]session.SessionStartPreset{}
 	}
+	req.AgentKind = strings.ToLower(strings.TrimSpace(req.AgentKind))
+	req.AgentCommand = strings.TrimSpace(req.AgentCommand)
+	if req.AgentKind == "codex" && req.AgentCommand == "" {
+		req.AgentCommand = "codex"
+	}
+	if req.AgentKind != "codex" && req.AgentKind != "custom" {
+		return httpapi.RuntimeConfig{}, errors.New("必须选择 Codex 或自定义 Agent")
+	}
+	if req.AgentCommand == "" {
+		return httpapi.RuntimeConfig{}, errors.New("Agent 启动命令不能为空")
+	}
+	workspaces, err := validateWorkspaceOptions(req.WorkspaceOptions)
+	if err != nil {
+		return httpapi.RuntimeConfig{}, err
+	}
 	cfg.LarkAppID = req.LarkAppID
 	cfg.LarkAppSecret = req.LarkAppSecret
 	cfg.LarkNotifyReceiveID = req.LarkNotifyReceiveID
@@ -472,6 +597,9 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 	cfg.SessionNamePresets = req.SessionNamePresets
 	cfg.LarkCustomShortcuts = req.LarkCustomShortcuts
 	cfg.OnboardingCompleted = req.OnboardingCompleted
+	cfg.AgentKind = req.AgentKind
+	cfg.AgentCommand = req.AgentCommand
+	cfg.WorkspaceOptions = workspaces
 	reconnectLark := oldCfg.LarkAppID != cfg.LarkAppID || oldCfg.LarkAppSecret != cfg.LarkAppSecret
 	if err := applyRuntimeConfig(cfg, s.manager, s.bridge, reconnectLark); err != nil {
 		return httpapi.RuntimeConfig{}, err
@@ -483,11 +611,49 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 	return runtimeConfigFromConfig(cfg), nil
 }
 
+func validateWorkspaceOptions(options []session.WorkspaceOption) ([]session.WorkspaceOption, error) {
+	out := make([]session.WorkspaceOption, 0, len(options))
+	labels := map[string]bool{}
+	paths := map[string]bool{}
+	defaultCount := 0
+	for _, option := range options {
+		option.Label = strings.TrimSpace(option.Label)
+		option.Value = strings.TrimSpace(option.Value)
+		if option.Label == "" || option.Value == "" {
+			return nil, errors.New("工作目录名称和路径不能为空")
+		}
+		if !filepath.IsAbs(option.Value) {
+			return nil, errors.New("工作目录必须使用绝对路径")
+		}
+		info, statErr := os.Stat(option.Value)
+		if statErr != nil || !info.IsDir() {
+			return nil, fmt.Errorf("工作目录不存在或不可访问：%s", option.Value)
+		}
+		if labels[option.Label] || paths[option.Value] {
+			return nil, errors.New("工作目录名称和路径不能重复")
+		}
+		labels[option.Label] = true
+		paths[option.Value] = true
+		if option.Default {
+			defaultCount++
+		}
+		out = append(out, option)
+	}
+	if len(out) > 0 && defaultCount == 0 {
+		out[0].Default = true
+	}
+	if defaultCount > 1 {
+		return nil, errors.New("只能设置一个默认工作目录")
+	}
+	return out, nil
+}
+
 func applyRuntimeConfig(cfg Config, manager *session.Manager, bridge *session.LarkReplyBridge, reconnectLark bool) error {
 	manager.SetWaitingTransitionDelays(time.Duration(cfg.FastWaitingTransitionMs)*time.Millisecond, time.Duration(cfg.ConservativeWaitingTransitionMs)*time.Millisecond)
 	manager.SetAutoRefreshInterval(time.Duration(cfg.LarkAutoRefreshIntervalMs) * time.Millisecond)
 	manager.SetHeadlessSnapshotTimeout(time.Duration(cfg.HeadlessSnapshotTimeoutMs) * time.Millisecond)
 	manager.SetPreStartCommand(cfg.SessionPreStartCommand)
+	manager.SetAgentConfig(session.AgentConfig{Kind: cfg.AgentKind, Command: cfg.AgentCommand}, cfg.WorkspaceOptions)
 	notifier := session.NewLarkAppNotifier(cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkNotifyReceiveID, cfg.LarkMentionEnabled)
 	notifier.SetCustomShortcuts(cfg.LarkCustomShortcuts)
 	manager.SetNotifier(notifier)
@@ -509,6 +675,8 @@ func applyRuntimeConfig(cfg Config, manager *session.Manager, bridge *session.La
 		bridge.SetStartPresets(cfg.SessionStartPresets)
 		bridge.SetNamePresets(cfg.SessionNamePresets)
 		bridge.SetCustomShortcuts(cfg.LarkCustomShortcuts)
+		bridge.SetDeveloperOpenID(cfg.LarkNotifyReceiveID)
+		bridge.SetWorkspaceOptions(cfg.WorkspaceOptions)
 		if reconnectLark && bridge.Available() {
 			go func() {
 				if err := bridge.Start(context.Background()); err != nil {
@@ -543,6 +711,9 @@ func runtimeConfigFromConfig(cfg Config) httpapi.RuntimeConfig {
 		SessionNamePresets:              cfg.SessionNamePresets,
 		LarkCustomShortcuts:             cfg.LarkCustomShortcuts,
 		OnboardingCompleted:             cfg.OnboardingCompleted,
+		AgentKind:                       cfg.AgentKind,
+		AgentCommand:                    cfg.AgentCommand,
+		WorkspaceOptions:                append([]session.WorkspaceOption(nil), cfg.WorkspaceOptions...),
 	}
 }
 

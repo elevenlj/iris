@@ -44,6 +44,7 @@ var (
 		"im:chat.members:bot_access",
 		"cardkit:card:read",
 		"cardkit:card:write",
+		"contact:user.base:readonly",
 	}
 	larkRegistrationEvents = []string{
 		"im.chat.member.bot.added_v1",

@@ -60,6 +60,9 @@ type Store interface {
 	ListQuickCommands(context.Context) ([]QuickCommand, error)
 	CreateQuickCommand(context.Context, QuickCommand) error
 	DeleteQuickCommand(context.Context, string) error
+	GetLarkContactBinding(context.Context, string) (LarkContactBinding, bool, error)
+	UpsertLarkContactBinding(context.Context, LarkContactBinding) error
+	DeactivateLarkContactBinding(context.Context, string) error
 }
 
 type Manager struct {
@@ -82,6 +85,76 @@ type Manager struct {
 	onBrowserStopped     func(string)
 	onNotificationSent   func(string)
 	onSessionEnded       func(string)
+	defaultAgent         AgentConfig
+	workspaceOptions     []WorkspaceOption
+}
+
+func (m *Manager) SetAgentConfig(agent AgentConfig, workspaces []WorkspaceOption) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.defaultAgent = normalizeAgentConfig(agent)
+	m.workspaceOptions = normalizeWorkspaceOptions(workspaces)
+}
+
+func (m *Manager) AgentConfig() (AgentConfig, []WorkspaceOption) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.defaultAgent, append([]WorkspaceOption(nil), m.workspaceOptions...)
+}
+
+func normalizeAgentConfig(agent AgentConfig) AgentConfig {
+	agent.Kind = strings.ToLower(strings.TrimSpace(agent.Kind))
+	agent.Command = strings.TrimSpace(agent.Command)
+	if agent.Kind == "codex" && agent.Command == "" {
+		agent.Command = "codex"
+	}
+	if agent.Kind != "codex" && agent.Kind != "custom" {
+		return AgentConfig{}
+	}
+	return agent
+}
+
+func normalizeWorkspaceOptions(workspaces []WorkspaceOption) []WorkspaceOption {
+	out := make([]WorkspaceOption, 0, len(workspaces))
+	seenLabels := map[string]bool{}
+	seenPaths := map[string]bool{}
+	defaultSeen := false
+	for _, workspace := range workspaces {
+		workspace.Label = strings.TrimSpace(workspace.Label)
+		workspace.Value = strings.TrimSpace(workspace.Value)
+		if workspace.Label == "" || workspace.Value == "" || seenLabels[workspace.Label] || seenPaths[workspace.Value] {
+			continue
+		}
+		if abs, err := filepath.Abs(workspace.Value); err == nil {
+			workspace.Value = abs
+		}
+		if workspace.Default && !defaultSeen {
+			defaultSeen = true
+		} else {
+			workspace.Default = false
+		}
+		seenLabels[workspace.Label] = true
+		seenPaths[workspace.Value] = true
+		out = append(out, workspace)
+	}
+	if len(out) > 0 && !defaultSeen {
+		out[0].Default = true
+	}
+	return out
+}
+
+func (m *Manager) defaultAgentSnapshot() (AgentConfig, string) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	agent := m.defaultAgent
+	dir := ""
+	for _, workspace := range m.workspaceOptions {
+		if workspace.Default {
+			dir = workspace.Value
+			break
+		}
+	}
+	return agent, dir
 }
 
 type ManagerOption func(*Manager)
@@ -360,6 +433,17 @@ func (m *Manager) CreateSession(ctx context.Context, name string) (Session, erro
 	go rt.waitForExit()
 	rt.runRecoveryEnvironmentSetup()
 	rt.runPreStartCommand()
+	if agent, dir := m.defaultAgentSnapshot(); agent.Command != "" {
+		rt.SuppressStartupNotifications()
+		if dir != "" {
+			rt.RecordShellCommandForRecovery("cd " + shellQuote(dir))
+			_, _ = rt.terminal.Write([]byte("cd " + shellQuote(dir) + "\r"))
+		}
+		rt.ConfigureAgentForRecovery(agent)
+		_, _ = rt.terminal.Write([]byte(agent.Command + "\r"))
+		rt.FinishStartupNotifications()
+		sess = rt.Snapshot()
+	}
 	sess.NotificationsAvailable = m.notifier != nil && m.notifier.Available()
 	return sess, nil
 }
@@ -636,6 +720,84 @@ func (m *Manager) UpdateLarkMentionMode(ctx context.Context, id string, enabled 
 	return s, true, err
 }
 
+func (m *Manager) UpdateDeveloperMode(ctx context.Context, id string, enabled bool) (Session, bool, error) {
+	rt, ok := m.GetRuntime(id)
+	if !ok {
+		return Session{}, false, nil
+	}
+	rt.mu.Lock()
+	rt.session.DeveloperModeEnabled = enabled
+	rt.session.UpdatedAt = time.Now().UTC()
+	sess := rt.session
+	rt.mu.Unlock()
+	if err := m.persist(ctx, sess); err != nil {
+		return Session{}, false, err
+	}
+	return sess, true, nil
+}
+
+func (m *Manager) SwitchWorkspace(ctx context.Context, id, path string) (Session, bool, error) {
+	path = strings.TrimSpace(path)
+	rt, ok := m.GetRuntime(id)
+	if !ok {
+		return Session{}, false, nil
+	}
+	_, workspaces := m.AgentConfig()
+	allowed := false
+	for _, workspace := range workspaces {
+		if workspace.Value == path {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return Session{}, true, errors.New("目录不在配置白名单中")
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return Session{}, true, errors.New("目录不存在或不可访问")
+	}
+	sess := rt.Snapshot()
+	input := "/cd " + path
+	if strings.EqualFold(sess.LastAgentKind, "codex") {
+		if err := SubmitStructuredInputWithMention(rt, input, rt.NotificationMentionOpenID()); err != nil {
+			return Session{}, true, err
+		}
+	} else {
+		return Session{}, true, errors.New("当前自定义 Agent 不支持运行时切换目录")
+	}
+	rt.mu.Lock()
+	rt.session.LastCWD = path
+	rt.session.UpdatedAt = time.Now().UTC()
+	sess = rt.session
+	rt.mu.Unlock()
+	if err := m.persist(ctx, sess); err != nil {
+		return Session{}, true, err
+	}
+	return sess, true, nil
+}
+
+func (m *Manager) GetLarkContactBinding(ctx context.Context, senderOpenID string) (LarkContactBinding, bool, error) {
+	if m.store == nil {
+		return LarkContactBinding{}, false, nil
+	}
+	return m.store.GetLarkContactBinding(ctx, strings.TrimSpace(senderOpenID))
+}
+
+func (m *Manager) UpsertLarkContactBinding(ctx context.Context, binding LarkContactBinding) error {
+	if m.store == nil {
+		return nil
+	}
+	return m.store.UpsertLarkContactBinding(ctx, binding)
+}
+
+func (m *Manager) DeactivateLarkContactBinding(ctx context.Context, senderOpenID string) error {
+	if m.store == nil {
+		return nil
+	}
+	return m.store.DeactivateLarkContactBinding(ctx, strings.TrimSpace(senderOpenID))
+}
+
 func (m *Manager) BindLarkChat(ctx context.Context, id string, chatID string) (Session, bool, error) {
 	chatID = strings.TrimSpace(chatID)
 	rt, ok := m.GetRuntime(id)
@@ -850,6 +1012,7 @@ type RuntimeSession struct {
 	notifyRetryTimer                  *time.Timer
 	notifyStableTimer                 *time.Timer
 	startupNotifyTimer                *time.Timer
+	agentRestartPending               bool
 }
 
 type RuntimeEvent struct {
@@ -1100,6 +1263,82 @@ func (rt *RuntimeSession) WriteInputWithSnapshotBaseline(data string, snapshot s
 
 func (rt *RuntimeSession) WriteInputWithSnapshotBaselineFrom(data string, snapshot string, source string, responder chan RuntimeEvent) error {
 	return rt.writeInput(data, &inputSnapshotBaseline{data: snapshot, source: source, responder: responder}, responder)
+}
+
+func (rt *RuntimeSession) RestartAgent() error {
+	if rt == nil {
+		return errors.New("会话不在线")
+	}
+	rt.mu.Lock()
+	if rt.closed || rt.terminal == nil {
+		rt.mu.Unlock()
+		return errors.New("会话不在线")
+	}
+	if rt.agentRestartPending {
+		rt.mu.Unlock()
+		return errors.New("Agent 正在重启")
+	}
+	command := strings.TrimSpace(rt.session.LastAgentStartCommand)
+	if command == "" {
+		command = strings.TrimSpace(rt.session.LastAgentResumeCommand)
+	}
+	if command == "" && rt.manager != nil {
+		agent, _ := rt.manager.AgentConfig()
+		command = strings.TrimSpace(agent.Command)
+	}
+	if command == "" {
+		rt.mu.Unlock()
+		return errors.New("当前会话没有可用的 Agent 启动命令")
+	}
+	originalCommand := command
+	agentKind := strings.TrimSpace(rt.session.LastAgentKind)
+	resumeCommand := strings.TrimSpace(rt.session.LastAgentResumeCommand)
+	rt.agentRestartPending = true
+	terminal := rt.terminal
+	rt.mu.Unlock()
+
+	if _, err := terminal.Write([]byte("\x03\x03")); err != nil {
+		rt.mu.Lock()
+		rt.agentRestartPending = false
+		rt.mu.Unlock()
+		return err
+	}
+	rt.MarkAgentExitActivity()
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		rt.RecordShellCommandForRecovery(originalCommand)
+		rt.mu.Lock()
+		if rt.session.LastMode != SessionModeAgent {
+			rt.session.LastMode = SessionModeAgent
+			if agentKind == "" {
+				agentKind = "custom"
+			}
+			rt.session.LastAgentKind = agentKind
+			rt.session.LastAgentStartCommand = originalCommand
+			if resumeCommand == "" {
+				resumeCommand = originalCommand
+			}
+			rt.session.LastAgentResumeCommand = resumeCommand
+			rt.session.UpdatedAt = time.Now().UTC()
+		}
+		sess := rt.session
+		rt.mu.Unlock()
+		if rt.manager != nil {
+			_ = rt.manager.persist(context.Background(), sess)
+		}
+		command = originalCommand
+		if !strings.HasSuffix(command, "\r") && !strings.HasSuffix(command, "\n") {
+			command += "\r"
+		}
+		_, err := terminal.Write([]byte(command))
+		rt.mu.Lock()
+		rt.agentRestartPending = false
+		rt.mu.Unlock()
+		if err != nil {
+			log.Printf("agent restart command failed session=%s: %v", rt.Snapshot().ID, err)
+		}
+	}()
+	return nil
 }
 
 func (rt *RuntimeSession) writeInput(data string, baseline *inputSnapshotBaseline, responder chan RuntimeEvent) error {
@@ -2854,7 +3093,12 @@ func (rt *RuntimeSession) HandleOutput(chunk []byte) {
 	rt.session.UpdatedAt = time.Now().UTC()
 	var runningNote WaitingNotification
 	markRunning := false
-	if renderable {
+	// An Agent may repaint its TUI after its completion callback has already
+	// supplied the authoritative final response. Keep recording and broadcasting
+	// that tail repaint, but do not reopen the completed round or re-arm the idle
+	// completion fallback. A submitted input clears hookCompletedCurrentRound.
+	completedHookRound := rt.agentTurnHookVerified && rt.hookCompletedCurrentRound && rt.session.Status == StatusWaiting
+	if renderable && !completedHookRound {
 		previousStatus := rt.session.Status
 		rt.session.Status = StatusRunning
 		rt.stateVersion++
@@ -2894,18 +3138,18 @@ func (rt *RuntimeSession) HandleOutput(chunk []byte) {
 	}
 }
 
-// CompleteAgentTurn marks the current Codex round as complete after a local
-// hook callback. The recovery key is a per-session bearer credential injected
-// only into that session's shell environment.
-func (m *Manager) CompleteAgentTurn(ctx context.Context, sessionID, token, codexThreadID, lastAssistantMessage string) (Session, bool, error) {
+// CompleteAgentTurn marks the current Agent round as complete after a local
+// completion callback. The recovery key is a per-session bearer credential
+// injected only into that session's shell environment.
+func (m *Manager) CompleteAgentTurn(ctx context.Context, sessionID, token, agentSessionID, lastAssistantMessage string) (Session, bool, error) {
 	rt, ok := m.GetRuntime(strings.TrimSpace(sessionID))
 	if !ok {
 		return Session{}, false, nil
 	}
-	return rt.completeAgentTurn(ctx, token, codexThreadID, lastAssistantMessage)
+	return rt.completeAgentTurn(ctx, token, agentSessionID, lastAssistantMessage)
 }
 
-func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, codexThreadID, lastAssistantMessage string) (Session, bool, error) {
+func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSessionID, lastAssistantMessage string) (Session, bool, error) {
 	if rt == nil || rt.manager == nil {
 		return Session{}, false, nil
 	}
@@ -2919,16 +3163,25 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, codexThr
 		rt.mu.Unlock()
 		return s, false, nil
 	}
-	if strings.TrimSpace(rt.session.LastMode) != SessionModeAgent || strings.TrimSpace(rt.session.LastAgentKind) != "codex" {
+	agentKind := strings.TrimSpace(rt.session.LastAgentKind)
+	if strings.TrimSpace(rt.session.LastMode) != SessionModeAgent || (agentKind != "codex" && agentKind != "claude") {
 		s := rt.session
 		rt.mu.Unlock()
 		return s, false, nil
 	}
 	pinnedRecovery := false
-	if command, ok := pinCodexResumeCommand(rt.session.LastAgentResumeCommand, strings.TrimSpace(codexThreadID)); ok {
-		rt.session.LastAgentResumeCommand = command
-		rt.session.LastAgentHome = defaultCodexHome()
-		pinnedRecovery = true
+	switch agentKind {
+	case "codex":
+		if command, ok := pinCodexResumeCommand(rt.session.LastAgentResumeCommand, strings.TrimSpace(agentSessionID)); ok {
+			rt.session.LastAgentResumeCommand = command
+			rt.session.LastAgentHome = defaultCodexHome()
+			pinnedRecovery = true
+		}
+	case "claude":
+		if command, ok := pinClaudeResumeCommand(rt.session.LastAgentResumeCommand, strings.TrimSpace(agentSessionID)); ok {
+			rt.session.LastAgentResumeCommand = command
+			pinnedRecovery = true
+		}
 	}
 	lastAssistantMessage = strings.TrimSpace(lastAssistantMessage)
 	newAssistantMessage := lastAssistantMessage != "" && lastAssistantMessage != rt.hookLastAssistantMessage
@@ -3540,6 +3793,7 @@ func (rt *RuntimeSession) notifyWaitingWithRetry(note WaitingNotification) (Wait
 	if rt == nil || rt.manager == nil || rt.manager.notifier == nil {
 		return WaitingNotificationResult{}, errors.New("lark notifier is not configured")
 	}
+	note = rt.decorateWaitingNotification(note)
 	var lastErr error
 	for attempt := 1; attempt <= defaultNotificationSendAttempts; attempt++ {
 		result, err := rt.manager.notifier.NotifyWaiting(note)
@@ -3555,6 +3809,7 @@ func (rt *RuntimeSession) notifyWaitingWithRetry(note WaitingNotification) (Wait
 }
 
 func (rt *RuntimeSession) updateWaitingRunningWithRetry(notifier WaitingRunningNotifier, note WaitingNotification, running bool) error {
+	note = rt.decorateWaitingNotification(note)
 	var lastErr error
 	for attempt := 1; attempt <= defaultNotificationSendAttempts; attempt++ {
 		if err := notifier.UpdateWaitingRunning(note, running); err != nil {
@@ -3567,6 +3822,18 @@ func (rt *RuntimeSession) updateWaitingRunningWithRetry(notifier WaitingRunningN
 		return nil
 	}
 	return lastErr
+}
+
+func (rt *RuntimeSession) decorateWaitingNotification(note WaitingNotification) WaitingNotification {
+	if rt == nil || rt.manager == nil {
+		return note
+	}
+	sess := rt.Snapshot()
+	note.DeveloperModeEnabled = sess.DeveloperModeEnabled
+	note.AgentKind = sess.LastAgentKind
+	_, workspaces := rt.manager.AgentConfig()
+	note.WorkspaceOptions = workspaces
+	return note
 }
 
 func (rt *RuntimeSession) waitingNotificationCandidateLocked() (WaitingNotification, string, bool, string) {

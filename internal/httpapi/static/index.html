@@ -1,21 +1,21 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>easy_terminal</title>
+    <title>Iris</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
     <link rel="stylesheet" href="/app.css">
   </head>
   <body>
     <aside class="sidebar">
-      <div class="eyebrow">EASY_TERMINAL</div>
-      <div class="brand">easy_terminal</div>
+      <div class="eyebrow">PERSONAL AI ASSISTANT</div>
+      <div class="brand">Iris</div>
       <form id="new-session" class="new-session">
-        <input id="session-name" placeholder="Session name" autocomplete="off">
-        <button title="New Session">New Session</button>
+        <input id="session-name" aria-label="会话名称" placeholder="会话名称" autocomplete="off">
+        <button title="新建会话">新建会话</button>
       </form>
-      <input id="session-search" class="search" placeholder="Search sessions" autocomplete="off">
+      <input id="session-search" class="search" aria-label="搜索会话" placeholder="搜索会话" autocomplete="off">
       <div id="sessions" class="sessions"></div>
       <div class="sidebar-footer">
         <button id="config-open" class="settings-btn" type="button" title="配置" aria-label="配置">⚙</button>
@@ -23,7 +23,7 @@
     </aside>
     <main class="main">
       <header class="topbar">
-        <div id="active-title">No session</div>
+        <div id="active-title">请选择会话</div>
         <button id="help-open" class="help-btn" type="button">帮助</button>
       </header>
       <div class="terminal-shell">
@@ -31,48 +31,65 @@
       </div>
       <div id="quick-list" class="quick-list"></div>
       <form id="composer" class="composer">
-        <textarea id="composer-input" placeholder="输入要发送到终端的内容"></textarea>
+        <textarea id="composer-input" aria-label="发送给 Agent 的内容" placeholder="输入要发送到终端的内容"></textarea>
         <div class="composer-shortcut" aria-hidden="true">⌘/Ctrl + Enter 发送</div>
-        <button>Send</button>
+        <button>发送</button>
       </form>
     </main>
     <dialog id="quick-dialog">
       <form id="quick-form" method="dialog">
-        <div class="dialog-title">Add Quick Command</div>
-        <textarea id="quick-text" placeholder="Command"></textarea>
+        <div class="dialog-title">添加快捷命令</div>
+        <textarea id="quick-text" aria-label="快捷命令" placeholder="输入命令"></textarea>
         <div class="dialog-actions">
-          <button value="cancel" type="button" id="quick-cancel">Cancel</button>
-          <button value="default">Add</button>
+          <button value="cancel" type="button" id="quick-cancel">取消</button>
+          <button value="default">添加</button>
         </div>
       </form>
     </dialog>
     <dialog id="onboarding-dialog" class="onboarding-dialog" aria-labelledby="onboarding-title">
       <div class="onboarding-body">
         <div class="onboarding-kicker">首次使用</div>
-        <h2 id="onboarding-title">选择默认会话 Agent</h2>
-        <p>发送“/start”或“开始”时会进入默认会话。先选择默认会话使用的 Agent；也可以跳过，之后在配置页或会话预设命令里覆盖。</p>
+        <h2 id="onboarding-title">选择 Iris 使用的 Agent</h2>
+        <p>每个新会话都会自动启动这个 Agent。完成选择后才能创建会话。</p>
         <label class="onboarding-session-name">
           <span>默认会话名</span>
           <input id="onboarding-default-session-name" placeholder="默认会话">
         </label>
         <div class="agent-preset-controls onboarding-agent-controls">
-          <select id="onboarding-agent-preset">
-            <option value="">跳过，不配置默认 Agent</option>
+          <select id="onboarding-agent-preset" aria-label="默认 Agent">
+            <option value="">请选择 Agent</option>
             <option value="codex">Codex</option>
-            <option value="opencode">OpenCode</option>
-            <option value="claude">Claude Code</option>
-            <option value="gemini">Gemini</option>
-            <option value="aiden">Aiden</option>
             <option value="custom">自定义命令</option>
           </select>
-          <input id="onboarding-agent-custom-command" class="hidden" hidden placeholder="agent command">
+          <input id="onboarding-agent-custom-command" class="hidden" hidden aria-label="自定义 Agent 命令" placeholder="Agent 启动命令">
         </div>
         <div id="onboarding-agent-status" class="agent-preset-status" aria-live="polite"></div>
         <div class="onboarding-actions">
-          <button id="onboarding-later" type="button">跳过</button>
-          <button id="onboarding-config" type="button">保存并继续</button>
+          <button id="onboarding-later" class="hidden" hidden type="button">跳过</button>
+          <button id="onboarding-config" type="button">完成初始化</button>
         </div>
       </div>
+    </dialog>
+    <dialog id="settings-access-dialog" class="onboarding-dialog" aria-labelledby="settings-access-title">
+      <form id="settings-access-form" class="onboarding-body">
+        <div class="onboarding-kicker">安全验证</div>
+        <h2 id="settings-access-title">保护 Iris 设置</h2>
+        <p id="settings-access-copy">首次使用请设置一个密码，用于保护飞书凭证、Agent 命令和工作目录。</p>
+        <label id="settings-access-password-label">
+          <span id="settings-access-password-text">设置密码</span>
+          <input id="settings-access-password" type="password" autocomplete="new-password" minlength="8">
+        </label>
+        <label id="settings-skip-confirm-row" class="config-check">
+          <input id="settings-skip-confirm" type="checkbox">
+          <span>我了解跳过密码后，同一网络内能访问 Iris 的人都可能修改敏感配置。</span>
+        </label>
+        <div id="settings-access-error" class="config-error" role="alert"></div>
+        <div class="onboarding-actions">
+          <button id="settings-access-cancel" type="button">取消</button>
+          <button id="settings-access-skip" type="button">跳过并承担风险</button>
+          <button id="settings-access-submit" type="submit">继续</button>
+        </div>
+      </form>
     </dialog>
     <dialog id="config-dialog" class="config-dialog">
       <form id="config-form" method="dialog">
@@ -83,36 +100,59 @@
           </div>
         </div>
         <nav class="config-tabs" aria-label="配置分组">
-          <button class="config-tab active" type="button" data-config-target="config-session">会话</button>
+          <button class="config-tab active" type="button" data-config-target="config-security">安全</button>
           <button class="config-tab" type="button" data-config-target="config-lark">飞书</button>
-          <button class="config-tab" type="button" data-config-target="config-notify">等待通知</button>
-          <button class="config-tab" type="button" data-config-target="config-startup">启动预设</button>
+          <button class="config-tab" type="button" data-config-target="config-session">Agent</button>
+          <button class="config-tab" type="button" data-config-target="config-workspaces">工作目录</button>
+          <button class="config-tab hidden" hidden type="button" data-config-target="config-notify">等待通知</button>
+          <button class="config-tab hidden" hidden type="button" data-config-target="config-startup">启动预设</button>
         </nav>
         <div class="config-sections">
-          <section id="config-session" class="config-section config-panel active">
-            <h2>会话</h2>
+          <section id="config-security" class="config-section config-panel active">
+            <h2>安全设置</h2>
+            <div id="settings-security-warning" class="security-warning hidden" hidden>当前未设置访问密码。任何能访问本页面的人都可以修改飞书凭证和 Agent 命令，建议立即设置密码。</div>
             <div class="config-grid">
+              <label><span>当前密码</span><input id="settings-current-password" type="password" autocomplete="current-password"></label>
+              <label><span>新密码</span><input id="settings-new-password" type="password" autocomplete="new-password" minlength="8"></label>
+            </div>
+            <button id="settings-password-save" type="button">修改设置密码</button>
+            <div id="settings-password-status" class="agent-preset-status" aria-live="polite"></div>
+            <div class="environment-check">
+              <div>
+                <strong>环境检测</strong>
+                <p>一次性检查 Iris 当前所需环境。检测结果不会保存，也不会影响正常使用。</p>
+              </div>
+              <button id="environment-check-start" type="button">开始检测</button>
+              <div id="environment-check-result" class="environment-check-result" aria-live="polite"></div>
+            </div>
+          </section>
+          <section id="config-session" class="config-section config-panel">
+            <h2>Agent</h2>
+            <div class="config-grid hidden" hidden>
               <label><span>默认会话名</span><input id="cfg-lark-default-session-name"></label>
             </div>
             <div class="agent-preset">
               <div>
-                <strong>默认会话 Agent</strong>
-                <p>选择后会更新 999999 默认 Agent 预设；发送“/start 会话名”或“开始 会话名”会默认启动它。0 表示仅进入目录。</p>
+                <strong>默认 Agent</strong>
+                <p>所有新会话都会自动启动此 Agent。</p>
               </div>
               <div class="agent-preset-controls">
-                <select id="cfg-agent-preset">
-                  <option value="">选择默认会话 Agent</option>
+                <select id="cfg-agent-preset" aria-label="默认 Agent">
+                  <option value="">请选择 Agent</option>
                   <option value="codex">Codex</option>
-                  <option value="opencode">OpenCode</option>
-                  <option value="claude">Claude Code</option>
-                  <option value="gemini">Gemini</option>
-                  <option value="aiden">Aiden</option>
                   <option value="custom">自定义命令</option>
                 </select>
-                <input id="cfg-agent-custom-command" placeholder="agent command">
+                <input id="cfg-agent-custom-command" aria-label="自定义 Agent 命令" placeholder="Agent 启动命令">
               </div>
               <div id="agent-preset-status" class="agent-preset-status" aria-live="polite"></div>
             </div>
+          </section>
+          <section id="config-workspaces" class="config-section config-panel">
+            <h2>工作目录</h2>
+            <p class="config-subtitle">开发者模式下可从飞书卡片切换。路径必须是本机已存在的绝对目录。</p>
+            <div id="workspace-option-list" class="workspace-option-list"></div>
+            <button id="workspace-option-add" type="button">添加目录</button>
+            <textarea id="cfg-workspace-options" class="hidden" hidden spellcheck="false"></textarea>
           </section>
           <section id="config-lark" class="config-section config-panel">
             <h2>飞书</h2>
@@ -138,11 +178,11 @@
               <label><span>App ID</span><input id="cfg-lark-app-id"></label>
               <label><span>App Secret</span><input id="cfg-lark-app-secret" type="password"></label>
               <label><span>通知接收 ID</span><input id="cfg-lark-receive-id"></label>
-              <label><span>群聊前缀</span><input id="cfg-lark-session-chat-prefix"></label>
-              <label><span>忽略指令</span><input id="cfg-lark-ignore-prefix"></label>
+              <label class="hidden" hidden><span>群聊前缀</span><input id="cfg-lark-session-chat-prefix"></label>
+              <label class="hidden" hidden><span>忽略指令</span><input id="cfg-lark-ignore-prefix"></label>
             </div>
-            <label class="config-check"><input id="cfg-lark-mention-enabled" type="checkbox"><span>主通知卡片 @ 接收人</span></label>
-            <label class="config-wide"><span>自动总结 Prompt</span><textarea id="cfg-lark-auto-summary-prompt" rows="4" spellcheck="false"></textarea></label>
+            <label class="config-check hidden" hidden><input id="cfg-lark-mention-enabled" type="checkbox"><span>主通知卡片 @ 接收人</span></label>
+            <label class="config-wide hidden" hidden><span>自动总结 Prompt</span><textarea id="cfg-lark-auto-summary-prompt" rows="4" spellcheck="false"></textarea></label>
             <div class="lark-permission-guide">
               <div>
                 <strong>企业级权限</strong>
@@ -273,12 +313,12 @@
         <div class="help-content">
           <section id="help-start" class="help-panel active">
             <h2>快速开始</h2>
-            <p>easy_terminal 是一个可以在浏览器和飞书里共同操作本机终端会话的工具。一个会话对应一个真实终端，网页端负责查看和输入，飞书端负责手机上的消息路由和等待通知。</p>
+            <p>Iris 是连接飞书与本机 Agent 的个人助理。每个会话都会自动启动已配置的 Agent，既能由你直接使用，也能先接待通过飞书联系你的人。</p>
             <div class="help-flow" aria-label="基本工作流">
-              <div><span>1</span><strong>完成配置</strong><small>首次进入会弹出引导，也可以点左下角齿轮打开配置。</small></div>
-              <div><span>2</span><strong>创建会话</strong><small>填写 Session name，点击 New Session。</small></div>
-              <div><span>3</span><strong>运行命令</strong><small>在终端直接输入，或用下方输入框发送长文本。</small></div>
-              <div><span>4</span><strong>继续处理</strong><small>终端进入 waiting 后，从网页或飞书继续同一个会话。</small></div>
+              <div><span>1</span><strong>保护设置</strong><small>首次进入先设置访问密码，也可在确认风险后跳过。</small></div>
+              <div><span>2</span><strong>选择 Agent</strong><small>必须选择 Codex 或填写自定义 Agent 命令。</small></div>
+              <div><span>3</span><strong>配置飞书</strong><small>创建机器人并填写开发者 open_id，供个人助理建群与鉴权。</small></div>
+              <div><span>4</span><strong>开始对话</strong><small>网页新建会话，或直接向飞书机器人发送消息。</small></div>
             </div>
             <div class="help-callout">
               <strong>推荐习惯</strong>
@@ -296,19 +336,17 @@
           </section>
           <section id="help-lark" class="help-panel">
             <h2>飞书联动</h2>
-            <p>配置飞书应用后，可以通过机器人消息创建和继续终端会话。系统会为会话创建独立群聊，群名由“群聊前缀 + 会话名”组成。</p>
+            <p>其他人私聊机器人后，Iris 会创建“与某某的对话”群聊，将对方、开发者和机器人加入群中，并自动把私聊消息转发给群内 Agent。后续私聊会继续复用这个群聊和 Agent 会话。</p>
             <div class="help-callout">
               <strong>应用能力</strong>
               <p>扫码创建或选择已有应用时，会打开带应用模板的飞书确认页，由飞书流程补齐基础消息、发消息、长连接事件和卡片回调配置。群里直接发消息需要额外开通“获取群组中所有消息（敏感权限）”。</p>
             </div>
             <div class="help-steps">
-              <p><strong>/start 会话名 / 开始 会话名</strong>：创建会话；未命中会话名预设时，进入默认工作目录并启动“默认会话 Agent”。</p>
-              <p><strong>/start 会话名 0 / 开始 会话名 0</strong>：创建会话，只进入默认工作目录，不启动 Agent。</p>
-              <p><strong>/start 会话名 codex / 开始 会话名 setup,codex</strong>：创建会话，并执行会话名后面标识对应的启动预设。</p>
-              <p><strong>/start 会话名 999999 / 开始 会话名 999999</strong>：创建会话，并显式启动“默认会话 Agent”。</p>
-              <p><strong>直接在会话群聊发消息</strong>：消息会路由到绑定的终端会话。</p>
-              <p><strong>回复等待通知</strong>：如果没有独立群聊，也可以通过回复通知继续对应会话。</p>
-              <p><strong>/c</strong>：不写入终端，直接在飞书里返回当前轮内容。</p>
+              <p><strong>普通私聊</strong>：自动建立或复用联系人群聊，并把消息交给 Agent。</p>
+              <p><strong>开始 会话名</strong>：创建你的开发会话，默认开启开发者模式并关闭艾特模式。</p>
+              <p><strong>联系人群聊</strong>：默认开启艾特模式，只有 @Iris 的消息才会触发 Agent；可在开发者模式下关闭。</p>
+              <p><strong>直接把机器人拉进群</strong>：自动绑定新 Agent 会话，默认开启艾特模式。</p>
+              <p><strong>开发者模式</strong>：由配置的开发者通过卡片按钮开关；开启后显示目录、模型、推理等级、Agent 重启、终端快捷键和自定义快捷键。</p>
             </div>
             <div class="help-callout">
               <strong>等待通知怎么判断</strong>
@@ -319,12 +357,12 @@
             <h2>飞书推送机制</h2>
             <div class="help-grid">
               <article><h3>什么时候推送</h3><p>会话开启“通知”后，每次输入会把状态切回 running；终端输出稳定一段时间后进入 waiting。达到快速等待或保守等待时间后，系统会准备一条飞书等待通知。</p></article>
-              <article><h3>推到哪里</h3><p>如果会话绑定了独立群聊，通知发到该群聊；否则发到“通知接收 ID”对应的用户。独立群聊标题由“群聊前缀 + 会话名”组成，例如 ET · demo。</p></article>
+              <article><h3>推到哪里</h3><p>联系人消息与 Agent 回复都进入“与某某的对话”群；开发会话则进入对应会话群或开发者通知目标。</p></article>
               <article><h3>消息标题</h3><p>通知卡片标题默认是会话名。用户回复后终端重新运行时，会把同一张卡片标题临时改成“会话名（Running）”；本轮再次进入 waiting 后恢复会话名。</p></article>
               <article><h3>消息正文</h3><p>正文是当前轮终端内容，不是完整历史。系统优先使用后端维护的终端屏幕快照，浏览器页面打开与否不会影响基础数据源。</p></article>
               <article><h3>锚点规则</h3><p>每次提交输入时会记录“上次输入文本”和“输入前的屏幕快照”。推送时优先从屏幕快照里找到这次输入的回显，只截取它后面的回复；找不到输入回显时，会用本轮原始输出作为兜底，避免把上一轮内容推出来。</p></article>
               <article><h3>更新规则</h3><p>同一轮第一次完成会新发主卡片；后续内容变化会 Patch 更新同一张卡片，并单独提示“任务已完成”。Agent 回合优先由 Hook 精确感知，普通终端使用短暂静默作为完成兜底。</p></article>
-              <article><h3>快捷键</h3><p>系统快捷键固定显示在第一行。自定义快捷键显示在下一行，每个按钮对应一条配置的指令，点击后会提交到当前会话。</p></article>
+              <article><h3>卡片操作</h3><p>普通模式保留刷新和开发者模式按钮。开发者模式开启后，才显示工作目录、模型选择、Agent 重启、艾特模式、终端快捷键和自定义快捷键。</p></article>
               <article><h3>内容清理</h3><p>推送前会清理终端控制字符、重复行、空白分隔、Codex/TUI 临时状态行，并按“通知过滤规则”处理匹配内容。邮箱样式文本会被替换成 [email]。</p></article>
               <article><h3>长度限制</h3><p>正文最多保留“通知最大行数”里的尾部内容，同时还有总字符保护。超过限制时会带 [truncated] 前缀，表示前面的内容已被裁剪。</p></article>
             </div>
@@ -332,21 +370,15 @@
           <section id="help-config" class="help-panel">
             <h2>配置说明</h2>
             <div class="help-table">
-              <div><strong>首次引导</strong><span>首次进入 Web 端会直接打开配置页；保存后不会再次自动弹出，配置入口始终在左下角齿轮。</span></div>
+              <div><strong>首次引导</strong><span>先设置访问密码，再选择必需的 Agent。完成后可通过左下角齿轮配置飞书和工作目录。</span></div>
               <div><strong>扫码配置</strong><span>用飞书扫码创建或选择已有应用，本地会自动填入 App ID、App Secret 和 open_id，并通过应用模板补齐基础消息、发消息和卡片回调能力，保存后生效。敏感权限需要在飞书后台开通。</span></div>
               <div><strong>测试飞书配置</strong><span>保存前可发送测试卡片，并检查“获取群组中所有消息（敏感权限）”是否真实生效。</span></div>
               <div><strong>App ID / App Secret</strong><span>飞书应用凭证，用于接收事件、发通知、创建群聊。</span></div>
-              <div><strong>通知接收 ID</strong><span>接收主通知的用户 open_id。</span></div>
-              <div><strong>默认会话名</strong><span>发送“/start”或“开始”但没有写会话名时使用，默认是“默认会话”。</span></div>
-              <div><strong>群聊前缀</strong><span>新建飞书会话群的名称前缀，默认是“ET · ”。</span></div>
-              <div><strong>快速等待(ms)</strong><span>普通输出稳定后进入 waiting 的时间，默认 1000。</span></div>
-              <div><strong>保守等待(ms)</strong><span>复杂交互场景进入 waiting 的时间，默认 3000。</span></div>
-              <div><strong>自动刷新间隔(ms)</strong><span>飞书卡片开启自动刷新后，running 状态下自动 Patch 当前卡片的间隔，默认 5000。</span></div>
-              <div><strong>通知最大行数</strong><span>飞书通知中最多保留多少行终端内容，默认 100。</span></div>
-              <div><strong>通知过滤规则</strong><span>可按行、块首行或正则捕获分组过滤通知内容。</span></div>
+              <div><strong>开发者 open_id</strong><span>“通知接收 ID”同时用于识别开发者，并作为联系人群聊中的开发者成员。</span></div>
+              <div><strong>Agent</strong><span>必须选择 Codex 或填写自定义命令；所有新会话都会自动启动该 Agent。</span></div>
+              <div><strong>工作目录</strong><span>可配置名称、绝对路径和默认项。Codex 开发者卡片支持在白名单目录间切换。</span></div>
+              <div><strong>设置密码</strong><span>保护飞书凭证、Agent 命令和目录；可在安全页修改，也可通过本机命令重置。</span></div>
               <div><strong>飞书自定义快捷键</strong><span>配置按钮名称和指令。按钮会显示在系统快捷键下一行，点击后提交该指令。</span></div>
-              <div><strong>默认会话 Agent</strong><span>选择 Codex、OpenCode、Claude Code、Gemini、Aiden 或自定义命令后，会更新 999999 默认 Agent 预设；可通过会话预设命令覆盖。0 保留为仅进入目录。</span></div>
-              <div><strong>启动预设</strong><span>会话名预设和启动指令预设都可以用可视化编辑器维护，也可以切到 JSON 查看和编辑。</span></div>
             </div>
           </section>
           <section id="help-files" class="help-panel">
@@ -356,7 +388,7 @@
               <article><h3>飞书图片</h3><p>从飞书发送图片时，图片会下载到用户数据目录的 data/uploads/{session_id}/lark/，再把本地路径交给终端使用。</p></article>
               <article><h3>路径用途</h3><p>路径是给本机命令或终端程序读取图片用的。如果要分析图片，可以在路径后补充“请分析这张图”。</p></article>
               <article><h3>清理规则</h3><p>删除会话时，会同步删除该会话的上传目录。</p></article>
-              <article><h3>数据库辅助文件</h3><p>easy_terminal.db-wal 和 easy_terminal.db-shm 是 SQLite 运行时文件。-wal 保存追加写入日志，-shm 保存共享索引和锁信息；服务运行时出现是正常的，不需要手动配置。</p></article>
+              <article><h3>数据库辅助文件</h3><p>iris.db-wal 和 iris.db-shm 是 SQLite 运行时文件。服务运行时出现是正常现象，不需要手动处理。</p></article>
             </div>
           </section>
           <section id="help-trouble" class="help-panel">

@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +20,28 @@ func TestCreateSessionRunsPreStartCommand(t *testing.T) {
 	}
 	if got := launcher.terminals[0].writes(); got != "source ~/.zshrc\r" {
 		t.Fatalf("pre-start write = %q, want command with carriage return", got)
+	}
+}
+
+func TestCreateSessionAlwaysStartsConfiguredAgentInDefaultWorkspace(t *testing.T) {
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	workspace := t.TempDir()
+	manager.SetAgentConfig(AgentConfig{Kind: "codex", Command: "codex --dangerously-bypass-approvals-and-sandbox"}, []WorkspaceOption{
+		{Label: "主项目", Value: workspace, Default: true},
+	})
+
+	sess, err := manager.CreateSession(context.Background(), "Iris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writes := launcher.terminals[0].writes()
+	abs, _ := filepath.Abs(workspace)
+	if !strings.Contains(writes, "cd "+shellQuote(abs)+"\r") || !strings.Contains(writes, "codex --dangerously-bypass-approvals-and-sandbox\r") {
+		t.Fatalf("configured workspace and Agent were not started: %q", writes)
+	}
+	if sess.LastMode != SessionModeAgent || sess.LastAgentKind != "codex" || sess.LastCWD != abs {
+		t.Fatalf("unexpected Agent session metadata: %#v", sess)
 	}
 }
 

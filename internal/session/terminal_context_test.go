@@ -65,9 +65,10 @@ func TestDetectCodexTerminalAgentContextIgnoresStaleScrollbackHeader(t *testing.
 
 func TestLarkNotificationCardRendersAgentContextBeforeButtons(t *testing.T) {
 	content, err := larkNotificationCardContent(WaitingNotification{
-		SessionID: "sess-1",
-		Name:      "Codex",
-		Content:   "任务已完成",
+		SessionID:            "sess-1",
+		Name:                 "Codex",
+		Content:              "任务已完成",
+		DeveloperModeEnabled: true,
 		AgentContext: &TerminalAgentContext{
 			Directory: "~/project/easy_terminal",
 			Model:     "gpt-5.6-terra",
@@ -122,5 +123,69 @@ func TestLarkNotificationCardOmitsAgentContextForTerminal(t *testing.T) {
 	}
 	if strings.Contains(content, "目录：") || strings.Contains(content, "Reasoning：") {
 		t.Fatalf("plain terminal card should not render an agent context: %s", content)
+	}
+}
+
+func TestLarkNotificationCardDeveloperModeControlsTechnicalActions(t *testing.T) {
+	base := WaitingNotification{
+		SessionID: "sess-1", Name: "Iris", Content: "已完成",
+		AgentKind:        "codex",
+		AgentContext:     &TerminalAgentContext{Directory: "/tmp/project", Model: "gpt-5.6", Reasoning: "High"},
+		WorkspaceOptions: []WorkspaceOption{{Label: "主项目", Value: "/tmp/project", Default: true}},
+	}
+	content, err := larkNotificationCardContent(base, "ou-owner", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, absent := range []string{"目录：", "Ctrl-C", "重启 Agent", "删除会话", "艾特模式", "workspace_select"} {
+		if strings.Contains(content, absent) {
+			t.Fatalf("non-developer card should hide %q: %s", absent, content)
+		}
+	}
+	for _, present := range []string{"刷新", "开启开发者模式"} {
+		if !strings.Contains(content, present) {
+			t.Fatalf("non-developer card should show %q: %s", present, content)
+		}
+	}
+	base.DeveloperModeEnabled = true
+	content, err = larkNotificationCardContent(base, "ou-owner", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, present := range []string{"目录：/tmp/project", "Ctrl-C", "重启 Agent", "删除会话", "艾特模式", "workspace_select", "关闭开发者模式"} {
+		if !strings.Contains(content, present) {
+			t.Fatalf("developer card should show %q: %s", present, content)
+		}
+	}
+	if strings.Contains(content, "退出agent") || strings.Contains(content, "退出 Agent") {
+		t.Fatalf("developer card must not render the removed exit-Agent action: %s", content)
+	}
+}
+
+func TestLarkWorkspaceSelectorUsesCompactLabeledLayout(t *testing.T) {
+	element := larkWorkspaceSelectElement("sess-1", []WorkspaceOption{{
+		Label: "Iris", Value: "/tmp/iris", Default: true,
+	}}, &TerminalAgentContext{Directory: "/tmp/iris"})
+	if element["tag"] != "column_set" || element["flex_mode"] != "none" {
+		t.Fatalf("workspace selector layout = %#v", element)
+	}
+	columns, ok := element["columns"].([]map[string]any)
+	if !ok || len(columns) != 2 {
+		t.Fatalf("workspace selector columns = %#v", element["columns"])
+	}
+	for _, column := range columns {
+		if column["width"] != "auto" {
+			t.Fatalf("workspace column should use compact width: %#v", column)
+		}
+	}
+	labelElements := columns[0]["elements"].([]map[string]any)
+	labelText := labelElements[0]["text"].(map[string]any)
+	if labelText["content"] != "目录" {
+		t.Fatalf("workspace label = %#v", labelText["content"])
+	}
+	selectorElements := columns[1]["elements"].([]map[string]any)
+	selector := selectorElements[0]
+	if selector["tag"] != "select_static" || selector["width"] != "default" || selector["initial_option"] != "/tmp/iris" {
+		t.Fatalf("workspace selector = %#v", selector)
 	}
 }

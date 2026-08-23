@@ -45,6 +45,7 @@ button,
 input,
 textarea,
 select {
+  min-width: 0;
   font: inherit;
   color: var(--ink);
   background: rgba(255, 255, 255, 0.48);
@@ -60,6 +61,15 @@ button {
 
 button:hover {
   border-color: var(--accent);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 3px solid rgba(179, 84, 28, 0.3);
+  outline-offset: 2px;
 }
 
 input,
@@ -419,6 +429,7 @@ dialog::backdrop {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .onboarding-body {
@@ -465,6 +476,7 @@ dialog::backdrop {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 #onboarding-config {
@@ -826,6 +838,129 @@ dialog::backdrop {
 
 .agent-preset-status.fail {
   color: var(--danger);
+}
+
+.security-warning {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #d9a15d;
+  border-radius: 10px;
+  color: #70400f;
+  background: #fff4dd;
+}
+
+.environment-check {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.environment-check p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.environment-check-result {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+}
+
+.environment-check-step {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.38);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 10px;
+  align-items: start;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.environment-check-step::before {
+  content: "•";
+  width: 18px;
+  color: var(--muted);
+  font-weight: 800;
+  text-align: center;
+}
+
+.environment-check-step.ok::before {
+  content: "✓";
+  color: var(--ok);
+}
+
+.environment-check-step.warning::before {
+  content: "!";
+  color: #9a6416;
+}
+
+.environment-check-step.error::before {
+  content: "×";
+  color: var(--danger);
+}
+
+.environment-check-step.checking::before {
+  content: "…";
+  color: var(--muted);
+}
+
+.environment-check-step strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.environment-check-step span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.workspace-option-list {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.workspace-option-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.35fr) minmax(260px, 1fr) auto auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.workspace-option-row label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.workspace-option-row .workspace-default {
+  grid-template-columns: 18px auto;
+  align-items: center;
+  padding-bottom: 12px;
+}
+
+.workspace-default input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.workspace-remove {
+  color: var(--danger);
+  background: transparent;
 }
 
 .name-preset-editor,
@@ -1280,6 +1415,11 @@ dialog::backdrop {
   .preset-command-display-row,
   .preset-item {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-option-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .preset-item-actions {

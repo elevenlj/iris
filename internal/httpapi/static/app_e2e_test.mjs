@@ -196,6 +196,26 @@ const ids = [
   "onboarding-agent-status",
   "onboarding-config",
   "onboarding-later",
+  "settings-access-dialog",
+  "settings-access-form",
+  "settings-access-title",
+  "settings-access-copy",
+  "settings-access-password-label",
+  "settings-access-password-text",
+  "settings-access-password",
+  "settings-skip-confirm-row",
+  "settings-skip-confirm",
+  "settings-access-error",
+  "settings-access-cancel",
+  "settings-access-skip",
+  "settings-access-submit",
+  "settings-security-warning",
+  "settings-current-password",
+  "settings-new-password",
+  "settings-password-save",
+  "settings-password-status",
+  "environment-check-start",
+  "environment-check-result",
   "config-open",
   "config-dialog",
   "config-form",
@@ -246,6 +266,9 @@ const ids = [
   "cfg-session-start-presets",
   "cfg-agent-preset",
   "cfg-agent-custom-command",
+  "cfg-workspace-options",
+  "workspace-option-list",
+  "workspace-option-add",
   "agent-preset-status",
   "preset-session-name",
   "preset-save",
@@ -273,13 +296,13 @@ const helpTabs = ["help-start", "help-terminal"].map((targetID, index) => {
   tab.className = index === 0 ? "help-tab active" : "help-tab";
   return tab;
 });
-const configTabs = ["config-session", "config-lark", "config-notify", "config-startup"].map((targetID, index) => {
+const configTabs = ["config-security", "config-lark", "config-session", "config-workspaces"].map((targetID, index) => {
   const tab = new FakeElement("", "button");
   tab.dataset.configTarget = targetID;
   tab.className = index === 0 ? "config-tab active" : "config-tab";
   return tab;
 });
-const configPanels = ["config-session", "config-lark", "config-notify", "config-startup"].map((id, index) => {
+const configPanels = ["config-security", "config-lark", "config-session", "config-workspaces"].map((id, index) => {
   const panel = new FakeElement(id, "section");
   panel.className = index === 0 ? "config-panel active" : "config-panel";
   return panel;
@@ -413,6 +436,9 @@ const context = {
     if (path === "/api/quick-commands" && !options.method) {
       return jsonResponse([]);
     }
+    if (path === "/api/settings/security/status" && !options.method) {
+      return jsonResponse({ configured: true, skipped: false, authenticated: true, onboarding_required: true });
+    }
     if (path === "/api/config" && !options.method) {
       return jsonResponse({
         fast_waiting_transition_ms: 300,
@@ -436,6 +462,9 @@ const context = {
         lark_custom_shortcuts: [],
         session_name_presets: {},
         session_start_presets: {},
+        agent_kind: "codex",
+        agent_command: "codex --dangerously-bypass-approvals-and-sandbox",
+        workspace_options: [],
       });
     }
     if (path === "/api/config" && options.method === "PATCH") {
@@ -457,6 +486,17 @@ const context = {
         steps: [
           { name: "配置完整性", ok: true, message: "必填项已填写" },
           { name: "发送测试通知", ok: true, message: "已发送" },
+        ],
+      });
+    }
+    if (path === "/api/environment-check" && options.method === "POST") {
+      return jsonResponse({
+        ok: false,
+        checked_at: "2026-08-23T08:00:00Z",
+        steps: [
+          { id: "node", name: "Node.js", status: "ok", message: "运行正常（v22.0.0）" },
+          { id: "headless_browser", name: "Headless 浏览器", status: "error", message: "未找到 Chrome、Chromium 或 Edge" },
+          { id: "feishu_app", name: "飞书应用", status: "warning", message: "尚未完成飞书应用配置" },
         ],
       });
     }
@@ -525,14 +565,17 @@ assert.equal(app.standardTerminal.lineHeight, 1.2);
 
 await app.loadConfig();
 await app.maybeShowOnboarding();
-assert.notEqual(elements["onboarding-dialog"].open, true, "first visit should not show onboarding choice dialog");
-assert.equal(elements["config-dialog"].open, true, "first visit should open config dialog directly");
-assert.ok(configTabs[0].className.includes("active"), "first visit should start from session config tab");
+assert.equal(elements["onboarding-dialog"].open, true, "first visit should require an Agent choice");
+elements["onboarding-agent-preset"].value = "codex";
+await elements["onboarding-config"].onclick();
 let onboardingPatch = fetchCalls.find((call) => call.path === "/api/config" && call.options.method === "PATCH");
 assert.ok(onboardingPatch, "onboarding should PATCH config");
 let onboardingConfig = JSON.parse(onboardingPatch.options.body);
 assert.equal(onboardingConfig.onboarding_completed, true, "onboarding should be marked as completed in config");
+assert.equal(onboardingConfig.agent_kind, "codex");
 assert.equal(onboardingConfig.lark_default_session_name, "默认会话");
+await app.openConfigDialog();
+assert.ok(configTabs[0].className.includes("active"), "settings should start from security tab");
 assert.equal(elements["config-prev"].disabled, true, "previous should be disabled on first config tab");
 assert.equal(elements["config-next"].disabled, false, "next should be enabled on first config tab");
 elements["config-next"].onclick();
@@ -1168,10 +1211,10 @@ app.state.sessions = [{
 app.renderSessions();
 const card = elements.sessions.children[0];
 assert.ok(card.className.includes("session-running"), "running session card should have running class");
-assert.equal(elements["active-title"].textContent, "A(running)", "active title should show the latest session status");
+assert.equal(elements["active-title"].textContent, "A（running）", "active title should show the latest session status");
 app.state.sessions[0].status = "waiting";
 app.renderSessions();
-assert.equal(elements["active-title"].textContent, "A(waiting)", "session refresh should update the active title status");
+assert.equal(elements["active-title"].textContent, "A（waiting）", "session refresh should update the active title status");
 const notify = card.querySelector(".notify-input");
 notify.checked = true;
 await notify.onchange({ stopPropagation() {}, target: notify });
@@ -1280,11 +1323,7 @@ elements["startup-json-preview"].oninput();
 elements["cfg-agent-preset"].value = "codex";
 elements["cfg-agent-preset"].onchange();
 let generatedStartPresets = JSON.parse(elements["cfg-session-start-presets"].value);
-assert.deepEqual(generatedStartPresets["999999"], { commands: ["codex --dangerously-bypass-approvals-and-sandbox"] }, "agent preset should update default start preset 999999");
-elements["cfg-agent-preset"].value = "aiden";
-elements["cfg-agent-preset"].onchange();
-generatedStartPresets = JSON.parse(elements["cfg-session-start-presets"].value);
-assert.deepEqual(generatedStartPresets["999999"], { commands: ["aiden"] }, "aiden preset should update default start preset 999999");
+assert.equal(generatedStartPresets["999999"], undefined, "Agent selection should no longer depend on a hidden start preset");
 elements["cfg-agent-preset"].value = "custom";
 elements["cfg-agent-custom-command"].value = "";
 elements["cfg-agent-preset"].onchange();
@@ -1292,14 +1331,14 @@ assert.equal(elements["cfg-agent-preset"].value, "custom", "empty custom preset 
 assert.equal(elements["cfg-agent-custom-command"].hidden, false, "custom command input should remain visible");
 elements["cfg-agent-custom-command"].value = "my-agent --run";
 elements["cfg-agent-custom-command"].onchange();
-generatedStartPresets = JSON.parse(elements["cfg-session-start-presets"].value);
-assert.deepEqual(generatedStartPresets["999999"], { commands: ["my-agent --run"] }, "custom command should update default start preset 999999");
+assert.match(elements["agent-preset-status"].textContent, /my-agent --run/, "custom Agent command should be reflected in status");
 app.state.config = {
   ...app.state.config,
-  session_start_presets: { "999999": { commands: ["codex --dangerously-bypass-approvals-and-sandbox"] } },
+  agent_kind: "codex",
+  agent_command: "codex --dangerously-bypass-approvals-and-sandbox",
 };
 app.openConfigDialog("config-session");
-assert.equal(elements["cfg-agent-preset"].value, "codex", "agent preset should be selected from saved preset 999999");
+assert.equal(elements["cfg-agent-preset"].value, "codex", "Agent should be selected from saved Agent config");
 elements["startup-json-preview"].value = JSON.stringify({
   session_pre_start_command: "source ~/.zshrc",
   session_name_presets: { "开发": { commands: ["cd project/dev", "codex"] } },
@@ -1324,13 +1363,23 @@ elements["cfg-drop-patterns"].value = JSON.stringify([
 ]);
 elements["cfg-lark-custom-shortcuts"].value = JSON.stringify([{ label: "状态", command: "git status" }]);
 elements["cfg-lark-default-session-name"].value = "Claude 会话";
-elements["cfg-agent-preset"].value = "claude";
+elements["cfg-agent-preset"].value = "custom";
+elements["cfg-agent-custom-command"].value = "claude --dangerously-skip-permissions";
 elements["cfg-agent-preset"].onchange();
-generatedStartPresets = JSON.parse(elements["cfg-session-start-presets"].value);
-assert.deepEqual(generatedStartPresets["999999"], { commands: ["claude --dangerously-skip-permissions"] }, "claude preset should update default start preset 999999");
 await app.testLarkConfig();
 assert.ok(fetchCalls.some((call) => call.path === "/api/config/lark-test" && call.options.method === "POST"), "lark config test should POST /api/config/lark-test");
 assert.equal(elements["lark-test-result"].children.length, 2, "lark test result should render steps");
+const environmentResult = await app.checkEnvironment();
+const environmentCall = fetchCalls.find((call) => call.path === "/api/environment-check" && call.options.method === "POST");
+assert.ok(environmentCall, "environment check should POST the current unsaved form config");
+assert.equal(JSON.parse(environmentCall.options.body).agent_command, "claude --dangerously-skip-permissions");
+assert.equal(environmentResult.ok, false);
+assert.equal(elements["environment-check-result"].children.length, 3, "environment check should render every check item");
+assert.equal(elements["environment-check-result"].children[0].className, "environment-check-step ok");
+assert.equal(elements["environment-check-result"].children[1].className, "environment-check-step error");
+assert.equal(elements["environment-check-result"].children[2].className, "environment-check-step warning");
+assert.equal(elements["environment-check-start"].disabled, false);
+assert.equal(elements["environment-check-start"].textContent, "重新检测");
 await app.saveConfig();
 const configPatch = fetchCalls.filter((call) => call.path === "/api/config" && call.options.method === "PATCH").at(-1);
 assert.ok(configPatch, "config form should PATCH /api/config");
@@ -1352,6 +1401,8 @@ assert.deepEqual(patchedConfig.lark_notify_drop_line_patterns, [
   { title: "调试", kind: "line", pattern: "debug", action: "", groups: [] },
 ]);
 assert.deepEqual(patchedConfig.lark_custom_shortcuts, [{ label: "状态", command: "git status" }]);
-assert.deepEqual(patchedConfig.session_start_presets, { "999999": { commands: ["claude --dangerously-skip-permissions"] }, "1": { commands: ["codex"] } });
+assert.equal(patchedConfig.agent_kind, "custom");
+assert.equal(patchedConfig.agent_command, "claude --dangerously-skip-permissions");
+assert.deepEqual(patchedConfig.session_start_presets, { "1": { commands: ["codex"] } });
 
 console.log("frontend e2e ok");

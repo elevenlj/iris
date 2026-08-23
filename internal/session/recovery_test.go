@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +76,20 @@ func TestRecoveryRecordsClaudeResumeCommandWithHome(t *testing.T) {
 	}
 }
 
+func TestConfiguredCustomClaudeCommandKeepsClaudeRecoveryKind(t *testing.T) {
+	manager := NewManager(nil, nil)
+	rt := &RuntimeSession{
+		manager: manager,
+		session: Session{ID: "sess-1", Name: "A", RecoveryKey: "rk", LastMode: SessionModeShell, LastCWD: "/tmp"},
+	}
+
+	rt.ConfigureAgentForRecovery(AgentConfig{Kind: "custom", Command: "claude --dangerously-skip-permissions"})
+	s := rt.Snapshot()
+	if s.LastMode != SessionModeAgent || s.LastAgentKind != "claude" || !strings.Contains(s.LastAgentResumeCommand, "--continue") {
+		t.Fatalf("configured Claude recovery state = %#v", s)
+	}
+}
+
 func TestRecoveryBaseDirIsAbsolute(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -112,39 +127,71 @@ func TestRecoveryEnvironmentExportsAgentHomes(t *testing.T) {
 	}
 }
 
-func TestEnsureCodexTurnHookPreservesExistingHooksAndIsIdempotent(t *testing.T) {
+func TestEnsureCodexNotifyPreservesExistingNotifyAndRemovesManagedStopHook(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	codexHome := filepath.Join(home, ".codex")
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(codexHome, "hooks.json")
-	existing := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"existing-stop","timeout":30}]}],"PostToolUse":[{"matcher":".*","hooks":[]}]}}`
-	if err := os.WriteFile(path, []byte(existing), 0o640); err != nil {
+	configPath := filepath.Join(codexHome, "config.toml")
+	config := "model = \"gpt-test\"\nnotify = [\"existing-notify\", \"turn-ended\"]\n\n[features]\nexample = true\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o640); err != nil {
 		t.Fatal(err)
 	}
-
-	if err := EnsureCodexTurnHook(); err != nil {
-		t.Fatal(err)
-	}
-	if err := EnsureCodexTurnHook(); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
+	hooksPath := filepath.Join(codexHome, "hooks.json")
+	hooks := map[string]any{"hooks": map[string]any{
+		"Stop": []any{
+			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "existing-stop", "timeout": 30}}},
+			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": easyTerminalCodexStopHookCommand, "timeout": 5}}},
+		},
+		"PostToolUse": []any{map[string]any{"matcher": ".*", "hooks": []any{}}},
+	}}
+	hookData, err := json.Marshal(hooks)
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(data)
-	if strings.Count(text, "/hook/turn-ended") != 1 || !strings.Contains(text, "existing-stop") || !strings.Contains(text, "PostToolUse") {
-		t.Fatalf("hooks.json was not merged idempotently: %s", text)
+	if err := os.WriteFile(hooksPath, hookData, 0o640); err != nil {
+		t.Fatal(err)
 	}
-	info, err := os.Stat(path)
+
+	if err := EnsureCodexNotify("/opt/iris"); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureCodexNotify("/opt/iris"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, notify, found, err := findTopLevelNotify(data)
+	if err != nil || !found {
+		t.Fatalf("managed notify missing: found=%v err=%v config=%s", found, err, data)
+	}
+	if len(notify) != 4 || notify[0] != "/opt/iris" || notify[1] != codexNotifyModeFlag {
+		t.Fatalf("managed notify = %#v", notify)
+	}
+	forward, err := managedCodexNotifyForward(notify)
+	if err != nil || len(forward) != 2 || forward[0] != "existing-notify" || forward[1] != "turn-ended" {
+		t.Fatalf("forward notify = %#v, err=%v", forward, err)
+	}
+	if strings.Count(string(data), "notify =") != 1 || !strings.Contains(string(data), "[features]") {
+		t.Fatalf("config was not preserved idempotently: %s", data)
+	}
+	hookData, err = os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(hookData), "/hook/turn-ended") || !strings.Contains(string(hookData), "existing-stop") || !strings.Contains(string(hookData), "PostToolUse") {
+		t.Fatalf("legacy hook migration was not selective: %s", hookData)
+	}
+	info, err := os.Stat(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.Mode().Perm() != 0o640 {
-		t.Fatalf("hooks.json mode = %v", info.Mode().Perm())
+		t.Fatalf("config.toml mode = %v", info.Mode().Perm())
 	}
 }
 
@@ -216,6 +263,27 @@ func TestEnsureClaudeSessionHomeLinksSharedConfig(t *testing.T) {
 		if got != want {
 			t.Fatalf("link %s = %q, want %q", name, got, want)
 		}
+	}
+}
+
+func TestPinClaudeResumeCommand(t *testing.T) {
+	sessionID := "019f5153-6e7f-7742-9f61-3ffe1530d61c"
+	for _, test := range []struct {
+		name    string
+		command string
+	}{
+		{name: "continue", command: "claude --continue --dangerously-skip-permissions"},
+		{name: "short continue", command: "claude -c --model sonnet"},
+		{name: "existing resume", command: "claude --resume 019e440b-54a7-7200-8ca0-fe9e9e87d4be --effort high"},
+		{name: "resume equals", command: "CLAUDE_CONFIG_DIR=/tmp/claude claude --resume=019e440b-54a7-7200-8ca0-fe9e9e87d4be"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := pinClaudeResumeCommand(test.command, sessionID)
+			args := shellFields(got)
+			if !ok || !containsAdjacentArgs(args, "--resume", sessionID) || slicesContain(args, "--continue") || slicesContain(args, "-c") {
+				t.Fatalf("pinClaudeResumeCommand(%q) = %q, %v", test.command, got, ok)
+			}
+		})
 	}
 }
 
@@ -293,10 +361,11 @@ func TestRecoveryEnvironmentExportsAgentTurnHookCredentials(t *testing.T) {
 
 type memoryStore struct {
 	sessions map[string]Session
+	contacts map[string]LarkContactBinding
 }
 
 func newMemoryStore() *memoryStore {
-	return &memoryStore{sessions: make(map[string]Session)}
+	return &memoryStore{sessions: make(map[string]Session), contacts: make(map[string]LarkContactBinding)}
 }
 
 func (s *memoryStore) CreateSession(_ context.Context, sess Session) error {
@@ -333,3 +402,17 @@ func (s *memoryStore) DeleteAllSessions(context.Context) error                  
 func (s *memoryStore) ListQuickCommands(context.Context) ([]QuickCommand, error) { return nil, nil }
 func (s *memoryStore) CreateQuickCommand(context.Context, QuickCommand) error    { return nil }
 func (s *memoryStore) DeleteQuickCommand(context.Context, string) error          { return nil }
+func (s *memoryStore) GetLarkContactBinding(_ context.Context, senderOpenID string) (LarkContactBinding, bool, error) {
+	binding, ok := s.contacts[senderOpenID]
+	return binding, ok, nil
+}
+func (s *memoryStore) UpsertLarkContactBinding(_ context.Context, binding LarkContactBinding) error {
+	s.contacts[binding.SenderOpenID] = binding
+	return nil
+}
+func (s *memoryStore) DeactivateLarkContactBinding(_ context.Context, senderOpenID string) error {
+	binding := s.contacts[senderOpenID]
+	binding.Active = false
+	s.contacts[senderOpenID] = binding
+	return nil
+}

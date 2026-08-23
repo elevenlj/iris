@@ -4,6 +4,9 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/creack/pty"
 )
@@ -42,11 +45,11 @@ type ShellLauncher struct {
 func (l ShellLauncher) Launch(ctx context.Context) (ProcessHandle, error) {
 	command := l.Command
 	if command == "" {
-		command = "/bin/zsh"
+		command = defaultInteractiveShell()
 	}
 	args := l.Args
 	if len(args) == 0 {
-		args = []string{"-i"}
+		args = interactiveShellArgs(command)
 	}
 	dir := l.Dir
 	if dir == "" {
@@ -57,11 +60,78 @@ func (l ShellLauncher) Launch(ctx context.Context) (ProcessHandle, error) {
 	}
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Dir = dir
+	cmd.Env = terminalEnvironment(os.Environ())
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: defaultTerminalRows, Cols: defaultTerminalCols})
 	if err != nil {
 		return nil, err
 	}
 	return &shellHandle{term: &ptyTerminal{file: f}, process: cmd}, nil
+}
+
+func defaultInteractiveShell() string {
+	return resolveInteractiveShell(os.Getenv, exec.LookPath, runtime.GOOS)
+}
+
+func resolveInteractiveShell(getenv func(string) string, lookPath func(string) (string, error), goos string) string {
+	candidates := make([]string, 0, 6)
+	if shell := strings.TrimSpace(getenv("SHELL")); shell != "" {
+		candidates = append(candidates, shell)
+	}
+	if goos == "windows" {
+		if shell := strings.TrimSpace(getenv("COMSPEC")); shell != "" {
+			candidates = append(candidates, shell)
+		}
+		candidates = append(candidates, "pwsh", "powershell", "cmd.exe")
+	} else {
+		candidates = append(candidates, "bash", "sh", "zsh", "fish")
+	}
+	seen := map[string]bool{}
+	for _, candidate := range candidates {
+		if candidate == "" || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		if resolved, err := lookPath(candidate); err == nil && strings.TrimSpace(resolved) != "" {
+			return resolved
+		}
+	}
+	if goos == "windows" {
+		return "cmd.exe"
+	}
+	return "/bin/sh"
+}
+
+func interactiveShellArgs(command string) []string {
+	name := strings.ToLower(filepath.Base(strings.TrimSpace(command)))
+	name = strings.TrimSuffix(name, ".exe")
+	switch name {
+	case "cmd":
+		return nil
+	case "powershell", "pwsh":
+		return []string{"-NoLogo"}
+	default:
+		return []string{"-i"}
+	}
+}
+
+func terminalEnvironment(current []string) []string {
+	term := ""
+	for _, entry := range current {
+		if strings.HasPrefix(entry, "TERM=") {
+			term = strings.TrimSpace(strings.TrimPrefix(entry, "TERM="))
+			break
+		}
+	}
+	if term != "" && !strings.EqualFold(term, "dumb") {
+		return append([]string(nil), current...)
+	}
+	out := make([]string, 0, len(current)+1)
+	for _, entry := range current {
+		if !strings.HasPrefix(entry, "TERM=") {
+			out = append(out, entry)
+		}
+	}
+	return append(out, "TERM=xterm-256color")
 }
 
 type shellHandle struct {
@@ -97,10 +167,14 @@ func (l ScreenLauncher) Launch(ctx context.Context) (ProcessHandle, error) {
 	}
 	command := l.Command
 	if command == "" {
-		command = "/bin/zsh"
+		command = defaultInteractiveShell()
 	}
 	args := []string{"-S", name, "-dm", command}
-	args = append(args, l.Args...)
+	shellArgs := l.Args
+	if len(shellArgs) == 0 {
+		shellArgs = interactiveShellArgs(command)
+	}
+	args = append(args, shellArgs...)
 	cmd := exec.CommandContext(ctx, "screen", args...)
 	if l.Dir != "" {
 		cmd.Dir = l.Dir

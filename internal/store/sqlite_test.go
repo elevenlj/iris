@@ -9,6 +9,33 @@ import (
 	"easy_terminal/internal/session"
 )
 
+func TestSQLitePersistsLarkContactBindings(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "iris.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	binding := session.LarkContactBinding{
+		SenderOpenID: "ou-contact", DisplayName: "小林", ChatID: "oc-chat", SessionID: "sess-1",
+		Active: true, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := st.UpsertLarkContactBinding(context.Background(), binding); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := st.GetLarkContactBinding(context.Background(), "ou-contact")
+	if err != nil || !ok || got.ChatID != "oc-chat" || got.SessionID != "sess-1" || !got.Active {
+		t.Fatalf("unexpected binding: %#v ok=%v err=%v", got, ok, err)
+	}
+	if err := st.DeactivateLarkContactBinding(context.Background(), "ou-contact"); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err = st.GetLarkContactBinding(context.Background(), "ou-contact")
+	if err != nil || !ok || got.Active {
+		t.Fatalf("binding should be inactive: %#v ok=%v err=%v", got, ok, err)
+	}
+}
+
 func TestSQLiteSessionLifecycle(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

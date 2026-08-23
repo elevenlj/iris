@@ -345,10 +345,11 @@ func TestLarkNotificationCardRendersTerminalSelect(t *testing.T) {
 		},
 	}
 	content, err := larkNotificationCardContent(WaitingNotification{
-		SessionID:   "sess-1",
-		Name:        "Codex",
-		Content:     "Select Model and Effort\n1. gpt-5.5\n2. gpt-5.4",
-		Interaction: interaction,
+		SessionID:            "sess-1",
+		Name:                 "Codex",
+		Content:              "Select Model and Effort\n1. gpt-5.5\n2. gpt-5.4",
+		Interaction:          interaction,
+		DeveloperModeEnabled: true,
 	}, "ou_1", false)
 	if err != nil {
 		t.Fatal(err)
@@ -405,7 +406,7 @@ func TestLarkNotificationCardRendersResumeHeading(t *testing.T) {
 		},
 	}
 	content, err := larkNotificationCardContent(WaitingNotification{
-		SessionID: "sess-1", Name: "Codex", Content: "Resume a previous session", Interaction: interaction,
+		SessionID: "sess-1", Name: "Codex", Content: "Resume a previous session", Interaction: interaction, DeveloperModeEnabled: true,
 	}, "ou_1", false)
 	if err != nil {
 		t.Fatal(err)

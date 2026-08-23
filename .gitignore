@@ -2,6 +2,7 @@ conf/config.local.json
 data/
 log/
 easy_terminal
+iris
 easy_terminal.db
 *.db
 *.db-wal

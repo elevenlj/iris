@@ -68,20 +68,21 @@ func TestCompleteAgentTurnUsesAuthenticatedHookWithIdleFallback(t *testing.T) {
 		t.Fatalf("hook should pin Codex recovery to the reported session id, got %q", got.LastAgentResumeCommand)
 	}
 
-	rt.HandleOutput([]byte("late terminal output"))
-	if got := rt.Snapshot().Status; got != StatusRunning {
-		t.Fatalf("new output should return hook-enabled Agent to running, got %q", got)
+	rt.HandleOutput([]byte("completed-turn TUI repaint"))
+	if got := rt.Snapshot().Status; got != StatusWaiting {
+		t.Fatalf("completed-turn TUI repaint must not reopen the round, got %q", got)
 	}
 	rt.mu.Lock()
 	timer := rt.notifyStableTimer
 	rt.mu.Unlock()
-	if timer == nil {
-		t.Fatal("verified Agent hook should retain the idle completion fallback")
+	if timer != nil {
+		t.Fatal("completed-turn TUI repaint must not re-arm the idle completion fallback")
 	}
+
 	rt.mu.Lock()
 	rt.hookCompletionTipClaimed = true
 	rt.mu.Unlock()
-	if _, accepted, err := manager.CompleteAgentTurn(context.Background(), rt.session.ID, "hook-token", "", ""); err != nil || !accepted {
+	if _, accepted, err := manager.CompleteAgentTurn(context.Background(), rt.session.ID, "hook-token", "", ""); err != nil || accepted {
 		t.Fatalf("same-round repeated hook completion accepted=%v err=%v", accepted, err)
 	}
 	rt.mu.Lock()
@@ -89,6 +90,18 @@ func TestCompleteAgentTurnUsesAuthenticatedHookWithIdleFallback(t *testing.T) {
 	rt.mu.Unlock()
 	if !claimedAfterRepeatedHook {
 		t.Fatal("a repeated Hook in the same round must not reopen the completion tip")
+	}
+
+	rt.MarkStructuredInputActivity("next round")
+	rt.HandleOutput([]byte("next-round output"))
+	if got := rt.Snapshot().Status; got != StatusRunning {
+		t.Fatalf("new input should open the next round, got %q", got)
+	}
+	rt.mu.Lock()
+	timer = rt.notifyStableTimer
+	rt.mu.Unlock()
+	if timer == nil {
+		t.Fatal("new round should retain the idle completion fallback")
 	}
 }
 
@@ -2119,15 +2132,16 @@ func TestLarkNotificationCardContentUsesTaskStateInTitleOnly(t *testing.T) {
 
 func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 	content, err := larkNotificationCardContent(WaitingNotification{
-		SessionID: "sess-1",
-		Name:      "A",
-		Content:   RunningNotificationPlaceholder,
-		Running:   true,
+		SessionID:            "sess-1",
+		Name:                 "A",
+		Content:              RunningNotificationPlaceholder,
+		Running:              true,
+		DeveloperModeEnabled: true,
 	}, "ou_1", false, LarkCustomShortcut{Label: "状态", Command: "git status"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(content, "Ctrl-C") || !strings.Contains(content, "ctrl_c") || !strings.Contains(content, "sess-1") {
+	if !strings.Contains(content, "Ctrl-C") || !strings.Contains(content, "ctrl_c") || !strings.Contains(content, "重启 Agent") || !strings.Contains(content, "restart_agent") || !strings.Contains(content, "sess-1") {
 		t.Fatalf("card content should include shortcut buttons, got %s", content)
 	}
 	if strings.Contains(content, `"content":"sess-1"`) {
@@ -2136,8 +2150,8 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 	if strings.Contains(content, "Ctrl-D") || strings.Contains(content, "ctrl_d") {
 		t.Fatalf("card content should not include Ctrl-D, got %s", content)
 	}
-	if !strings.Contains(content, "退出agent") || !strings.Contains(content, "exit_agent") {
-		t.Fatalf("card content should include exit agent shortcut, got %s", content)
+	if strings.Contains(content, "退出agent") || strings.Contains(content, "exit_agent") {
+		t.Fatalf("card content should not include the removed exit agent shortcut, got %s", content)
 	}
 	if !strings.Contains(content, "刷新") || !strings.Contains(content, `"easy_terminal_action":"refresh"`) {
 		t.Fatalf("card content should include manual refresh button, got %s", content)
@@ -2158,15 +2172,14 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 		strings.Index(content, `"content":"艾特模式"`) < strings.Index(content, `"content":"Ctrl-C"`) &&
 		strings.Index(content, `"content":"Ctrl-C"`) < strings.Index(content, `"content":"Esc"`) &&
 		strings.Index(content, `"content":"Esc"`) < strings.Index(content, `"content":"Enter"`) &&
-		strings.Index(content, `"content":"Enter"`) < strings.Index(content, `"content":"退出agent"`) &&
-		strings.Index(content, `"content":"退出agent"`) < strings.Index(content, `"content":"删除会话"`) &&
+		strings.Index(content, `"content":"Enter"`) < strings.Index(content, `"content":"删除会话"`) &&
 		strings.Index(content, `"content":"删除会话"`) < strings.Index(content, `"easy_terminal_action":"custom_shortcut"`)) {
 		t.Fatalf("refresh button should be first and custom shortcuts below system shortcuts, got %s", content)
 	}
 	if !strings.Contains(content, "状态") || !strings.Contains(content, `"easy_terminal_action":"custom_shortcut"`) || !strings.Contains(content, "git status") {
 		t.Fatalf("card content should include custom shortcut row, got %s", content)
 	}
-	for _, label := range []string{"刷新", "艾特模式", "删除会话", "Ctrl-C", "退出agent", "Esc", "Enter"} {
+	for _, label := range []string{"刷新", "关闭开发者模式", "艾特模式", "删除会话", "Ctrl-C", "Esc", "Enter"} {
 		if !strings.Contains(content, `"content":"`+label+`"`) {
 			t.Fatalf("card content should include system shortcut %s, got %s", label, content)
 		}
@@ -2179,14 +2192,14 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 	if len(systemRows) != 1 {
 		t.Fatalf("system shortcut buttons should use one flowing row, got %#v", systemRows)
 	}
-	wantSystemColumns := []int{7}
+	wantSystemColumns := []int{8}
 	for i, row := range systemRows {
 		columns, _ := row["columns"].([]any)
 		if row["flex_mode"] != "flow" || len(columns) != wantSystemColumns[i] {
 			t.Fatalf("system shortcut row %d should use responsive columns, got %#v", i, row)
 		}
 	}
-	if strings.Count(content, `"type":"primary"`) != 1 || strings.Count(content, `"type":"default"`) < 6 {
+	if strings.Count(content, `"type":"primary"`) != 1 || strings.Count(content, `"type":"default"`) < 7 {
 		t.Fatalf("only refresh should be primary while secondary actions stay neutral, got %s", content)
 	}
 	if strings.Contains(content, `"border_color":"green"`) || strings.Contains(content, `"background_style":"green"`) {
@@ -2205,11 +2218,12 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 		t.Fatalf("card shortcut buttons should use card 2.0 callback behavior, got %s", content)
 	}
 	enabled, err := larkNotificationCardContent(WaitingNotification{
-		SessionID:          "sess-1",
-		Name:               "A",
-		Content:            RunningNotificationPlaceholder,
-		Running:            true,
-		AutoRefreshEnabled: true,
+		SessionID:            "sess-1",
+		Name:                 "A",
+		Content:              RunningNotificationPlaceholder,
+		Running:              true,
+		AutoRefreshEnabled:   true,
+		DeveloperModeEnabled: true,
 	}, "ou_1", false)
 	if err != nil {
 		t.Fatal(err)
@@ -2218,11 +2232,12 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 		t.Fatalf("enabled auto refresh state should not restore the removed button, got %s", enabled)
 	}
 	mentionModeEnabled, err := larkNotificationCardContent(WaitingNotification{
-		SessionID:          "sess-1",
-		Name:               "A",
-		Content:            RunningNotificationPlaceholder,
-		Running:            true,
-		MentionModeEnabled: true,
+		SessionID:            "sess-1",
+		Name:                 "A",
+		Content:              RunningNotificationPlaceholder,
+		Running:              true,
+		MentionModeEnabled:   true,
+		DeveloperModeEnabled: true,
 	}, "ou_1", false)
 	if err != nil {
 		t.Fatal(err)
@@ -2234,11 +2249,12 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 
 func TestLarkNotificationCardContentDisabledRemovesButtons(t *testing.T) {
 	content, err := larkNotificationCardContent(WaitingNotification{
-		SessionID: "sess-1",
-		Name:      "A",
-		Content:   RunningNotificationPlaceholder,
-		Running:   true,
-		Disabled:  true,
+		SessionID:            "sess-1",
+		Name:                 "A",
+		Content:              RunningNotificationPlaceholder,
+		Running:              true,
+		DeveloperModeEnabled: true,
+		Disabled:             true,
 	}, "ou_1", false, LarkCustomShortcut{Label: "状态", Command: "git status"})
 	if err != nil {
 		t.Fatal(err)
@@ -2264,10 +2280,11 @@ func TestLarkNotificationCardContentWrapsCustomShortcutButtons(t *testing.T) {
 		{Label: "构建发布", Command: "make release"},
 	}
 	content, err := larkNotificationCardContent(WaitingNotification{
-		SessionID: "sess-1",
-		Name:      "A",
-		Content:   RunningNotificationPlaceholder,
-		Running:   true,
+		SessionID:            "sess-1",
+		Name:                 "A",
+		Content:              RunningNotificationPlaceholder,
+		Running:              true,
+		DeveloperModeEnabled: true,
 	}, "ou_1", false, shortcuts...)
 	if err != nil {
 		t.Fatal(err)

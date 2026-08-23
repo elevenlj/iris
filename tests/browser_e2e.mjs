@@ -8,10 +8,10 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 
 const root = path.resolve(new URL("..", import.meta.url).pathname);
-const bin = path.join(root, "easy_terminal");
+const bin = path.join(root, "iris");
 const port = process.env.E2E_PORT ? Number(process.env.E2E_PORT) : await freePort();
 const chromePort = process.env.E2E_CHROME_PORT ? Number(process.env.E2E_CHROME_PORT) : await freePort();
-const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "easy-terminal-e2e-"));
+const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "iris-browser-e2e-"));
 
 let server;
 let chrome;
@@ -26,8 +26,9 @@ try {
     env: {
       ...process.env,
       PORT: String(port),
+      IRIS_HOME: tmp,
       TERMINAL_WORKING_DIR: root,
-      AGENT_MONITOR_DB: path.join(tmp, "easy_terminal.db"),
+      AGENT_MONITOR_DB: path.join(tmp, "iris.db"),
       AGENT_MONITOR_UPLOADS_DIR: path.join(tmp, "data", "uploads"),
       AGENT_MONITOR_LOG_DIR: path.join(tmp, "log"),
     },
@@ -55,6 +56,8 @@ try {
   await cdp.send("Page.navigate", { url: `http://localhost:${port}` });
   await waitFor(() => evalExpr("document.readyState === 'complete' || document.readyState === 'interactive'"));
   await waitFor(() => evalExpr("Boolean(window.easyTerminalApp && document.querySelector('#session-name'))"));
+
+  await initializeIrisForE2E();
 
   await createSession("browser-e2e");
   await waitFor(() => evalExpr("document.querySelectorAll('.session').length === 1"));
@@ -137,6 +140,24 @@ try {
   await terminateProcess(server);
   await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
 }
+
+async function initializeIrisForE2E() {
+  await waitFor(() => evalExpr("document.querySelector('#settings-access-dialog').open === true"));
+  await evalExpr(`
+    document.querySelector('#settings-access-password').value = 'browser-e2e-password';
+    document.querySelector('#settings-access-form').requestSubmit();
+    true
+  `);
+  await waitFor(() => evalExpr("document.querySelector('#onboarding-dialog').open === true"));
+  await evalExpr(`
+    document.querySelector('#onboarding-agent-preset').value = 'custom';
+    document.querySelector('#onboarding-agent-preset').dispatchEvent(new Event('change', { bubbles: true }));
+    document.querySelector('#onboarding-agent-custom-command').value = 'bash --noprofile --norc';
+    document.querySelector('#onboarding-config').click();
+    true
+  `);
+  await waitFor(() => evalExpr("document.querySelector('#onboarding-dialog').open !== true"));
+}
 }
 
 async function createSession(name) {
@@ -198,8 +219,7 @@ async function runTUILikeSnapshotE2E() {
   ].join("; ");
   await fillComposer(`node -e ${shellSingleQuote(script)}`);
   await click("document.querySelector('#composer button').click()");
-  await waitForOutput("TUI_FINAL_READY");
-  const snapshot = await waitForTerminalSnapshot("TUI_FINAL_READY");
+  const snapshot = await waitForTerminalLine("TUI_FINAL_READY");
   assertVisibleLinesInOrder(snapshot, [
     "Select Model and Effort",
     "Access legacy models by running codex -m <model_name> or in your config.toml",
@@ -212,6 +232,15 @@ async function runTUILikeSnapshotE2E() {
   assert.equal(snapshot.includes("Working (1s"), false, "TUI snapshot should use the final repaint, not stale transient text");
 }
 
+async function waitForTerminalLine(expected, timeoutMs = 10000) {
+  let snapshot = "";
+  await waitFor(async () => {
+    snapshot = await evalExpr("window.easyTerminalApp.terminalVisibleSnapshot()") || "";
+    return snapshot.split(/\r?\n/).some((line) => line.trimEnd() === expected);
+  }, timeoutMs);
+  return snapshot;
+}
+
 function shellSingleQuote(text) {
   return "'" + String(text).replace(/'/g, "'\\''") + "'";
 }
@@ -221,7 +250,7 @@ function assertVisibleLinesInOrder(snapshot, expectedLines) {
   let cursor = 0;
   for (const expected of expectedLines) {
     const index = lines.findIndex((line, i) => i >= cursor && line === expected);
-    assert.notEqual(index, -1, `terminal snapshot should contain visual line: ${expected}`);
+    assert.notEqual(index, -1, `terminal snapshot should contain visual line: ${expected}; snapshot=${JSON.stringify(snapshot.slice(-5000))}`);
     cursor = index + 1;
   }
 }

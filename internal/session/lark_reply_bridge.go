@@ -21,6 +21,7 @@ import (
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
+	larkcontact "github.com/larksuite/oapi-sdk-go/v3/service/contact/v3"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
@@ -38,6 +39,8 @@ type LarkReplyBridge struct {
 	startPresets            map[string]SessionStartPreset
 	namePresets             map[string]SessionStartPreset
 	customShortcuts         []LarkCustomShortcut
+	developerOpenID         string
+	workspaceOptions        []WorkspaceOption
 	botIdentity             larkBotIdentity
 	mu                      sync.Mutex
 	groupSessionMu          sync.Mutex
@@ -48,6 +51,9 @@ type LarkReplyBridge struct {
 	downloadFile            func(context.Context, string, string, larkAttachmentRef) (pendingLarkAttachment, error)
 	addReaction             func(context.Context, string, string) error
 	createChat              func(context.Context, string, string, string) (string, error)
+	createContactChat       func(context.Context, string, string, []string) (string, error)
+	fetchUserDisplayName    func(context.Context, string) (string, error)
+	fetchReferencedMessages func(context.Context, string) ([]larkReferencedMessage, error)
 	sendChatText            func(context.Context, string, string) error
 	removeBotFromChat       func(context.Context, string) error
 	fetchBotIdentity        func(context.Context) (larkBotIdentity, error)
@@ -61,9 +67,12 @@ var structuredInputEnterSequence = "\r"
 var structuredInputNumericOnlyRE = regexp.MustCompile(`^\d+$`)
 
 const larkProcessingReactionEmoji = "THINKING"
-const defaultLarkSessionChatPrefix = "ET · "
+const defaultLarkSessionChatPrefix = "Iris · "
 const larkDisabledCardToastContent = "已失效，请点击最新卡片的按钮"
 const defaultWorkspaceRootDir = "Easy_Terminal_Workspace"
+const maxLarkReferencedItems = 20
+const maxLarkReferencedTextRunes = 12000
+const maxLarkReferencedAttachments = 10
 
 type SessionStartPreset struct {
 	Commands []string `json:"commands"`
@@ -109,6 +118,11 @@ func NewLarkReplyBridge(appID, appSecret string, manager *Manager, uploadsDir st
 	b.downloadFile = b.downloadLarkAttachment
 	b.addReaction = b.addLarkMessageReaction
 	b.createChat = b.createLarkChat
+	b.createContactChat = b.createLarkContactChat
+	b.fetchUserDisplayName = b.fetchLarkUserDisplayName
+	if strings.HasPrefix(strings.TrimSpace(appID), "cli_") {
+		b.fetchReferencedMessages = b.fetchLarkReferencedMessages
+	}
 	b.sendChatText = b.sendTextToChat
 	b.removeBotFromChat = b.removeLarkBotFromChat
 	b.fetchBotIdentity = b.fetchLarkBotIdentity
@@ -131,6 +145,18 @@ func (b *LarkReplyBridge) SetCustomShortcuts(shortcuts []LarkCustomShortcut) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.customShortcuts = normalizeLarkCustomShortcuts(shortcuts)
+}
+
+func (b *LarkReplyBridge) SetDeveloperOpenID(openID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.developerOpenID = strings.TrimSpace(openID)
+}
+
+func (b *LarkReplyBridge) SetWorkspaceOptions(options []WorkspaceOption) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.workspaceOptions = normalizeWorkspaceOptions(options)
 }
 
 func (b *LarkReplyBridge) SetDefaultStartSessionName(name string) {
@@ -324,6 +350,12 @@ func (b *LarkReplyBridge) handleCardAction(ctx context.Context, action *callback
 		return b.handleCardToggleAutoSummary(ctx, value, openMessageID)
 	case "toggle_mention_mode":
 		return b.handleCardToggleMentionMode(ctx, value, openMessageID)
+	case "toggle_developer_mode":
+		return b.handleCardToggleDeveloperMode(ctx, value, openMessageID, operatorOpenID)
+	case "restart_agent":
+		return b.handleCardRestartAgent(value, openMessageID)
+	case "workspace_select":
+		return b.handleCardWorkspaceSelect(ctx, value, action.Option, openMessageID)
 	case "delete_session":
 		return b.handleCardDeleteSession(ctx, value, openMessageID, openChatID)
 	case "terminal_select":
@@ -331,6 +363,80 @@ func (b *LarkReplyBridge) handleCardAction(ctx context.Context, action *callback
 	default:
 		return larkCardToast("warning", "未知操作"), nil
 	}
+}
+
+func (b *LarkReplyBridge) handleCardRestartAgent(value map[string]interface{}, openMessageID string) (*callback.CardActionTriggerResponse, error) {
+	sessionID, rt, blocked := b.resolveCardActionRuntime(value, openMessageID)
+	if blocked != nil {
+		return blocked, nil
+	}
+	if !rt.Snapshot().DeveloperModeEnabled {
+		return larkCardToast("warning", "请先开启开发者模式"), nil
+	}
+	if err := rt.RestartAgent(); err != nil {
+		return larkCardToast("warning", err.Error()), nil
+	}
+	b.manager.EnsureBrowser(sessionID)
+	if openMessageID != "" {
+		defaultLarkMessageRegistry.remember(sessionID, openMessageID)
+	}
+	rt.NotifyInputRunningOnMessage(openMessageID)
+	log.Printf("lark card restarted Agent session=%s message=%s", sessionID, openMessageID)
+	return larkCardToast("info", "正在重启 Agent"), nil
+}
+
+func (b *LarkReplyBridge) handleCardToggleDeveloperMode(ctx context.Context, value map[string]interface{}, openMessageID, operatorOpenID string) (*callback.CardActionTriggerResponse, error) {
+	b.mu.Lock()
+	developerOpenID := b.developerOpenID
+	b.mu.Unlock()
+	if developerOpenID == "" || strings.TrimSpace(operatorOpenID) != developerOpenID {
+		return larkCardToast("warning", "只有配置的开发者可以切换开发者模式"), nil
+	}
+	sessionID, rt, blocked := b.resolveCardActionRuntime(value, openMessageID)
+	if blocked != nil {
+		return blocked, nil
+	}
+	sess := rt.Snapshot()
+	updated, ok, err := b.manager.UpdateDeveloperMode(ctx, sessionID, !sess.DeveloperModeEnabled)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return larkCardToast("warning", "会话不在线"), nil
+	}
+	updateNo, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value["update_no"])))
+	go func() {
+		if err := rt.RefreshNotificationMessage(openMessageID, updateNo); err != nil {
+			log.Printf("lark card developer mode patch failed session=%s: %v", sessionID, err)
+		}
+	}()
+	if updated.DeveloperModeEnabled {
+		return larkCardToast("info", "已开启开发者模式"), nil
+	}
+	return larkCardToast("info", "已关闭开发者模式"), nil
+}
+
+func (b *LarkReplyBridge) handleCardWorkspaceSelect(ctx context.Context, value map[string]interface{}, option, openMessageID string) (*callback.CardActionTriggerResponse, error) {
+	sessionID, rt, blocked := b.resolveCardActionRuntime(value, openMessageID)
+	if blocked != nil {
+		return blocked, nil
+	}
+	if !rt.Snapshot().DeveloperModeEnabled {
+		return larkCardToast("warning", "请先开启开发者模式"), nil
+	}
+	updated, ok, err := b.manager.SwitchWorkspace(ctx, sessionID, strings.TrimSpace(option))
+	if err != nil {
+		return larkCardToast("warning", err.Error()), nil
+	}
+	if !ok {
+		return larkCardToast("warning", "会话不在线"), nil
+	}
+	go func() {
+		if err := rt.RefreshNotificationMessage(openMessageID, 0); err != nil {
+			log.Printf("lark card workspace patch failed session=%s: %v", sessionID, err)
+		}
+	}()
+	return larkCardToast("info", "已切换目录："+updated.LastCWD), nil
 }
 
 func (b *LarkReplyBridge) handleCardTerminalSelect(ctx context.Context, value map[string]interface{}, optionID string, openMessageID string, openChatID string, operatorOpenID string) (*callback.CardActionTriggerResponse, error) {
@@ -633,7 +739,7 @@ func (b *LarkReplyBridge) HandleP2MessageReceive(ctx context.Context, event *lar
 		}
 		return nil
 	}
-	if incoming.Text == "" && len(incoming.Attachments) == 0 {
+	if incoming.Text == "" && len(incoming.Attachments) == 0 && strings.TrimSpace(valueOf(msg.ParentId)) == "" {
 		if mayContainUnsupportedLarkContent(messageType) {
 			if err := b.replyLarkText(ctx, valueOf(msg.MessageId), "收到消息，但当前无法读取其中的卡片或富媒体内容。请改为发送文本、图片或文件。"); err != nil {
 				return err
@@ -689,10 +795,12 @@ func (b *LarkReplyBridge) HandleP2ChatMemberBotAdded(ctx context.Context, event 
 	} else if ok {
 		sess = updated
 	}
-	if err := b.runDefaultWorkspacePreset(sess); err != nil {
-		log.Printf("lark bot-added workspace preset failed session=%s name=%q: %v", sess.ID, sess.Name, err)
-	} else if err := b.runSessionStartPresets(sess, "999999"); err != nil {
-		log.Printf("lark bot-added agent preset failed session=%s name=%q: %v", sess.ID, sess.Name, err)
+	if agent, _ := b.manager.AgentConfig(); agent.Command == "" {
+		if err := b.runDefaultWorkspacePreset(sess); err != nil {
+			log.Printf("lark bot-added workspace preset failed session=%s name=%q: %v", sess.ID, sess.Name, err)
+		} else if err := b.runSessionStartPresets(sess, "999999"); err != nil {
+			log.Printf("lark bot-added agent preset failed session=%s name=%q: %v", sess.ID, sess.Name, err)
+		}
 	}
 	if b.sendChatText != nil {
 		if err := b.sendChatText(ctx, chatID, fmt.Sprintf("已创建并绑定会话「%s」，请 @机器人发送任务。", sess.Name)); err != nil {
@@ -884,10 +992,25 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 	if b.duplicate(messageID) {
 		return "", nil
 	}
+	incoming = b.resolveReferencedIncoming(ctx, routeCtx, incoming)
 	text := cleanLarkText(incoming.Text)
 	parts := splitLarkPipeline(text)
+	inputParts := append([]string(nil), parts...)
+	if incoming.Referenced != nil {
+		if len(parts) == 0 {
+			parts = []string{""}
+			inputParts = []string{formatLarkReferencedInput(incoming.Referenced, "")}
+		} else {
+			inputParts[0] = formatLarkReferencedInput(incoming.Referenced, parts[0])
+		}
+	}
+	if b.contactAssistantEnabled(routeCtx) {
+		if _, _, isStart := b.parseLarkStartCommand(text); !isStart {
+			return b.routeDirectContactMessage(ctx, routeCtx, incoming, inputParts)
+		}
+	}
 	if len(incoming.Attachments) > 0 {
-		return b.routeAttachments(ctx, routeCtx, text, parts, incoming.Attachments)
+		return b.routeAttachments(ctx, routeCtx, text, inputParts, incoming.Attachments)
 	}
 	if len(parts) == 0 {
 		return "", nil
@@ -905,8 +1028,8 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 			return sessionID, nil
 		}
 		b.manager.EnsureBrowser(sessionID)
-		b.enqueuePipeline(sessionID, parts[1:], routeCtx.SenderOpenID)
-		if err := SubmitStructuredInputWithMention(rt, text, routeCtx.SenderOpenID); err != nil {
+		b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.SenderOpenID)
+		if err := SubmitStructuredInputWithMention(rt, inputParts[0], routeCtx.SenderOpenID); err != nil {
 			return sessionID, err
 		}
 		b.scheduleAutoSummary(rt, text)
@@ -918,12 +1041,21 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 	if name, presetCodes, ok := b.parseLarkStartCommand(text); ok {
 		s, err := b.createLarkSessionForMessage(ctx, name, routeCtx)
 		if err == nil {
+			if updated, found, updateErr := b.manager.UpdateDeveloperMode(ctx, s.ID, true); updateErr == nil && found {
+				s = updated
+			}
+			if updated, found, updateErr := b.manager.UpdateLarkMentionMode(ctx, s.ID, false); updateErr == nil && found {
+				s = updated
+			}
 			defaultLarkMessageRegistry.remember(s.ID, messageID)
-			namePresetMatched, presetErr := b.runSessionNamePreset(s, presetCodes)
+			namePresetMatched, presetErr := false, error(nil)
+			if agent, _ := b.manager.AgentConfig(); agent.Command == "" {
+				namePresetMatched, presetErr = b.runSessionNamePreset(s, presetCodes)
+			}
 			if presetErr != nil {
 				log.Printf("lark name preset failed session=%s name=%q: %v", s.ID, s.Name, presetErr)
 			}
-			if !namePresetMatched {
+			if agent, _ := b.manager.AgentConfig(); agent.Command == "" && !namePresetMatched {
 				if workspaceErr := b.runDefaultWorkspacePreset(s); workspaceErr != nil {
 					log.Printf("lark default workspace preset failed session=%s name=%q: %v", s.ID, s.Name, workspaceErr)
 				}
@@ -1006,18 +1138,235 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		rt, _ = b.manager.GetRuntime(sessionID)
 	}
 	b.manager.EnsureBrowser(sessionID)
-	if b.enqueueInputIfRuntimeBusy(rt, sessionID, parts, routeCtx.SenderOpenID) {
+	if b.enqueueInputIfRuntimeBusy(rt, sessionID, inputParts, routeCtx.SenderOpenID) {
 		defaultLarkMessageRegistry.remember(sessionID, messageID, parentID, rootID)
 		return sessionID, nil
 	}
-	b.enqueuePipeline(sessionID, parts[1:], routeCtx.SenderOpenID)
-	if err := SubmitStructuredInputWithMention(rt, text, routeCtx.SenderOpenID); err != nil {
+	b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.SenderOpenID)
+	if err := SubmitStructuredInputWithMention(rt, inputParts[0], routeCtx.SenderOpenID); err != nil {
 		return sessionID, err
 	}
 	b.scheduleAutoSummary(rt, text)
 	defaultLarkMessageRegistry.remember(sessionID, messageID, parentID, rootID)
 	b.notifyInputRunning(sessionID)
 	return sessionID, nil
+}
+
+func (b *LarkReplyBridge) contactAssistantEnabled(routeCtx larkRouteContext) bool {
+	if !isLarkDirectChatType(routeCtx.ChatType) || strings.TrimSpace(routeCtx.SenderOpenID) == "" {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.developerOpenID != "" && b.createContactChat != nil
+}
+
+func (b *LarkReplyBridge) routeDirectContactMessage(ctx context.Context, routeCtx larkRouteContext, incoming larkIncomingMessage, parts []string) (string, error) {
+	b.groupSessionMu.Lock()
+	defer b.groupSessionMu.Unlock()
+	forwardText := strings.TrimSpace(incoming.Text)
+	if forwardText == "" && len(incoming.Attachments) > 0 {
+		forwardText = "发送了 " + larkAttachmentKindLabel(incoming.Attachments[0].Kind)
+	}
+
+	binding, ok, err := b.manager.GetLarkContactBinding(ctx, routeCtx.SenderOpenID)
+	if err != nil {
+		return "", err
+	}
+	var rt *RuntimeSession
+	if ok && binding.Active {
+		rt, _, ok, err = b.ensureRouteRuntime(ctx, binding.SessionID, larkRouteContext{
+			ChatID: binding.ChatID, ChatType: "group", SenderOpenID: routeCtx.SenderOpenID,
+		})
+		if err != nil {
+			return binding.SessionID, err
+		}
+		if !ok || rt == nil {
+			binding, rt, err = b.rebindContactConversation(ctx, binding)
+			if err != nil {
+				return binding.SessionID, err
+			}
+			ok = true
+		}
+	}
+	if !ok || !binding.Active || rt == nil {
+		binding, rt, err = b.createContactConversation(ctx, routeCtx.SenderOpenID, forwardText)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	if b.sendChatText != nil && forwardText != "" {
+		if err := b.sendChatText(ctx, binding.ChatID, binding.DisplayName+"："+forwardText); err != nil {
+			_ = b.manager.DeactivateLarkContactBinding(ctx, routeCtx.SenderOpenID)
+			binding, rt, err = b.createContactConversation(ctx, routeCtx.SenderOpenID, forwardText)
+			if err != nil {
+				return "", err
+			}
+			if err := b.sendChatText(ctx, binding.ChatID, binding.DisplayName+"："+forwardText); err != nil {
+				return binding.SessionID, err
+			}
+		}
+	}
+
+	groupRoute := routeCtx
+	groupRoute.ChatID = binding.ChatID
+	groupRoute.ChatType = "group"
+	if len(incoming.Attachments) > 0 {
+		return b.routeAttachments(ctx, groupRoute, incoming.Text, parts, incoming.Attachments)
+	}
+	if len(parts) == 0 {
+		return binding.SessionID, nil
+	}
+	b.manager.EnsureBrowser(binding.SessionID)
+	if b.enqueueInputIfRuntimeBusy(rt, binding.SessionID, parts, routeCtx.SenderOpenID) {
+		defaultLarkMessageRegistry.remember(binding.SessionID, routeCtx.MessageID)
+		return binding.SessionID, nil
+	}
+	b.enqueuePipeline(binding.SessionID, parts[1:], routeCtx.SenderOpenID)
+	if err := SubmitStructuredInputWithMention(rt, parts[0], routeCtx.SenderOpenID); err != nil {
+		return binding.SessionID, err
+	}
+	b.scheduleAutoSummary(rt, parts[0])
+	defaultLarkMessageRegistry.remember(binding.SessionID, routeCtx.MessageID)
+	b.notifyInputRunning(binding.SessionID)
+	return binding.SessionID, nil
+}
+
+func (b *LarkReplyBridge) rebindContactConversation(ctx context.Context, binding LarkContactBinding) (LarkContactBinding, *RuntimeSession, error) {
+	b.mu.Lock()
+	developerOpenID := b.developerOpenID
+	b.mu.Unlock()
+	contactName := b.larkUserDisplayNameOrOpenID(ctx, binding.SenderOpenID)
+	developerName := b.larkUserDisplayNameOrOpenID(ctx, developerOpenID)
+	name := larkContactConversationName(contactName, developerName)
+	sess, err := b.createLarkSession(ctx, name)
+	if err != nil {
+		return binding, nil, err
+	}
+	rt, _ := b.manager.GetRuntime(sess.ID)
+	if rt == nil {
+		return binding, nil, errors.New("联系人会话未启动")
+	}
+	rt.RequireLarkChatForNotifications()
+	rt.SetNotificationMentionOpenID(binding.SenderOpenID)
+	sess, err = b.bindSessionToLarkChat(ctx, sess, binding.ChatID)
+	if err != nil {
+		return binding, nil, err
+	}
+	_, _, _ = b.manager.UpdateLarkMentionMode(ctx, sess.ID, true)
+	_, _, _ = b.manager.UpdateDeveloperMode(ctx, sess.ID, false)
+	if _, err := b.enableLarkSessionNotifications(ctx, sess); err != nil {
+		return binding, nil, err
+	}
+	binding.SessionID = sess.ID
+	binding.DisplayName = contactName
+	binding.Active = true
+	binding.UpdatedAt = time.Now().UTC()
+	if err := b.manager.UpsertLarkContactBinding(ctx, binding); err != nil {
+		return binding, nil, err
+	}
+	return binding, rt, nil
+}
+
+func (b *LarkReplyBridge) createContactConversation(ctx context.Context, senderOpenID, _ string) (LarkContactBinding, *RuntimeSession, error) {
+	b.mu.Lock()
+	developerOpenID := b.developerOpenID
+	b.mu.Unlock()
+	displayName := b.larkUserDisplayNameOrOpenID(ctx, senderOpenID)
+	developerName := b.larkUserDisplayNameOrOpenID(ctx, developerOpenID)
+	conversationName := larkContactConversationName(displayName, developerName)
+	sess, err := b.createLarkSession(ctx, conversationName)
+	if err != nil {
+		return LarkContactBinding{}, nil, err
+	}
+	rt, _ := b.manager.GetRuntime(sess.ID)
+	if rt == nil {
+		return LarkContactBinding{}, nil, errors.New("联系人会话未启动")
+	}
+	rt.RequireLarkChatForNotifications()
+	rt.SetNotificationMentionOpenID(senderOpenID)
+	members := uniqueNonEmptyStrings([]string{senderOpenID, developerOpenID})
+	chatID, err := b.createContactChat(ctx, sess.ID, conversationName, members)
+	if err != nil {
+		_ = b.manager.DeleteSession(context.Background(), sess.ID)
+		return LarkContactBinding{}, nil, fmt.Errorf("创建联系人群聊失败: %w", err)
+	}
+	if strings.TrimSpace(chatID) == "" {
+		_ = b.manager.DeleteSession(context.Background(), sess.ID)
+		return LarkContactBinding{}, nil, errors.New("创建联系人群聊失败：飞书未返回群聊 ID")
+	}
+	sess, err = b.bindSessionToLarkChat(ctx, sess, chatID)
+	if err != nil {
+		_ = b.manager.DeleteSession(context.Background(), sess.ID)
+		return LarkContactBinding{}, nil, err
+	}
+	if updated, found, updateErr := b.manager.UpdateLarkMentionMode(ctx, sess.ID, true); updateErr == nil && found {
+		sess = updated
+	}
+	if updated, found, updateErr := b.manager.UpdateDeveloperMode(ctx, sess.ID, false); updateErr == nil && found {
+		sess = updated
+	}
+	if _, err := b.enableLarkSessionNotifications(ctx, sess); err != nil {
+		return LarkContactBinding{}, nil, err
+	}
+	now := time.Now().UTC()
+	binding := LarkContactBinding{
+		SenderOpenID: senderOpenID, DisplayName: displayName, ChatID: chatID, SessionID: sess.ID,
+		Active: true, CreatedAt: now, UpdatedAt: now,
+	}
+	if previous, found, _ := b.manager.GetLarkContactBinding(ctx, senderOpenID); found && !previous.CreatedAt.IsZero() {
+		binding.CreatedAt = previous.CreatedAt
+	}
+	if err := b.manager.UpsertLarkContactBinding(ctx, binding); err != nil {
+		return LarkContactBinding{}, nil, err
+	}
+	if b.sendChatText != nil {
+		_ = b.sendChatText(ctx, chatID, "Iris 已建立与 "+displayName+" 的对话。群内默认需要 @Iris 才会触发回复。")
+	}
+	return binding, rt, nil
+}
+
+func fallbackLarkContactName(openID string) string {
+	openID = strings.TrimSpace(openID)
+	if openID == "" {
+		return "未知用户"
+	}
+	return openID
+}
+
+func (b *LarkReplyBridge) larkUserDisplayNameOrOpenID(ctx context.Context, openID string) string {
+	openID = strings.TrimSpace(openID)
+	if b.fetchUserDisplayName != nil && openID != "" {
+		name, err := b.fetchUserDisplayName(ctx, openID)
+		if err == nil && strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
+		if err != nil {
+			log.Printf("lark contact display name lookup failed open_id=%s: %v", openID, err)
+		} else {
+			log.Printf("lark contact display name lookup returned empty name open_id=%s", openID)
+		}
+	}
+	return fallbackLarkContactName(openID)
+}
+
+func larkContactConversationName(contactName, developerName string) string {
+	return fallbackLarkContactName(contactName) + "和" + fallbackLarkContactName(developerName) + "的会话"
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionID string, parts []string, mentionOpenID string) bool {
@@ -1065,9 +1414,19 @@ func (b *LarkReplyBridge) routeAttachments(ctx context.Context, routeCtx larkRou
 	}
 
 	files := make([]pendingLarkAttachment, 0, len(refs))
+	optionalFailures := 0
 	for _, ref := range refs {
-		file, err := b.downloadFile(ctx, messageID, sessionID, ref)
+		sourceMessageID := strings.TrimSpace(ref.SourceMessageID)
+		if sourceMessageID == "" {
+			sourceMessageID = messageID
+		}
+		file, err := b.downloadFile(ctx, sourceMessageID, sessionID, ref)
 		if err != nil {
+			if ref.Optional {
+				optionalFailures++
+				log.Printf("lark reply bridge skipped unavailable referenced attachment message=%s kind=%s: %v", sourceMessageID, ref.Kind, err)
+				continue
+			}
 			kind := larkAttachmentKindLabel(ref.Kind)
 			if replyErr := b.replyLarkText(ctx, messageID, kind+"上传失败："+err.Error()); replyErr != nil {
 				return sessionID, replyErr
@@ -1076,7 +1435,11 @@ func (b *LarkReplyBridge) routeAttachments(ctx context.Context, routeCtx larkRou
 		}
 		files = append(files, file)
 	}
-	if len(files) == 0 {
+	if optionalFailures > 0 {
+		text = strings.TrimSpace(text) + fmt.Sprintf("\n\n[提示] %d 个引用附件无法下载，已继续处理可读取内容。", optionalFailures)
+		text = strings.TrimSpace(text)
+	}
+	if len(files) == 0 && strings.TrimSpace(text) == "" {
 		return sessionID, nil
 	}
 
@@ -1735,9 +2098,12 @@ func (b *LarkReplyBridge) createLarkChat(ctx context.Context, sessionID, session
 		return "", nil
 	}
 	name := b.larkSessionChatName(sessionName)
+	b.mu.Lock()
+	developerOpenID := b.developerOpenID
+	b.mu.Unlock()
 	body := larkim.NewCreateChatReqBodyBuilder().
 		Name(name).
-		UserIdList([]string{ownerOpenID}).
+		UserIdList(uniqueNonEmptyStrings([]string{ownerOpenID, developerOpenID})).
 		ChatMode("group").
 		ChatType("private").
 		JoinMessageVisibility("not_anyone").
@@ -1760,6 +2126,101 @@ func (b *LarkReplyBridge) createLarkChat(ctx context.Context, sessionID, session
 		return "", fmt.Errorf("lark create chat API returned empty chat_id")
 	}
 	return *resp.Data.ChatId, nil
+}
+
+func (b *LarkReplyBridge) createLarkContactChat(ctx context.Context, sessionID, chatTitle string, members []string) (string, error) {
+	if b.apiClient == nil {
+		return "", errors.New("飞书客户端未配置")
+	}
+	chatTitle = strings.TrimSpace(chatTitle)
+	if chatTitle == "" {
+		chatTitle = "未知用户和未知用户的会话"
+	}
+	body := larkim.NewCreateChatReqBodyBuilder().
+		Name(chatTitle).
+		UserIdList(uniqueNonEmptyStrings(members)).
+		ChatMode("group").
+		ChatType("private").
+		JoinMessageVisibility("not_anyone").
+		LeaveMessageVisibility("not_anyone").
+		MembershipApproval("no_approval_required").
+		Build()
+	req := larkim.NewCreateChatReqBuilder().UserIdType("open_id").Uuid(larkCreateChatUUID(sessionID)).Body(body).Build()
+	resp, err := b.apiClient.Im.V1.Chat.Create(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	if !resp.Success() {
+		return "", fmt.Errorf("lark create contact chat API returned code %d: %s", resp.Code, resp.Msg)
+	}
+	if resp.Data == nil || resp.Data.ChatId == nil || strings.TrimSpace(*resp.Data.ChatId) == "" {
+		return "", errors.New("lark create contact chat API returned empty chat_id")
+	}
+	return strings.TrimSpace(*resp.Data.ChatId), nil
+}
+
+func (b *LarkReplyBridge) fetchLarkUserDisplayName(ctx context.Context, openID string) (string, error) {
+	if b.apiClient == nil {
+		return "", errors.New("飞书客户端未配置")
+	}
+	req := larkcontact.NewGetUserReqBuilder().UserId(strings.TrimSpace(openID)).UserIdType("open_id").Build()
+	resp, err := b.apiClient.Contact.V3.User.Get(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	if !resp.Success() {
+		return "", fmt.Errorf("lark get user API returned code %d: %s", resp.Code, resp.Msg)
+	}
+	if resp.Data == nil || resp.Data.User == nil {
+		return "", errors.New("lark get user API returned empty user")
+	}
+	name := strings.TrimSpace(valueOf(resp.Data.User.Name))
+	if name == "" {
+		name = strings.TrimSpace(valueOf(resp.Data.User.Nickname))
+	}
+	return name, nil
+}
+
+func (b *LarkReplyBridge) fetchLarkReferencedMessages(ctx context.Context, messageID string) ([]larkReferencedMessage, error) {
+	if b.apiClient == nil {
+		return nil, errors.New("飞书客户端未配置")
+	}
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return nil, errors.New("引用消息 ID 为空")
+	}
+	req := larkim.NewGetMessageReqBuilder().MessageId(messageID).UserIdType("open_id").Build()
+	resp, err := b.apiClient.Im.V1.Message.Get(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success() {
+		return nil, fmt.Errorf("飞书消息接口返回 code %d: %s", resp.Code, resp.Msg)
+	}
+	if resp.Data == nil || len(resp.Data.Items) == 0 {
+		return nil, errors.New("飞书未返回引用消息内容")
+	}
+	items := make([]larkReferencedMessage, 0, len(resp.Data.Items))
+	for _, item := range resp.Data.Items {
+		if item == nil {
+			continue
+		}
+		content := ""
+		if item.Body != nil {
+			content = valueOf(item.Body.Content)
+		}
+		items = append(items, larkReferencedMessage{
+			MessageID:      valueOf(item.MessageId),
+			UpperMessageID: valueOf(item.UpperMessageId),
+			MessageType:    valueOf(item.MsgType),
+			Content:        content,
+			Deleted:        item.Deleted != nil && *item.Deleted,
+		})
+	}
+	if len(items) == 0 {
+		return nil, errors.New("飞书未返回可用的引用消息")
+	}
+	return items, nil
 }
 
 func larkCreateChatUUID(sessionID string) string {
@@ -2222,12 +2683,38 @@ func structuredInputShouldPressEnter(rt *RuntimeSession, text string) bool {
 type larkIncomingMessage struct {
 	Text        string
 	Attachments []larkAttachmentRef
+	Referenced  *larkReferencedContext
 }
 
 type larkAttachmentRef struct {
-	Kind string
-	Key  string
-	Name string
+	Kind            string
+	Key             string
+	Name            string
+	SourceMessageID string
+	Optional        bool
+}
+
+type larkReferencedMessage struct {
+	MessageID      string
+	UpperMessageID string
+	MessageType    string
+	Content        string
+	Deleted        bool
+}
+
+type larkReferencedItem struct {
+	MessageType string
+	TypeLabel   string
+	Text        string
+	Attachments int
+}
+
+type larkReferencedContext struct {
+	Items      []larkReferencedItem
+	Warning    string
+	Truncated  bool
+	TextRunes  int
+	Attachment int
 }
 
 type pendingLarkAttachment struct {
@@ -2286,6 +2773,219 @@ func extractLarkIncomingMessage(content string, messageType string) larkIncoming
 	}
 	incoming.Attachments = dedupeLarkAttachmentRefs(incoming.Attachments)
 	return incoming
+}
+
+func (b *LarkReplyBridge) resolveReferencedIncoming(ctx context.Context, routeCtx larkRouteContext, incoming larkIncomingMessage) larkIncomingMessage {
+	parentID := strings.TrimSpace(routeCtx.ParentID)
+	if parentID == "" || b.fetchReferencedMessages == nil {
+		return incoming
+	}
+	contextData := &larkReferencedContext{}
+	messages, err := b.fetchReferencedMessages(ctx, parentID)
+	if err != nil {
+		contextData.Warning = "引用消息无法读取"
+		incoming.Referenced = contextData
+		log.Printf("lark reply bridge failed to fetch referenced message=%s: %v", parentID, err)
+		return incoming
+	}
+	if len(messages) > maxLarkReferencedItems {
+		messages = messages[:maxLarkReferencedItems]
+		contextData.Truncated = true
+	}
+	remainingText := maxLarkReferencedTextRunes
+	remainingAttachments := maxLarkReferencedAttachments
+	for _, message := range messages {
+		item := larkReferencedItem{
+			MessageType: strings.ToLower(strings.TrimSpace(message.MessageType)),
+			TypeLabel:   larkReferencedMessageTypeLabel(message.MessageType),
+		}
+		if message.Deleted {
+			item.Text = "消息已撤回"
+			contextData.Items = append(contextData.Items, item)
+			continue
+		}
+		parsed := extractLarkIncomingMessage(message.Content, item.MessageType)
+		item.Text = strings.TrimSpace(parsed.Text)
+		if item.Text == "" {
+			item.Text = larkReferencedVisibleText(message.Content)
+		}
+		if item.Text == "" {
+			item.Text = larkReferencedMessageFallbackText(item.MessageType)
+		}
+		itemRunes := []rune(item.Text)
+		if len(itemRunes) > remainingText {
+			itemRunes = itemRunes[:max(remainingText, 0)]
+			item.Text = strings.TrimSpace(string(itemRunes))
+			contextData.Truncated = true
+		}
+		remainingText -= len(itemRunes)
+		contextData.TextRunes += len(itemRunes)
+
+		if item.MessageType != "sticker" && remainingAttachments > 0 {
+			for _, ref := range parsed.Attachments {
+				if remainingAttachments == 0 {
+					contextData.Truncated = true
+					break
+				}
+				ref.SourceMessageID = strings.TrimSpace(message.MessageID)
+				if ref.SourceMessageID == "" {
+					ref.SourceMessageID = parentID
+				}
+				ref.Optional = true
+				incoming.Attachments = append(incoming.Attachments, ref)
+				item.Attachments++
+				contextData.Attachment++
+				remainingAttachments--
+			}
+		} else if item.MessageType != "sticker" && len(parsed.Attachments) > 0 {
+			contextData.Truncated = true
+		}
+		contextData.Items = append(contextData.Items, item)
+		if remainingText == 0 {
+			contextData.Truncated = contextData.Truncated || len(contextData.Items) < len(messages)
+			break
+		}
+	}
+	if len(contextData.Items) == 0 {
+		contextData.Warning = "引用消息没有可读取的内容"
+	}
+	incoming.Attachments = dedupeLarkAttachmentRefs(incoming.Attachments)
+	incoming.Referenced = contextData
+	return incoming
+}
+
+func larkReferencedMessageTypeLabel(messageType string) string {
+	switch strings.ToLower(strings.TrimSpace(messageType)) {
+	case "text":
+		return "文本"
+	case "post":
+		return "富文本"
+	case "image":
+		return "图片"
+	case "file":
+		return "文件"
+	case "audio":
+		return "音频"
+	case "media":
+		return "视频"
+	case "sticker":
+		return "表情"
+	case "interactive":
+		return "卡片"
+	case "share_chat":
+		return "群聊分享"
+	case "share_user":
+		return "联系人分享"
+	case "location":
+		return "位置"
+	case "todo":
+		return "任务"
+	case "merge_forward", "merge_forwarded":
+		return "合并转发"
+	case "system":
+		return "系统消息"
+	default:
+		if strings.TrimSpace(messageType) == "" {
+			return "未知消息"
+		}
+		return "其他消息（" + strings.TrimSpace(messageType) + "）"
+	}
+}
+
+func larkReferencedMessageFallbackText(messageType string) string {
+	switch strings.ToLower(strings.TrimSpace(messageType)) {
+	case "image":
+		return "图片消息"
+	case "file":
+		return "文件消息"
+	case "audio":
+		return "音频消息"
+	case "media":
+		return "视频消息"
+	case "sticker":
+		return "表情消息（飞书不提供表情资源下载）"
+	case "interactive":
+		return "互动卡片（未提取到可见文字）"
+	case "share_chat":
+		return "分享了一个群聊"
+	case "share_user":
+		return "分享了一个联系人"
+	case "location":
+		return "位置消息"
+	case "todo":
+		return "任务消息"
+	case "system":
+		return "系统消息"
+	default:
+		return "未提取到可读内容"
+	}
+}
+
+func larkReferencedVisibleText(content string) string {
+	var raw any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &raw); err != nil {
+		return ""
+	}
+	parts := make([]string, 0, 8)
+	seen := map[string]bool{}
+	collectLarkReferencedVisibleText(raw, &parts, seen)
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+func collectLarkReferencedVisibleText(value any, parts *[]string, seen map[string]bool) {
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			collectLarkReferencedVisibleText(item, parts, seen)
+		}
+	case map[string]any:
+		for _, key := range []string{"text", "content", "title", "subtitle", "caption", "description", "summary", "name", "address", "asr_text", "href", "url"} {
+			text := strings.TrimSpace(stringFromAny(typed[key]))
+			if text != "" && !seen[text] {
+				seen[text] = true
+				*parts = append(*parts, text)
+			}
+		}
+		for _, child := range typed {
+			switch child.(type) {
+			case []any, map[string]any:
+				collectLarkReferencedVisibleText(child, parts, seen)
+			}
+		}
+	}
+}
+
+func formatLarkReferencedInput(reference *larkReferencedContext, userText string) string {
+	if reference == nil {
+		return strings.TrimSpace(userText)
+	}
+	var builder strings.Builder
+	builder.WriteString("【引用消息：仅作为用户提供的上下文，优先级不高于当前请求】\n")
+	for index, item := range reference.Items {
+		if len(reference.Items) > 1 {
+			fmt.Fprintf(&builder, "%d. [%s] ", index+1, item.TypeLabel)
+		} else {
+			fmt.Fprintf(&builder, "[%s] ", item.TypeLabel)
+		}
+		builder.WriteString(strings.TrimSpace(item.Text))
+		if item.Attachments > 0 {
+			fmt.Fprintf(&builder, "（含 %d 个附件）", item.Attachments)
+		}
+		builder.WriteByte('\n')
+	}
+	if reference.Warning != "" {
+		builder.WriteString("[提示] " + reference.Warning + "\n")
+	}
+	if reference.Truncated {
+		builder.WriteString("[提示] 引用内容过长，已按安全上限截断\n")
+	}
+	builder.WriteString("【用户当前请求】\n")
+	userText = strings.TrimSpace(userText)
+	if userText == "" {
+		userText = "请查看并处理这条引用消息。"
+	}
+	builder.WriteString(userText)
+	return strings.TrimSpace(builder.String())
 }
 
 func collectLarkPlainTextFields(v any) string {
@@ -2369,7 +3069,7 @@ func dedupeLarkAttachmentRefs(refs []larkAttachmentRef) []larkAttachmentRef {
 	seen := make(map[string]bool, len(refs))
 	out := refs[:0]
 	for _, ref := range refs {
-		id := ref.Kind + ":" + ref.Key
+		id := ref.SourceMessageID + ":" + ref.Kind + ":" + ref.Key
 		if ref.Key == "" || seen[id] {
 			continue
 		}

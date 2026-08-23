@@ -23,12 +23,15 @@ type Server struct {
 	manager             *session.Manager
 	uploadsDir          string
 	config              ConfigService
+	securityConfig      SecurityConfigService
+	settingsAuth        *settingsAuth
 	larkAppRegistration interface {
 		Begin(context.Context, string) (LarkAppRegistrationBegin, error)
 		Poll(context.Context, string, string) (LarkAppRegistrationResult, error)
 	}
-	larkConfigTester LarkConfigTester
-	mux              *http.ServeMux
+	larkConfigTester   LarkConfigTester
+	environmentChecker EnvironmentChecker
+	mux                *http.ServeMux
 }
 
 func NewServer(manager *session.Manager, uploadsDir string, config ...ConfigService) *Server {
@@ -37,10 +40,15 @@ func NewServer(manager *session.Manager, uploadsDir string, config ...ConfigServ
 		uploadsDir:          uploadsDir,
 		larkAppRegistration: newLarkAppRegistrationClient(),
 		larkConfigTester:    realLarkConfigTester{probe: manager},
+		environmentChecker:  realEnvironmentChecker{},
 		mux:                 http.NewServeMux(),
+		settingsAuth:        newSettingsAuth(),
 	}
 	if len(config) > 0 {
 		s.config = config[0]
+		if security, ok := config[0].(SecurityConfigService); ok {
+			s.securityConfig = security
+		}
 	}
 	s.routes()
 	return s
@@ -56,9 +64,39 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/quick-commands/", s.handleQuickCommandByID)
 	s.mux.HandleFunc("/api/config", s.handleConfig)
 	s.mux.HandleFunc("/api/config/lark-test", s.handleLarkConfigTest)
+	s.mux.HandleFunc("/api/environment-check", s.handleEnvironmentCheck)
 	s.mux.HandleFunc("/api/lark-app-registration", s.handleLarkAppRegistration)
 	s.mux.HandleFunc("/api/lark-app-registration/poll", s.handleLarkAppRegistrationPoll)
 	s.mux.HandleFunc("/api/lark-app-registration/qr", s.handleLarkAppRegistrationQR)
+	s.mux.HandleFunc("/api/settings/security/", s.handleSettingsSecurity)
+	s.mux.HandleFunc("/api/settings/security", s.handleSettingsSecurity)
+}
+
+func (s *Server) handleEnvironmentCheck(w http.ResponseWriter, r *http.Request) {
+	if !s.requireSettingsAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.environmentChecker == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("环境检测暂不可用"))
+		return
+	}
+	cfg := RuntimeConfig{}
+	if s.config != nil {
+		cfg = s.config.RuntimeConfig()
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		var submitted RuntimeConfig
+		if err := decodeLimitedJSON(w, r, &submitted); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		cfg = submitted
+	}
+	writeJSON(w, http.StatusOK, s.environmentChecker.Check(r.Context(), cfg, s.uploadsDir), nil)
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +132,13 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		list, err := s.manager.ListSessions(r.Context())
 		writeJSON(w, http.StatusOK, list, err)
 	case http.MethodPost:
+		if s.config != nil {
+			cfg := s.config.RuntimeConfig()
+			if strings.TrimSpace(cfg.AgentKind) == "" || strings.TrimSpace(cfg.AgentCommand) == "" {
+				writeError(w, http.StatusPreconditionRequired, errors.New("请先在设置中配置 Agent"))
+				return
+			}
+		}
 		var req struct {
 			Name string `json:"name"`
 		}
@@ -235,15 +280,15 @@ func (s *Server) handleAgentHook(w http.ResponseWriter, r *http.Request, session
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	codexThreadID := strings.TrimSpace(payload.SessionID)
-	if codexThreadID == "" {
-		codexThreadID = strings.TrimSpace(payload.ThreadID)
+	agentSessionID := strings.TrimSpace(payload.SessionID)
+	if agentSessionID == "" {
+		agentSessionID = strings.TrimSpace(payload.ThreadID)
 	}
 	lastAssistantMessage := strings.TrimSpace(payload.LastAssistantMessage)
 	if lastAssistantMessage == "" {
 		lastAssistantMessage = strings.TrimSpace(payload.LegacyLastAssistantMessage)
 	}
-	sess, accepted, err := s.manager.CompleteAgentTurn(r.Context(), sessionID, token, codexThreadID, lastAssistantMessage)
+	sess, accepted, err := s.manager.CompleteAgentTurn(r.Context(), sessionID, token, agentSessionID, lastAssistantMessage)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err)
 		return

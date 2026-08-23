@@ -8,11 +8,10 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 
 const root = path.resolve(new URL("..", import.meta.url).pathname);
-const bin = path.join(root, "easy_terminal");
-const codexBin = process.env.CODEX_BIN || "codex";
+const bin = path.join(root, "iris");
 const port = process.env.E2E_PORT ? Number(process.env.E2E_PORT) : await freePort();
 const chromePort = process.env.E2E_CHROME_PORT ? Number(process.env.E2E_CHROME_PORT) : await freePort();
-const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "easy-terminal-codex-e2e-"));
+const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "iris-codex-e2e-"));
 
 let server;
 let chrome;
@@ -27,8 +26,9 @@ async function main() {
       env: {
         ...process.env,
         PORT: String(port),
+        IRIS_HOME: tmp,
         TERMINAL_WORKING_DIR: root,
-        AGENT_MONITOR_DB: path.join(tmp, "easy_terminal.db"),
+        AGENT_MONITOR_DB: path.join(tmp, "iris.db"),
         AGENT_MONITOR_UPLOADS_DIR: path.join(tmp, "data", "uploads"),
         AGENT_MONITOR_LOG_DIR: path.join(tmp, "log"),
         EASY_TERMINAL_E2E_DEBUG: "1",
@@ -58,13 +58,12 @@ async function main() {
     await waitFor(() => evalExpr("document.readyState === 'complete' || document.readyState === 'interactive'"));
     await waitFor(() => evalExpr("Boolean(window.easyTerminalApp && document.querySelector('#session-name'))"));
 
+    await initializeIrisForCodexE2E();
+
     await createSession("real-codex-tui-e2e");
     await waitFor(() => evalExpr("window.easyTerminalApp.state.active && window.easyTerminalApp.state.socket && window.easyTerminalApp.state.socket.readyState === WebSocket.OPEN"));
     await waitForTerminalSize();
-    await waitFor(() => fetchJSON(`http://localhost:${port}/api/sessions`).then((sessions) => sessions[0]?.status === "waiting"), 10000);
-
-    await submitComposer(`${shellSingleQuote(codexBin)} --dangerously-bypass-approvals-and-sandbox -C ${shellSingleQuote(root)}`);
-    const bootSnapshot = await waitForAnyTerminalSnapshot(["OpenAI Codex", "model:", "directory:"], 45000);
+    const bootSnapshot = await completeCodexStartup();
     assertNoMojibake(bootSnapshot);
     assert.equal(/login|sign in/i.test(bootSnapshot), false, "Codex CLI should be logged in before running this e2e test");
 
@@ -92,6 +91,46 @@ async function main() {
     await terminateProcess(server);
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+async function initializeIrisForCodexE2E() {
+  await waitFor(() => evalExpr("document.querySelector('#settings-access-dialog').open === true"));
+  await evalExpr(`
+    document.querySelector('#settings-access-password').value = 'codex-e2e-password';
+    document.querySelector('#settings-access-form').requestSubmit();
+    true
+  `);
+  await waitFor(() => evalExpr("document.querySelector('#onboarding-dialog').open === true"));
+  await evalExpr(`
+    document.querySelector('#onboarding-agent-preset').value = 'codex';
+    document.querySelector('#onboarding-agent-preset').dispatchEvent(new Event('change', { bubbles: true }));
+    document.querySelector('#onboarding-config').click();
+    true
+  `);
+  await waitFor(() => evalExpr("document.querySelector('#onboarding-dialog').open !== true"));
+}
+
+async function completeCodexStartup() {
+  let snapshot = await waitForAnyTerminalSnapshot([
+    "OpenAI Codex", "model:", "directory:", "Update available!", "Do you trust the contents of this directory?",
+  ], 45000);
+  for (let attempt = 0; attempt < 6; attempt++) {
+    if (snapshot.includes("OpenAI Codex") || snapshot.includes("model:") || snapshot.includes("directory:")) {
+      return snapshot;
+    }
+    if (snapshot.includes("Update available!")) {
+      await submitComposer("2");
+      snapshot = await waitForAnyTerminalSnapshot(["OpenAI Codex", "model:", "directory:", "Do you trust the contents of this directory?"], 30000);
+      continue;
+    }
+    if (snapshot.includes("Do you trust the contents of this directory?")) {
+      await submitComposer("1");
+      snapshot = await waitForAnyTerminalSnapshot(["OpenAI Codex", "model:", "directory:"], 30000);
+      continue;
+    }
+    return snapshot;
+  }
+  throw new Error("Codex startup did not finish after handling interactive prompts");
 }
 
 async function runCodexPromptNotificationContentE2E() {
@@ -236,10 +275,6 @@ function hasCollapsedNumberedMenu(snapshot, numbers) {
     const normalized = line.replace(/\s+/g, " ");
     return numbers.every((number) => normalized.includes(`${number}.`));
   });
-}
-
-function shellSingleQuote(text) {
-  return "'" + String(text).replace(/'/g, "'\\''") + "'";
 }
 
 async function evalExpr(expression) {

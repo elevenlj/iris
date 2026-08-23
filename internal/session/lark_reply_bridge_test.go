@@ -51,6 +51,162 @@ func TestExtractLarkIncomingMessageWithPostAttachments(t *testing.T) {
 	}
 }
 
+func TestLarkReplyBridgeReferencedTextIsSubmittedAsContext(t *testing.T) {
+	resetLarkRegistryForTest()
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	bridge.fetchReferencedMessages = func(context.Context, string) ([]larkReferencedMessage, error) {
+		return []larkReferencedMessage{{
+			MessageID: "quoted-message", MessageType: "text", Content: `{"text":"这是被引用的原消息"}`,
+		}}, nil
+	}
+	sess, err := manager.CreateSession(context.Background(), "引用测试")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := manager.GetRuntime(sess.ID)
+	rt.mu.Lock()
+	rt.session.Status = StatusWaiting
+	rt.mu.Unlock()
+	defaultLarkMessageRegistry.remember(sess.ID, "quoted-message")
+
+	oldDelay := structuredInputEnterDelay
+	structuredInputEnterDelay = 0
+	defer func() { structuredInputEnterDelay = oldDelay }()
+	_, err = bridge.RouteIncomingWithContext(context.Background(), larkRouteContext{
+		MessageID: "current-message", ParentID: "quoted-message",
+	}, larkIncomingMessage{Text: "请总结重点"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writes := launcher.terminals[0].writes()
+	for _, want := range []string{"【引用消息：仅作为用户提供的上下文", "[文本] 这是被引用的原消息", "【用户当前请求】", "请总结重点"} {
+		if !strings.Contains(writes, want) {
+			t.Fatalf("submitted input should contain %q: %s", want, writes)
+		}
+	}
+}
+
+func TestLarkReplyBridgeReferencedAttachmentUsesOriginalMessageAndDegradesOnFailure(t *testing.T) {
+	resetLarkRegistryForTest()
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	bridge.fetchReferencedMessages = func(context.Context, string) ([]larkReferencedMessage, error) {
+		return []larkReferencedMessage{{
+			MessageID: "quoted-image", MessageType: "image", Content: `{"image_key":"img-quoted"}`,
+		}}, nil
+	}
+	var downloadedFrom string
+	bridge.downloadFile = func(_ context.Context, messageID, _ string, ref larkAttachmentRef) (pendingLarkAttachment, error) {
+		downloadedFrom = messageID
+		if !ref.Optional || ref.SourceMessageID != "quoted-image" {
+			t.Fatalf("quoted attachment metadata = %#v", ref)
+		}
+		return pendingLarkAttachment{}, errors.New("resource unavailable")
+	}
+	sess, err := manager.CreateSession(context.Background(), "引用图片测试")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := manager.GetRuntime(sess.ID)
+	rt.mu.Lock()
+	rt.session.Status = StatusWaiting
+	rt.mu.Unlock()
+	defaultLarkMessageRegistry.remember(sess.ID, "quoted-image")
+
+	oldDelay := structuredInputEnterDelay
+	structuredInputEnterDelay = 0
+	defer func() { structuredInputEnterDelay = oldDelay }()
+	_, err = bridge.RouteIncomingWithContext(context.Background(), larkRouteContext{
+		MessageID: "current-message", ParentID: "quoted-image",
+	}, larkIncomingMessage{Text: "分析这张图"})
+	if err != nil {
+		t.Fatalf("optional referenced attachment failure must not block input: %v", err)
+	}
+	if downloadedFrom != "quoted-image" {
+		t.Fatalf("attachment downloaded from %q, want quoted-image", downloadedFrom)
+	}
+	writes := launcher.terminals[0].writes()
+	if !strings.Contains(writes, "[图片] 图片消息") || !strings.Contains(writes, "引用附件无法下载") || !strings.Contains(writes, "分析这张图") {
+		t.Fatalf("degraded referenced input = %q", writes)
+	}
+}
+
+func TestResolveReferencedIncomingSupportsRichCardStickerAndLimits(t *testing.T) {
+	bridge := NewLarkReplyBridge("app", "secret", nil, t.TempDir())
+	messages := []larkReferencedMessage{
+		{MessageID: "post-1", MessageType: "post", Content: `{"content":[[{"tag":"text","text":"方案说明"},{"tag":"img","image_key":"img-1"},{"tag":"file","file_key":"file-1","file_name":"方案.pdf"}]]}`},
+		{MessageID: "card-1", MessageType: "interactive", Content: `{"header":{"title":{"tag":"plain_text","content":"审批结果"}},"body":{"elements":[{"tag":"div","text":{"tag":"plain_text","content":"已通过"}}]}}`},
+		{MessageID: "sticker-1", MessageType: "sticker", Content: `{"file_key":"sticker-1"}`},
+	}
+	bridge.fetchReferencedMessages = func(context.Context, string) ([]larkReferencedMessage, error) {
+		return messages, nil
+	}
+	got := bridge.resolveReferencedIncoming(context.Background(), larkRouteContext{ParentID: "parent"}, larkIncomingMessage{Text: "继续"})
+	if got.Referenced == nil || len(got.Referenced.Items) != 3 {
+		t.Fatalf("referenced context = %#v", got.Referenced)
+	}
+	if got.Referenced.Items[0].TypeLabel != "富文本" || got.Referenced.Items[0].Text != "方案说明" || got.Referenced.Items[0].Attachments != 2 {
+		t.Fatalf("post reference = %#v", got.Referenced.Items[0])
+	}
+	if !strings.Contains(got.Referenced.Items[1].Text, "审批结果") || !strings.Contains(got.Referenced.Items[1].Text, "已通过") {
+		t.Fatalf("card visible text = %q", got.Referenced.Items[1].Text)
+	}
+	if got.Referenced.Items[2].Text != "表情消息（飞书不提供表情资源下载）" || got.Referenced.Items[2].Attachments != 0 {
+		t.Fatalf("sticker reference = %#v", got.Referenced.Items[2])
+	}
+	if len(got.Attachments) != 2 || got.Attachments[0].SourceMessageID != "post-1" || !got.Attachments[0].Optional {
+		t.Fatalf("referenced attachments = %#v", got.Attachments)
+	}
+
+	bridge.fetchReferencedMessages = func(context.Context, string) ([]larkReferencedMessage, error) {
+		many := make([]larkReferencedMessage, maxLarkReferencedItems+5)
+		for i := range many {
+			many[i] = larkReferencedMessage{MessageID: "m", MessageType: "text", Content: `{"text":"内容"}`}
+		}
+		return many, nil
+	}
+	limited := bridge.resolveReferencedIncoming(context.Background(), larkRouteContext{ParentID: "parent"}, larkIncomingMessage{})
+	if len(limited.Referenced.Items) != maxLarkReferencedItems || !limited.Referenced.Truncated {
+		t.Fatalf("referenced item limit = %#v", limited.Referenced)
+	}
+}
+
+func TestLarkReplyBridgeReferencedFetchFailureStillSubmitsCurrentRequest(t *testing.T) {
+	resetLarkRegistryForTest()
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	bridge.fetchReferencedMessages = func(context.Context, string) ([]larkReferencedMessage, error) {
+		return nil, errors.New("permission denied")
+	}
+	sess, err := manager.CreateSession(context.Background(), "引用降级测试")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := manager.GetRuntime(sess.ID)
+	rt.mu.Lock()
+	rt.session.Status = StatusWaiting
+	rt.mu.Unlock()
+	defaultLarkMessageRegistry.remember(sess.ID, "quoted-unavailable")
+
+	oldDelay := structuredInputEnterDelay
+	structuredInputEnterDelay = 0
+	defer func() { structuredInputEnterDelay = oldDelay }()
+	_, err = bridge.RouteIncomingWithContext(context.Background(), larkRouteContext{
+		MessageID: "current-message", ParentID: "quoted-unavailable",
+	}, larkIncomingMessage{Text: "即使引用失效也继续回答"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writes := launcher.terminals[0].writes()
+	if !strings.Contains(writes, "引用消息无法读取") || !strings.Contains(writes, "即使引用失效也继续回答") {
+		t.Fatalf("fetch failure fallback = %q", writes)
+	}
+}
+
 func TestLarkReplyBridgeAddsProcessingReactionForP2Message(t *testing.T) {
 	resetLarkRegistryForTest()
 	launcher := &recordingLauncher{}
@@ -142,6 +298,112 @@ func TestLarkReplyBridgeBotAddedCreatesBoundMentionModeAgentSession(t *testing.T
 	}
 	if len(launcher.terminals) != 1 || len(chatMessages) != 1 {
 		t.Fatalf("duplicate event created side effects: terminals=%d messages=%#v", len(launcher.terminals), chatMessages)
+	}
+}
+
+func TestLarkReplyBridgeDirectContactCreatesAndReusesAssistantGroup(t *testing.T) {
+	resetLarkRegistryForTest()
+	store := newMemoryStore()
+	launcher := &recordingLauncher{}
+	manager := NewManager(store, launcher)
+	manager.SetAgentConfig(AgentConfig{Kind: "codex", Command: "codex --dangerously-bypass-approvals-and-sandbox"}, nil)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	bridge.SetDeveloperOpenID("ou-owner")
+	bridge.addReaction = func(context.Context, string, string) error { return nil }
+	bridge.fetchUserDisplayName = func(_ context.Context, openID string) (string, error) {
+		switch openID {
+		case "ou-user":
+			return "小林", nil
+		case "ou-owner":
+			return "Eleven", nil
+		default:
+			return "", errors.New("unknown user")
+		}
+	}
+	created := 0
+	bridge.createContactChat = func(_ context.Context, sessionID, chatTitle string, members []string) (string, error) {
+		created++
+		if chatTitle != "小林和Eleven的会话" || len(members) != 2 || members[0] != "ou-user" || members[1] != "ou-owner" {
+			t.Fatalf("unexpected contact chat request: session=%s title=%q members=%#v", sessionID, chatTitle, members)
+		}
+		return "oc-contact", nil
+	}
+	var messages []string
+	bridge.sendChatText = func(_ context.Context, chatID, text string) error {
+		messages = append(messages, chatID+":"+text)
+		return nil
+	}
+
+	if err := bridge.HandleP2MessageReceive(context.Background(), p2MessageWithChat("m-contact-1", "", "", "text", `{"text":"我想约个时间"}`, "p2p", "oc-direct", "ou-user")); err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.HandleP2MessageReceive(context.Background(), p2MessageWithChat("m-contact-2", "", "", "text", `{"text":"明天下午可以吗"}`, "p2p", "oc-direct", "ou-user")); err != nil {
+		t.Fatal(err)
+	}
+	if created != 1 || len(launcher.terminals) != 1 {
+		t.Fatalf("contact conversation should be reused: created=%d terminals=%d", created, len(launcher.terminals))
+	}
+	binding, ok, err := store.GetLarkContactBinding(context.Background(), "ou-user")
+	if err != nil || !ok || binding.ChatID != "oc-contact" || binding.DisplayName != "小林" || !binding.Active {
+		t.Fatalf("unexpected contact binding: %#v ok=%v err=%v", binding, ok, err)
+	}
+	sess, ok, err := manager.GetSession(context.Background(), binding.SessionID)
+	if err != nil || !ok || !sess.LarkMentionModeEnabled || sess.DeveloperModeEnabled || sess.LastAgentKind != "codex" {
+		t.Fatalf("unexpected contact session: %#v ok=%v err=%v", sess, ok, err)
+	}
+	if sess.Name != "小林和Eleven的会话" {
+		t.Fatalf("contact session name = %q", sess.Name)
+	}
+	if got := launcher.terminals[0].writes(); !strings.Contains(got, "codex --dangerously-bypass-approvals-and-sandbox\r") {
+		t.Fatalf("configured Agent should start in the terminal: %q", got)
+	}
+	bridge.mu.Lock()
+	queued := append([]larkPipelineInput(nil), bridge.pipelines[binding.SessionID]...)
+	bridge.mu.Unlock()
+	if len(queued) != 2 || queued[0].Text != "我想约个时间" || queued[1].Text != "明天下午可以吗" {
+		t.Fatalf("contact messages should queue while Agent starts: %#v", queued)
+	}
+	joined := strings.Join(messages, "\n")
+	if !strings.Contains(joined, "oc-contact:小林：我想约个时间") || !strings.Contains(joined, "oc-contact:小林：明天下午可以吗") {
+		t.Fatalf("private messages should be forwarded into the contact group: %#v", messages)
+	}
+}
+
+func TestLarkContactConversationNameUsesFullOpenIDFallback(t *testing.T) {
+	if got := larkContactConversationName("小林", "Eleven"); got != "小林和Eleven的会话" {
+		t.Fatalf("contact conversation name = %q", got)
+	}
+	if got := larkContactConversationName("ou-user-full", "ou-owner-full"); got != "ou-user-full和ou-owner-full的会话" {
+		t.Fatalf("fallback contact conversation name = %q", got)
+	}
+}
+
+func TestLarkContactConversationNameFallsBackPerUser(t *testing.T) {
+	tests := []struct {
+		name      string
+		responses map[string]string
+		want      string
+	}{
+		{name: "both names", responses: map[string]string{"ou-user": "小林", "ou-owner": "Eleven"}, want: "小林和Eleven的会话"},
+		{name: "contact open id", responses: map[string]string{"ou-owner": "Eleven"}, want: "ou-user和Eleven的会话"},
+		{name: "developer open id", responses: map[string]string{"ou-user": "小林"}, want: "小林和ou-owner的会话"},
+		{name: "both open ids", responses: map[string]string{}, want: "ou-user和ou-owner的会话"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bridge := &LarkReplyBridge{}
+			bridge.fetchUserDisplayName = func(_ context.Context, openID string) (string, error) {
+				if name := tt.responses[openID]; name != "" {
+					return name, nil
+				}
+				return "", errors.New("name unavailable")
+			}
+			contactName := bridge.larkUserDisplayNameOrOpenID(context.Background(), "ou-user")
+			developerName := bridge.larkUserDisplayNameOrOpenID(context.Background(), "ou-owner")
+			if got := larkContactConversationName(contactName, developerName); got != tt.want {
+				t.Fatalf("contact conversation name = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -270,6 +532,9 @@ func TestLarkReplyBridgeStartCreatesDedicatedChat(t *testing.T) {
 	}
 	if len(sessions) != 1 || sessions[0].LarkChatID != "oc-chat-1" {
 		t.Fatalf("created session should bind lark chat, got %#v", sessions)
+	}
+	if !sessions[0].DeveloperModeEnabled || sessions[0].LarkMentionModeEnabled {
+		t.Fatalf("private start command should enable developer mode and disable mention mode: %#v", sessions[0])
 	}
 	if got, ok := defaultLarkMessageRegistry.lookupChat("oc-chat-1"); !ok || got != "sess-1" {
 		t.Fatalf("registry chat lookup = %q,%v; want sess-1,true", got, ok)
@@ -1846,6 +2111,126 @@ func TestLarkReplyBridgeCardToggleMentionModePatchesCard(t *testing.T) {
 	}
 }
 
+func TestLarkReplyBridgeDeveloperModeToggleIsOwnerOnly(t *testing.T) {
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	bridge.SetDeveloperOpenID("ou-owner")
+	sess, err := manager.CreateSession(context.Background(), "Iris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := &callback.CallBackAction{Value: map[string]interface{}{
+		"easy_terminal_action": "toggle_developer_mode",
+		"session_id":           sess.ID,
+	}}
+	resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-guest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || !strings.Contains(resp.Toast.Content, "只有配置的开发者") {
+		t.Fatalf("guest should be rejected: %#v", resp)
+	}
+	if manager.sessions[sess.ID].Snapshot().DeveloperModeEnabled {
+		t.Fatal("guest must not enable developer mode")
+	}
+	resp, err = bridge.handleCardAction(context.Background(), action, "", "", "ou-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || resp.Toast.Content != "已开启开发者模式" {
+		t.Fatalf("owner toggle response = %#v", resp)
+	}
+	if !manager.sessions[sess.ID].Snapshot().DeveloperModeEnabled {
+		t.Fatal("owner should enable developer mode")
+	}
+}
+
+func TestLarkReplyBridgeWorkspaceSelectionRequiresDeveloperModeAndUsesConfiguredPath(t *testing.T) {
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	workspace := t.TempDir()
+	manager.SetAgentConfig(AgentConfig{Kind: "codex", Command: "codex"}, []WorkspaceOption{{Label: "项目", Value: workspace, Default: true}})
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	sess, err := manager.CreateSession(context.Background(), "Iris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := &callback.CallBackAction{Option: workspace, Value: map[string]interface{}{
+		"easy_terminal_action": "workspace_select",
+		"session_id":           sess.ID,
+	}}
+	resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || resp.Toast.Content != "请先开启开发者模式" {
+		t.Fatalf("workspace selection should be hidden behind developer mode: %#v", resp)
+	}
+	if _, _, err := manager.UpdateDeveloperMode(context.Background(), sess.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	resp, err = bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || !strings.Contains(resp.Toast.Content, "已切换目录") {
+		t.Fatalf("ordinary members should be able to use visible workspace selector: %#v", resp)
+	}
+	updated, ok, err := manager.GetSession(context.Background(), sess.ID)
+	if err != nil || !ok || updated.LastCWD != workspace {
+		t.Fatalf("workspace metadata was not updated: %#v ok=%v err=%v", updated, ok, err)
+	}
+	if writes := launcher.terminals[0].writes(); !strings.Contains(writes, "/cd "+workspace+"\r") {
+		t.Fatalf("Codex workspace command was not submitted: %q", writes)
+	}
+}
+
+func TestLarkReplyBridgeRestartAgentRequiresDeveloperModeAndReusesStartCommand(t *testing.T) {
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	manager.SetAgentConfig(AgentConfig{Kind: "custom", Command: "my-agent --fast"}, nil)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	sess, err := manager.CreateSession(context.Background(), "Iris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := &callback.CallBackAction{Value: map[string]interface{}{
+		"easy_terminal_action": "restart_agent",
+		"session_id":           sess.ID,
+	}}
+	resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || resp.Toast.Content != "请先开启开发者模式" {
+		t.Fatalf("restart should require developer mode: %#v", resp)
+	}
+	if _, _, err := manager.UpdateDeveloperMode(context.Background(), sess.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	before := len(launcher.terminals[0].writeParts())
+	resp, err = bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || resp.Toast.Content != "正在重启 Agent" {
+		t.Fatalf("restart response = %#v", resp)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(launcher.terminals[0].writeParts()) < before+2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	parts := launcher.terminals[0].writeParts()
+	if len(parts) < before+2 || parts[before] != "\x03\x03" || parts[before+1] != "my-agent --fast\r" {
+		t.Fatalf("restart writes = %#v", parts)
+	}
+	updated := manager.sessions[sess.ID].Snapshot()
+	if updated.LastMode != SessionModeAgent || updated.LastAgentKind != "custom" || updated.LastAgentStartCommand != "my-agent --fast" {
+		t.Fatalf("restart recovery state = %#v", updated)
+	}
+}
+
 func TestLarkReplyBridgeDisabledCardActionsAreBlockedEndToEnd(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -1887,6 +2272,12 @@ func TestLarkReplyBridgeDisabledCardActionsAreBlockedEndToEnd(t *testing.T) {
 			name: "toggle mention mode",
 			value: map[string]interface{}{
 				"easy_terminal_action": "toggle_mention_mode",
+			},
+		},
+		{
+			name: "restart agent",
+			value: map[string]interface{}{
+				"easy_terminal_action": "restart_agent",
 			},
 		},
 		{

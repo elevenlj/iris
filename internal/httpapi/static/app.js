@@ -6,6 +6,8 @@ const state = {
   fit: null,
   quick: [],
   config: null,
+  security: null,
+  settingsAccessMode: "setup",
   search: "",
   larkRegistrationTimer: null,
   editingPresetCommand: null,
@@ -35,7 +37,7 @@ const STANDARD_TERMINAL_LINE_HEIGHT = 1.2;
 const SNAPSHOT_CONTINUITY_VERSION = 2;
 const DEFAULT_SESSION_NAME = "默认会话";
 const DEFAULT_AGENT_PRESET_CODE = "999999";
-const CONFIG_TAB_IDS = ["config-session", "config-lark", "config-notify", "config-startup"];
+const CONFIG_TAB_IDS = ["config-security", "config-lark", "config-session", "config-workspaces"];
 const DROP_RULE_KINDS = [
   ["line", "行过滤"],
   ["block_head", "块首行过滤"],
@@ -92,7 +94,7 @@ function renderSessions() {
       <div class="session-head">
         <div class="session-name"></div>
         <div class="session-actions">
-          <button class="link-btn delete-btn" type="button">Delete</button>
+          <button class="link-btn delete-btn" type="button">删除</button>
         </div>
       </div>
       <div class="meta"><span class="status-${s.status}">${s.status}</span> · ${updated}</div>
@@ -127,7 +129,7 @@ function renderSessions() {
 
 function renderActiveTitle() {
   const sess = currentSession();
-  $("active-title").textContent = sess ? `${sess.name}(${sess.status})` : "No session";
+  $("active-title").textContent = sess ? `${sess.name}（${sess.status}）` : "请选择会话";
 }
 
 function currentSession() {
@@ -909,6 +911,11 @@ async function loadConfig() {
   renderConfig();
 }
 
+async function loadSecurityStatus() {
+  state.security = await api("/api/settings/security/status");
+  return state.security;
+}
+
 function renderConfig() {
   const cfg = state.config;
   if (!cfg) return;
@@ -921,9 +928,14 @@ function renderConfig() {
   $("lark-register-start").disabled = false;
   $("lark-test-start").disabled = false;
   $("lark-test-result").innerHTML = "";
-  renderDefaultAgentPresetFromStartPreset(cfg.session_start_presets || {});
+  $("environment-check-start").disabled = false;
+  $("environment-check-start").textContent = "开始检测";
+  $("environment-check-result").innerHTML = "";
+  const agentKind = cfg.agent_kind || "";
+  $("cfg-agent-preset").value = agentKind;
+  $("cfg-agent-custom-command").value = agentKind === "custom" ? (cfg.agent_command || "") : "";
   renderAgentPresetControls();
-  setAgentPresetStatus(`选择默认会话 Agent 后，会更新 ${DEFAULT_AGENT_PRESET_CODE} 默认 Agent 预设；发送“开始 会话名”会默认启动它。0 表示仅进入目录。`);
+  setAgentPresetStatus("所有新会话都会自动启动当前 Agent。");
   $("preset-session-name").value = "";
   $("start-preset-code").value = "";
   state.editingPresetCommand = null;
@@ -942,7 +954,7 @@ function renderConfig() {
   $("cfg-lark-app-secret").value = cfg.lark_app_secret || "";
   $("cfg-lark-receive-id").value = cfg.lark_notify_receive_id || "";
   $("cfg-lark-default-session-name").value = cfg.lark_default_session_name || "";
-  $("cfg-lark-session-chat-prefix").value = cfg.lark_session_chat_prefix || "ET · ";
+  $("cfg-lark-session-chat-prefix").value = cfg.lark_session_chat_prefix || "Iris · ";
   $("cfg-lark-ignore-prefix").value = cfg.lark_ignore_message_prefix || "/i";
   $("cfg-lark-auto-summary-prompt").value = cfg.lark_auto_summary_prompt || "";
   $("cfg-lark-mention-enabled").checked = Boolean(cfg.lark_mention_enabled);
@@ -951,8 +963,11 @@ function renderConfig() {
   $("cfg-lark-custom-shortcuts").value = JSON.stringify(cfg.lark_custom_shortcuts || [], null, 2);
   $("cfg-session-name-presets").value = JSON.stringify(cfg.session_name_presets || {}, null, 2);
   $("cfg-session-start-presets").value = JSON.stringify(cfg.session_start_presets || {}, null, 2);
+  $("cfg-workspace-options").value = JSON.stringify(cfg.workspace_options || [], null, 2);
   renderDropRules();
   renderCustomShortcuts();
+  renderWorkspaceOptions();
+  renderSecurityStatus();
   renderLarkPermissionGuide();
   renderPreStartCommandRows();
   renderNamePresets();
@@ -1010,18 +1025,68 @@ function moveConfigStep(delta) {
   if (nextIndex !== index) setConfigTab(CONFIG_TAB_IDS[nextIndex]);
 }
 
-async function openConfigDialog(targetID = "config-session") {
+async function openConfigDialog(targetID = "config-security") {
   if (!state.config) await loadConfig();
   renderConfig();
   setConfigTab(targetID);
   $("config-dialog").showModal();
 }
 
+function showSettingsAccess(mode = "login") {
+  state.settingsAccessMode = mode;
+  const setup = mode === "setup";
+  $("settings-access-title").textContent = setup ? "保护 Iris 设置" : "验证设置密码";
+  $("settings-access-copy").textContent = setup
+    ? "首次使用请设置一个密码，用于保护飞书凭证、Agent 命令和工作目录。"
+    : "输入设置密码后继续。";
+  $("settings-access-password-text").textContent = setup ? "设置密码" : "输入密码";
+  $("settings-access-password").value = "";
+  $("settings-access-password").autocomplete = setup ? "new-password" : "current-password";
+  $("settings-skip-confirm-row").hidden = !setup;
+  $("settings-skip-confirm-row").classList.toggle("hidden", !setup);
+  $("settings-access-skip").hidden = !setup;
+  $("settings-access-skip").classList.toggle("hidden", !setup);
+  $("settings-access-cancel").hidden = setup && Boolean(state.security?.onboarding_required);
+  $("settings-access-error").textContent = "";
+  if (!$("settings-access-dialog").open) $("settings-access-dialog").showModal();
+  setTimeout(() => $("settings-access-password").focus(), 0);
+}
+
+async function finishSettingsAccess(payload) {
+  const setup = state.settingsAccessMode === "setup";
+  await api(setup ? "/api/settings/security/setup" : "/api/settings/security/login", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  $("settings-access-dialog").close();
+  await loadSecurityStatus();
+  await loadConfig();
+  await maybeShowOnboarding();
+}
+
+async function ensureSettingsAccess(openSettings = true) {
+  const status = await loadSecurityStatus();
+  if (!status.configured && !status.skipped) {
+    showSettingsAccess("setup");
+    return false;
+  }
+  if (!status.authenticated) {
+    showSettingsAccess("login");
+    return false;
+  }
+  await loadConfig();
+  if (openSettings) await openConfigDialog();
+  return true;
+}
+
 async function maybeShowOnboarding() {
   if (!state.config || state.config.onboarding_completed) return;
   if ($("config-dialog").open || $("help-dialog").open) return;
-  state.config = await api("/api/config", { method: "PATCH", body: JSON.stringify({ ...state.config, onboarding_completed: true }) });
-  await openConfigDialog("config-session");
+  $("onboarding-default-session-name").value = state.config.lark_default_session_name || DEFAULT_SESSION_NAME;
+  $("onboarding-agent-preset").value = state.config.agent_kind || "codex";
+  $("onboarding-agent-custom-command").value = state.config.agent_kind === "custom" ? (state.config.agent_command || "") : "";
+  renderOnboardingAgentControls();
+  $("onboarding-dialog").showModal();
 }
 
 function readNumber(id, fallback) {
@@ -1049,6 +1114,12 @@ function readConfigForm() {
       command: String(item?.command || "").trim(),
     }))
     .filter((item) => item.label && item.command);
+  const workspaces = parseJSONArray($("cfg-workspace-options").value || "[]", "工作目录配置")
+    .map((item) => ({ label: String(item?.label || "").trim(), value: String(item?.value || "").trim(), default: Boolean(item?.default) }))
+    .filter((item) => item.label || item.value);
+  const agentKind = $("cfg-agent-preset").value;
+  const agentCommand = agentCommandForPreset(agentKind, $("cfg-agent-custom-command").value);
+  if (!agentKind || !agentCommand) throw new Error("必须选择并配置一个 Agent");
   return {
     lark_app_id: $("cfg-lark-app-id").value.trim(),
     lark_app_secret: $("cfg-lark-app-secret").value,
@@ -1071,6 +1142,9 @@ function readConfigForm() {
     onboarding_completed: Boolean(state.config?.onboarding_completed),
     session_name_presets: namePresets,
     session_start_presets: startPresets,
+    agent_kind: agentKind,
+    agent_command: agentCommand,
+    workspace_options: workspaces,
   };
 }
 
@@ -1371,6 +1445,35 @@ function renderLarkTestResult(result) {
   }
 }
 
+async function checkEnvironment() {
+  const button = $("environment-check-start");
+  button.disabled = true;
+  button.textContent = "检测中…";
+  renderEnvironmentCheckResult({ steps: [{ name: "环境检测", status: "checking", message: "正在检查当前环境…" }] });
+  try {
+    const result = await api("/api/environment-check", { method: "POST", body: JSON.stringify(readConfigForm()) });
+    renderEnvironmentCheckResult(result);
+    return result;
+  } finally {
+    button.disabled = false;
+    button.textContent = "重新检测";
+  }
+}
+
+function renderEnvironmentCheckResult(result) {
+  const box = $("environment-check-result");
+  box.innerHTML = "";
+  for (const step of result.steps || []) {
+    const row = document.createElement("div");
+    const status = ["ok", "warning", "error", "checking"].includes(step.status) ? step.status : "warning";
+    row.className = `environment-check-step ${status}`;
+    row.innerHTML = `<div><strong></strong><span></span></div>`;
+    row.querySelector("strong").textContent = step.name || "";
+    row.querySelector("span").textContent = step.message || "";
+    box.appendChild(row);
+  }
+}
+
 async function copyText(text, okMessage) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -1388,16 +1491,12 @@ function agentCommandForPreset(preset, customCommand = "") {
   if (preset === "custom") return customCommand.trim();
   return {
     codex: "codex --dangerously-bypass-approvals-and-sandbox",
-    opencode: "opencode --dangerously-skip-permissions",
-    claude: "claude --dangerously-skip-permissions",
-    gemini: "gemini --yolo",
-    aiden: "aiden",
   }[preset] || "";
 }
 
 function presetForAgentCommand(command = "") {
   const normalized = String(command || "").trim();
-  for (const preset of ["codex", "opencode", "claude", "gemini", "aiden"]) {
+  for (const preset of ["codex"]) {
     if (normalized === agentCommandForPreset(preset)) return { preset, customCommand: "" };
   }
   if (normalized) return { preset: "custom", customCommand: normalized };
@@ -1405,6 +1504,7 @@ function presetForAgentCommand(command = "") {
 }
 
 function renderDefaultAgentPresetFromStartPreset(startPresets = {}) {
+  if (state.config?.agent_kind) return;
   const commands = Array.isArray(startPresets?.[DEFAULT_AGENT_PRESET_CODE]?.commands) ? startPresets[DEFAULT_AGENT_PRESET_CODE].commands : [];
   const firstCommand = commands.find((command) => String(command || "").trim());
   const matched = presetForAgentCommand(firstCommand || "");
@@ -1426,21 +1526,12 @@ function setAgentPresetStatus(message, ok = null) {
 }
 
 function ensureDefaultAgentPreset() {
-  const presets = readStartPresetsForUI();
-  if (!presets) {
-    setAgentPresetStatus("启动预设 JSON 格式不正确，先修正后再更新默认 Agent。", false);
-    return;
-  }
   const command = agentPresetCommand();
   if (!command) {
-    delete presets[DEFAULT_AGENT_PRESET_CODE];
-    writeStartPresetsFromUI(presets);
-    setAgentPresetStatus(`已清空 ${DEFAULT_AGENT_PRESET_CODE} 默认 Agent 预设。`, true);
+    setAgentPresetStatus("必须选择并配置一个 Agent。", false);
     return;
   }
-  presets[DEFAULT_AGENT_PRESET_CODE] = { commands: [command] };
-  writeStartPresetsFromUI(presets);
-  setAgentPresetStatus(`已更新 ${DEFAULT_AGENT_PRESET_CODE} 默认 Agent 预设：${command}`, true);
+  setAgentPresetStatus(`新会话将自动启动：${command}`, true);
 }
 
 function renderOnboardingAgentControls() {
@@ -1470,21 +1561,78 @@ function setDefaultAgentPresetInConfig(cfg, preset, customCommand, defaultSessio
 
 async function completeOnboarding(options = {}) {
   if (!state.config) await loadConfig();
-  const preset = options.skip ? "" : $("onboarding-agent-preset").value;
+  const preset = $("onboarding-agent-preset").value;
   const defaultSessionName = $("onboarding-default-session-name").value.trim() || DEFAULT_SESSION_NAME;
   const customCommand = $("onboarding-agent-custom-command").value.trim();
-  if (preset === "custom" && !customCommand) {
-    setOnboardingAgentStatus("请填写自定义 Agent 启动命令，或选择跳过。", false);
+  if (!preset || (preset === "custom" && !customCommand)) {
+    setOnboardingAgentStatus("请选择 Codex，或填写自定义 Agent 启动命令。", false);
     return;
   }
-  state.config = setDefaultAgentPresetInConfig(state.config, preset, customCommand, defaultSessionName);
+  const command = agentCommandForPreset(preset, customCommand);
+  state.config = {
+    ...state.config,
+    lark_default_session_name: defaultSessionName,
+    agent_kind: preset,
+    agent_command: command,
+    onboarding_completed: true,
+  };
   state.config = await api("/api/config", { method: "PATCH", body: JSON.stringify(state.config) });
   $("onboarding-dialog").close();
-  if (!options.skip) {
-    renderConfig();
-    setConfigTab("config-session");
-    $("config-dialog").showModal();
+  renderConfig();
+}
+
+function renderWorkspaceOptions() {
+  const box = $("workspace-option-list");
+  if (!box) return;
+  box.innerHTML = "";
+  let options = [];
+  try { options = JSON.parse($("cfg-workspace-options").value || "[]"); } catch {}
+  for (const [index, option] of options.entries()) {
+    const row = document.createElement("div");
+    row.className = "workspace-option-row";
+    row.innerHTML = `
+      <label><span>名称</span><input class="workspace-label"></label>
+      <label><span>绝对路径</span><input class="workspace-value"></label>
+      <label class="workspace-default"><input type="radio" name="workspace-default"><span>默认</span></label>
+      <button class="workspace-remove" type="button" aria-label="删除目录">删除</button>`;
+    row.querySelector(".workspace-label").value = option.label || "";
+    row.querySelector(".workspace-value").value = option.value || "";
+    row.querySelector(".workspace-default input").checked = Boolean(option.default);
+    row.querySelectorAll("input").forEach((input) => input.oninput = syncWorkspaceOptions);
+    row.querySelector(".workspace-default input").onchange = syncWorkspaceOptions;
+    row.querySelector(".workspace-remove").onclick = () => {
+      options.splice(index, 1);
+      $("cfg-workspace-options").value = JSON.stringify(options);
+      renderWorkspaceOptions();
+    };
+    box.appendChild(row);
   }
+}
+
+function syncWorkspaceOptions() {
+  const options = [...$("workspace-option-list").querySelectorAll(".workspace-option-row")].map((row) => ({
+    label: row.querySelector(".workspace-label").value.trim(),
+    value: row.querySelector(".workspace-value").value.trim(),
+    default: row.querySelector(".workspace-default input").checked,
+  }));
+  $("cfg-workspace-options").value = JSON.stringify(options);
+}
+
+function addWorkspaceOption() {
+  syncWorkspaceOptions();
+  let options = [];
+  try { options = JSON.parse($("cfg-workspace-options").value || "[]"); } catch {}
+  options.push({ label: "", value: "", default: options.length === 0 });
+  $("cfg-workspace-options").value = JSON.stringify(options);
+  renderWorkspaceOptions();
+  $("workspace-option-list").lastElementChild?.querySelector(".workspace-label")?.focus();
+}
+
+function renderSecurityStatus() {
+  const warning = $("settings-security-warning");
+  if (!warning) return;
+  warning.hidden = !state.security?.risk_warning;
+  warning.classList.toggle("hidden", !state.security?.risk_warning);
 }
 
 function readNamePresetsForUI() {
@@ -2081,7 +2229,7 @@ function renderQuick() {
     const chip = document.createElement("div");
     chip.className = "quick-chip";
     chip.title = q.text;
-    chip.innerHTML = `<span></span><button class="chip-close" type="button" title="Delete">×</button>`;
+    chip.innerHTML = `<span></span><button class="chip-close" type="button" title="删除">×</button>`;
     chip.querySelector("span").textContent = q.text;
     chip.onclick = () => {
       $("composer-input").value = q.text;
@@ -2097,7 +2245,7 @@ function renderQuick() {
   const add = document.createElement("button");
   add.className = "add-quick";
   add.type = "button";
-  add.title = "Add Quick Command";
+  add.title = "添加快捷命令";
   add.textContent = "+";
   add.onclick = () => $("quick-dialog").showModal();
   $("quick-list").appendChild(add);
@@ -2114,7 +2262,7 @@ async function deleteSession(id) {
     state.active = null;
     if (state.socket) state.socket.close();
     if (state.term) state.term.clear();
-    $("active-title").textContent = "No session";
+    $("active-title").textContent = "请选择会话";
   }
   await loadSessions();
 }
@@ -2170,9 +2318,49 @@ $("quick-cancel").onclick = () => $("quick-dialog").close();
 
 $("config-open").onclick = async () => {
   try {
-    await openConfigDialog();
+    await ensureSettingsAccess(true);
   } catch (err) {
     console.error(err);
+  }
+};
+
+$("settings-access-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  try {
+    const password = $("settings-access-password").value;
+    await finishSettingsAccess({ password });
+  } catch (err) {
+    $("settings-access-error").textContent = err.message || String(err);
+  }
+};
+
+$("settings-access-skip").onclick = async () => {
+  try {
+    if (!$("settings-skip-confirm").checked) throw new Error("请先确认你了解跳过密码的风险");
+    await finishSettingsAccess({ skip: true, confirm_risk: true });
+  } catch (err) {
+    $("settings-access-error").textContent = err.message || String(err);
+  }
+};
+
+$("settings-access-cancel").onclick = () => $("settings-access-dialog").close();
+
+$("settings-password-save").onclick = async () => {
+  const status = $("settings-password-status");
+  try {
+    await api("/api/settings/security/password", { method: "POST", body: JSON.stringify({
+      current_password: $("settings-current-password").value,
+      new_password: $("settings-new-password").value,
+    }) });
+    $("settings-current-password").value = "";
+    $("settings-new-password").value = "";
+    await loadSecurityStatus();
+    renderSecurityStatus();
+    status.textContent = "密码已更新，其他设置登录已失效。";
+    status.className = "agent-preset-status ok";
+  } catch (err) {
+    status.textContent = err.message || String(err);
+    status.className = "agent-preset-status fail";
   }
 };
 
@@ -2203,6 +2391,12 @@ $("lark-test-start").onclick = () => testLarkConfig().catch((err) => {
   $("lark-test-start").disabled = false;
 });
 
+$("environment-check-start").onclick = () => checkEnvironment().catch((err) => {
+  renderEnvironmentCheckResult({ steps: [{ name: "环境检测", status: "error", message: err.message || String(err) }] });
+  $("environment-check-start").disabled = false;
+  $("environment-check-start").textContent = "重新检测";
+});
+
 $("cfg-lark-app-id").oninput = renderLarkPermissionGuide;
 
 $("lark-copy-scope").onclick = () => copyText("im:message.group_msg", "已复制 Scope：im:message.group_msg");
@@ -2228,6 +2422,7 @@ $("start-preset-clear").onclick = clearStartPresetForm;
 $("prestart-command-add").onclick = () => addPreStartCommandRow("");
 $("drop-rule-add").onclick = addDropRule;
 $("custom-shortcut-add").onclick = addCustomShortcut;
+$("workspace-option-add").onclick = addWorkspaceOption;
 $("startup-json-toggle").onclick = toggleStartupJSONPreview;
 $("startup-json-preview").oninput = () => {
   state.startupJSONDirty = true;
@@ -2385,10 +2580,26 @@ async function handleImagePaste(ev) {
 $("terminal").addEventListener("paste", handleImagePaste, true);
 document.addEventListener("paste", handleImagePaste);
 
+async function initializeIris() {
+  const security = await loadSecurityStatus();
+  if (!security.configured && !security.skipped) {
+    showSettingsAccess("setup");
+    return;
+  }
+  if (security.onboarding_required) {
+    if (!security.authenticated) {
+      showSettingsAccess("login");
+      return;
+    }
+    await loadConfig();
+    await maybeShowOnboarding();
+  }
+}
+
 setInterval(loadSessions, 3000);
 loadSessions().catch(console.error);
 loadQuick().catch(console.error);
-loadConfig().then(() => setTimeout(() => maybeShowOnboarding().catch(console.error), 250)).catch(console.error);
+initializeIris().catch(console.error);
 
 if (typeof window !== "undefined") {
   window.easyTerminalApp = {
@@ -2399,6 +2610,7 @@ if (typeof window !== "undefined") {
     loadConfig,
     saveConfig,
     testLarkConfig,
+    checkEnvironment,
     maybeShowOnboarding,
     openConfigDialog,
     ensureDefaultAgentPreset,

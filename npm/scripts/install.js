@@ -129,6 +129,27 @@ async function downloadWithCurl(downloadUrl) {
   }
 }
 
+async function installAgentHooks() {
+  await new Promise((resolve, reject) => {
+    const child = spawn(outPath, ["--install-agent-hooks"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      env: process.env
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error((stderr.trim() || `hook installer exited with code ${code}`).split("\n").slice(-1)[0]));
+    });
+  });
+}
+
 async function main() {
   const failures = [];
 
@@ -143,6 +164,12 @@ async function main() {
         await download(url);
       }
       console.log(`[easy-terminal] installed binary to ${outPath}`);
+      try {
+        await installAgentHooks();
+        console.log("[easy-terminal] installed Codex and Claude completion hooks");
+      } catch (hookErr) {
+        console.warn(`[easy-terminal] Agent hook setup deferred until first launch: ${hookErr.message}`);
+      }
       return;
     } catch (err) {
       try {

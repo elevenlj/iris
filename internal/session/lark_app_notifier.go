@@ -145,7 +145,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		elements = append(elements, map[string]any{"tag": "markdown", "content": "<at id=" + mentionID + "></at>"})
 	}
 	var interactionElement map[string]any
-	if !note.Disabled && !note.Running {
+	if note.DeveloperModeEnabled && !note.Disabled && !note.Running {
 		interactionElement = larkTerminalInteractionElement(note.SessionID, note.Interaction)
 	}
 	if interactionElement == nil {
@@ -156,13 +156,20 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		}
 		elements = append(elements, interactionElement)
 	}
-	if contextElement := larkTerminalAgentContextElement(note.AgentContext); contextElement != nil {
-		elements = append(elements, map[string]any{"tag": "hr"})
-		elements = append(elements, contextElement)
+	if note.DeveloperModeEnabled {
+		if contextElement := larkTerminalAgentContextElement(note.AgentContext); contextElement != nil {
+			elements = append(elements, map[string]any{"tag": "hr"})
+			elements = append(elements, contextElement)
+		}
+		if strings.EqualFold(note.AgentKind, "codex") {
+			if workspaceElement := larkWorkspaceSelectElement(note.SessionID, note.WorkspaceOptions, note.AgentContext); workspaceElement != nil {
+				elements = append(elements, workspaceElement)
+			}
+		}
 	}
 	if !note.Disabled {
-		elements = append(elements, larkShortcutActionElements(note.SessionID, note.UpdateNo, note.MentionModeEnabled)...)
-		if shortcuts := normalizeLarkCustomShortcuts(customShortcuts); len(shortcuts) > 0 {
+		elements = append(elements, larkShortcutActionElements(note.SessionID, note.UpdateNo, note.MentionModeEnabled, note.DeveloperModeEnabled)...)
+		if shortcuts := normalizeLarkCustomShortcuts(customShortcuts); note.DeveloperModeEnabled && len(shortcuts) > 0 {
 			elements = append(elements, map[string]any{"tag": "hr"})
 			elements = append(elements, larkCustomShortcutActionElements(note.SessionID, shortcuts)...)
 		}
@@ -178,6 +185,57 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 	}
 	b, err := json.Marshal(card)
 	return string(b), err
+}
+
+func larkWorkspaceSelectElement(sessionID string, workspaces []WorkspaceOption, context *TerminalAgentContext) map[string]any {
+	if len(workspaces) == 0 {
+		return nil
+	}
+	options := make([]map[string]any, 0, len(workspaces))
+	initial := ""
+	current := ""
+	if context != nil {
+		current = strings.TrimSpace(context.Directory)
+	}
+	for _, workspace := range workspaces {
+		options = append(options, map[string]any{
+			"text":  map[string]any{"tag": "plain_text", "content": workspace.Label},
+			"value": workspace.Value,
+		})
+		if workspace.Value == current || (initial == "" && workspace.Default) {
+			initial = workspace.Value
+		}
+	}
+	selector := map[string]any{
+		"tag": "select_static", "name": "iris_workspace", "width": "default",
+		"placeholder": map[string]any{"tag": "plain_text", "content": "切换工作目录"},
+		"options":     options,
+		"behaviors": []map[string]any{{"type": "callback", "value": map[string]any{
+			"easy_terminal_action": "workspace_select", "session_id": sessionID,
+		}}},
+	}
+	if initial != "" {
+		selector["initial_option"] = initial
+	}
+	return map[string]any{
+		"tag":                "column_set",
+		"flex_mode":          "none",
+		"horizontal_align":   "left",
+		"horizontal_spacing": "8px",
+		"columns": []map[string]any{
+			{
+				"tag": "column", "width": "auto", "vertical_align": "center",
+				"elements": []map[string]any{{
+					"tag":  "div",
+					"text": map[string]any{"tag": "plain_text", "content": "目录"},
+				}},
+			},
+			{
+				"tag": "column", "width": "auto", "vertical_align": "center",
+				"elements": []map[string]any{selector},
+			},
+		},
+	}
 }
 
 func larkTerminalInteractionHeadingElement(title string) map[string]any {
@@ -401,18 +459,50 @@ func larkTerminalPlainText(content string) string {
 	return content
 }
 
-func larkShortcutActionElements(sessionID string, updateNo int, mentionModeEnabled bool) []map[string]any {
-	columns := []map[string]any{
-		larkRefreshButtonColumn(sessionID, updateNo),
-		larkMentionModeButtonColumn(sessionID, updateNo, mentionModeEnabled),
-		larkShortcutButtonColumn("Ctrl-C", "default", sessionID, "ctrl_c"),
-		larkShortcutButtonColumn("Esc", "default", sessionID, "esc"),
-		larkShortcutButtonColumn("Enter", "default", sessionID, "enter"),
-		larkShortcutButtonColumn("退出agent", "default", sessionID, "exit_agent"),
-		larkDeleteSessionButtonColumn(sessionID),
+func larkShortcutActionElements(sessionID string, updateNo int, mentionModeEnabled bool, developerModeEnabled bool) []map[string]any {
+	columns := []map[string]any{larkRefreshButtonColumn(sessionID, updateNo), larkDeveloperModeButtonColumn(sessionID, updateNo, developerModeEnabled)}
+	if developerModeEnabled {
+		columns = append(columns,
+			larkMentionModeButtonColumn(sessionID, updateNo, mentionModeEnabled),
+			larkRestartAgentButtonColumn(sessionID),
+			larkShortcutButtonColumn("Ctrl-C", "default", sessionID, "ctrl_c"),
+			larkShortcutButtonColumn("Esc", "default", sessionID, "esc"),
+			larkShortcutButtonColumn("Enter", "default", sessionID, "enter"),
+			larkDeleteSessionButtonColumn(sessionID),
+		)
 	}
 	return []map[string]any{
 		larkFlowShortcutActionElement(columns...),
+	}
+}
+
+func larkRestartAgentButtonColumn(sessionID string) map[string]any {
+	return map[string]any{
+		"tag": "column", "width": "auto", "vertical_spacing": "8px",
+		"elements": []map[string]any{{
+			"tag": "button", "type": "default", "size": "tiny", "width": "default",
+			"text": map[string]any{"tag": "plain_text", "content": "重启 Agent"},
+			"behaviors": []map[string]any{{"type": "callback", "value": map[string]any{
+				"easy_terminal_action": "restart_agent", "session_id": sessionID,
+			}}},
+		}},
+	}
+}
+
+func larkDeveloperModeButtonColumn(sessionID string, updateNo int, enabled bool) map[string]any {
+	label := "开启开发者模式"
+	if enabled {
+		label = "关闭开发者模式"
+	}
+	return map[string]any{
+		"tag": "column", "width": "auto", "vertical_spacing": "8px",
+		"elements": []map[string]any{{
+			"tag": "button", "type": "default", "size": "tiny", "width": "default",
+			"text": map[string]any{"tag": "plain_text", "content": label},
+			"behaviors": []map[string]any{{"type": "callback", "value": map[string]any{
+				"easy_terminal_action": "toggle_developer_mode", "session_id": sessionID, "update_no": updateNo,
+			}}},
+		}},
 	}
 }
 

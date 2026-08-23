@@ -68,6 +68,16 @@ func TestParseStartupOptionsVersion(t *testing.T) {
 	}
 }
 
+func TestParseStartupOptionsInstallAgentHooks(t *testing.T) {
+	opts, err := parseStartupOptions([]string{"--install-agent-hooks"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.InstallAgentHooks {
+		t.Fatal("expected Agent hook installation mode")
+	}
+}
+
 func TestHeadlessChromeArgsUseStableViewport(t *testing.T) {
 	args := headlessChromeArgsForUID("/tmp/profile", "http://localhost:8080/?session=sess-1", 1000)
 	for _, want := range []string{
@@ -118,7 +128,7 @@ func TestLoadConfigUsesCurrentDefaultsWhenFieldsMissing(t *testing.T) {
 	if cfg.FastWaitingTransitionMs != 500 || cfg.ConservativeWaitingTransitionMs != 500 || cfg.LarkAutoRefreshIntervalMs != 5000 || cfg.HeadlessSnapshotTimeoutMs != 10000 || cfg.LarkNotifyMaxLines != 200 || cfg.LarkNotifyFallbackTailLines != 100 {
 		t.Fatalf("numeric defaults = %d,%d,%d,%d,%d,%d", cfg.FastWaitingTransitionMs, cfg.ConservativeWaitingTransitionMs, cfg.LarkAutoRefreshIntervalMs, cfg.HeadlessSnapshotTimeoutMs, cfg.LarkNotifyMaxLines, cfg.LarkNotifyFallbackTailLines)
 	}
-	if cfg.LarkDefaultSessionName != "默认会话" || cfg.LarkSessionChatPrefix != "ET ·" {
+	if cfg.LarkDefaultSessionName != "默认会话" || cfg.LarkSessionChatPrefix != "Iris ·" {
 		t.Fatalf("lark defaults = name %q prefix %q", cfg.LarkDefaultSessionName, cfg.LarkSessionChatPrefix)
 	}
 	if len(cfg.LarkNotifyDropLineRules) != len(defaultLarkNotifyDropLineRules) || cfg.LarkNotifyDropLineRules[0].Title != "空行" || cfg.LarkNotifyDropLineRules[1].Title != "横线" {
@@ -151,26 +161,30 @@ func TestLoadConfigPrependsRequiredToolFiltersToExistingConfig(t *testing.T) {
 func TestDefaultPathsUseStableUserDataDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("IRIS_HOME", "")
+	t.Setenv("IRIS_CONFIG_DIR", "")
 	t.Setenv("EASY_TERMINAL_HOME", "")
 	t.Setenv("EASY_TERMINAL_CONFIG_DIR", "")
 
-	if got := defaultConfigPath(); got != filepath.Join(home, ".easy_terminal", "conf", "config.local.json") {
+	if got := defaultConfigPath(); got != filepath.Join(home, ".iris", "conf", "config.local.json") {
 		t.Fatalf("default config path = %q", got)
 	}
-	if got := defaultDBPath(); got != filepath.Join(home, ".easy_terminal", "easy_terminal.db") {
+	if got := defaultDBPath(); got != filepath.Join(home, ".iris", "iris.db") {
 		t.Fatalf("default db path = %q", got)
 	}
-	if got := defaultUploadsDir(); got != filepath.Join(home, ".easy_terminal", "data", "uploads") {
+	if got := defaultUploadsDir(); got != filepath.Join(home, ".iris", "data", "uploads") {
 		t.Fatalf("default uploads dir = %q", got)
 	}
-	if got := defaultLogDir(); got != filepath.Join(home, ".easy_terminal", "log") {
+	if got := defaultLogDir(); got != filepath.Join(home, ".iris", "log") {
 		t.Fatalf("default log dir = %q", got)
 	}
 }
 
 func TestDefaultPathsAllowHomeOverride(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("EASY_TERMINAL_HOME", dir)
+	t.Setenv("IRIS_HOME", dir)
+	t.Setenv("IRIS_CONFIG_DIR", "")
+	t.Setenv("EASY_TERMINAL_HOME", "")
 	t.Setenv("EASY_TERMINAL_CONFIG_DIR", "")
 	if got := defaultConfigPath(); got != filepath.Join(dir, "conf", "config.local.json") {
 		t.Fatalf("default config path with override = %q", got)
@@ -179,12 +193,14 @@ func TestDefaultPathsAllowHomeOverride(t *testing.T) {
 
 func TestDefaultConfigPathAllowsConfigDirOverride(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("IRIS_HOME", "")
+	t.Setenv("IRIS_CONFIG_DIR", dir)
 	t.Setenv("EASY_TERMINAL_HOME", "")
-	t.Setenv("EASY_TERMINAL_CONFIG_DIR", dir)
+	t.Setenv("EASY_TERMINAL_CONFIG_DIR", "")
 	if got := defaultConfigPath(); got != filepath.Join(dir, "config.local.json") {
 		t.Fatalf("default config path with config dir override = %q", got)
 	}
-	if got := defaultDBPath(); got != filepath.Join(dir, "easy_terminal.db") {
+	if got := defaultDBPath(); got != filepath.Join(dir, "iris.db") {
 		t.Fatalf("default db path with config dir override = %q", got)
 	}
 	if got := defaultUploadsDir(); got != filepath.Join(dir, "data", "uploads") {
@@ -200,12 +216,14 @@ func TestDefaultConfigPathAllowsConfigDirOverride(t *testing.T) {
 
 func TestCLIConfigDirScopesRuntimeData(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "instance")
+	t.Setenv("IRIS_HOME", "")
+	t.Setenv("IRIS_CONFIG_DIR", "")
 	t.Setenv("EASY_TERMINAL_HOME", "")
 	t.Setenv("EASY_TERMINAL_CONFIG_DIR", "")
 	if got := dataDirFromConfigDir(dir); got != dir {
 		t.Fatalf("data dir from cli config dir = %q", got)
 	}
-	if got := dbPathInDataDir(dataDirFromConfigDir(dir)); got != filepath.Join(dir, "easy_terminal.db") {
+	if got := dbPathInDataDir(dataDirFromConfigDir(dir)); got != filepath.Join(dir, "iris.db") {
 		t.Fatalf("db path from cli config dir = %q", got)
 	}
 	if got := uploadsDirInDataDir(dataDirFromConfigDir(dir)); got != filepath.Join(dir, "data", "uploads") {
@@ -298,6 +316,8 @@ func TestAppConfigServiceUpdatesRuntimeConfigAndPersists(t *testing.T) {
 		SessionPreStartCommand: "source ~/.zshrc",
 		SessionStartPresets:    map[string]session.SessionStartPreset{"1": {Commands: []string{"codex"}}},
 		SessionNamePresets:     map[string]session.SessionStartPreset{"会话 A": {Commands: []string{"pwd"}}},
+		AgentKind:              "codex",
+		AgentCommand:           "codex --dangerously-bypass-approvals-and-sandbox",
 	})
 	if err != nil {
 		t.Fatal(err)

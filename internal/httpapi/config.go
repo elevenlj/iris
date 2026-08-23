@@ -35,11 +35,25 @@ type RuntimeConfig struct {
 	SessionNamePresets              map[string]session.SessionStartPreset `json:"session_name_presets"`
 	LarkCustomShortcuts             []session.LarkCustomShortcut          `json:"lark_custom_shortcuts"`
 	OnboardingCompleted             bool                                  `json:"onboarding_completed"`
+	AgentKind                       string                                `json:"agent_kind"`
+	AgentCommand                    string                                `json:"agent_command"`
+	WorkspaceOptions                []session.WorkspaceOption             `json:"workspace_options"`
+}
+
+type SettingsSecurity struct {
+	PasswordHash string `json:"-"`
+	Skipped      bool   `json:"skipped"`
+	AuthVersion  int64  `json:"auth_version"`
 }
 
 type ConfigService interface {
 	RuntimeConfig() RuntimeConfig
 	UpdateRuntimeConfig(RuntimeConfig) (RuntimeConfig, error)
+}
+
+type SecurityConfigService interface {
+	SettingsSecurity() SettingsSecurity
+	UpdateSettingsSecurity(SettingsSecurity) error
 }
 
 type LarkConfigTestStep struct {
@@ -60,6 +74,9 @@ type LarkConfigTester interface {
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if s.config == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if !s.requireSettingsAuth(w, r) {
 		return
 	}
 	switch r.Method {
@@ -83,6 +100,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLarkConfigTest(w http.ResponseWriter, r *http.Request) {
+	if !s.requireSettingsAuth(w, r) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -127,7 +147,7 @@ func (t realLarkConfigTester) Test(cfg RuntimeConfig) LarkConfigTestResult {
 	notifier := session.NewLarkAppNotifier(appID, appSecret, receiveID, cfg.LarkMentionEnabled)
 	_, err := notifier.NotifyWaiting(session.WaitingNotification{
 		SessionID: "config-test",
-		Name:      "easy_terminal 测试通知",
+		Name:      "Iris 测试通知",
 		Content:   "这是一条配置测试消息，用于确认飞书 App 凭证和通知接收 ID 可以正常发送。\n\n时间：" + time.Now().Format("2006-01-02 15:04:05"),
 	})
 	if err != nil {
@@ -271,6 +291,9 @@ func createLarkPermissionProbeChat(client *http.Client, token string, receiveID 
 }
 
 func (s *Server) handleLarkAppRegistration(w http.ResponseWriter, r *http.Request) {
+	if !s.requireSettingsAuth(w, r) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -291,6 +314,9 @@ func (s *Server) handleLarkAppRegistration(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleLarkAppRegistrationPoll(w http.ResponseWriter, r *http.Request) {
+	if !s.requireSettingsAuth(w, r) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -312,6 +338,9 @@ func (s *Server) handleLarkAppRegistrationPoll(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleLarkAppRegistrationQR(w http.ResponseWriter, r *http.Request) {
+	if !s.requireSettingsAuth(w, r) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return

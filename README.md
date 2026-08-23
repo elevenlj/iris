@@ -1,152 +1,95 @@
-# easy_terminal
+# Iris
 
-`easy_terminal` 是一个本机 Web 终端与飞书远程会话控制工具。它不是去接管某一个固定的云端 Agent，而是让你通过浏览器和飞书控制本机/服务器上的真实终端；只要某个 Agent、脚本或命令能在终端里运行，就可以被远程启动、查看和接管。
+Iris 是一个运行在本机的飞书个人 AI 助理。它把飞书机器人、真实终端和本地 Agent 连接起来：每个会话都会自动启动一个 Agent，既可以服务开发者自己的工作流，也可以先接待通过飞书联系开发者的人。
 
-## 核心竞争力
+## 主要能力
 
-1. **低成本**：Agent 在本机或自己的服务器上执行，可以使用免费的 CLI Agent、本地模型或已有工具链。
-2. **控制终端**：控制终端就等同于控制整个 PC 或云服务器里可用的 Git、测试、脚本、服务、文件和各种 Agent。
-3. **控制本地 Agent**：一键选择本地 Agent，启动会话时直接启用；不限于 Claude Code、Codex、Gemini，也可以是公司自研的 Agent CLI，有助于复用本地环境并保障数据安全。
-4. **多会话管理**：一个会话一个群聊，可在不同群聊中处理不同任务，也可以多人在同一个群聊中操控同一个 Agent 干活。
-5. **协作处理问题**：例如需求进入测试阶段后，QA 可以直接把 bug 和复现信息发到群聊里，本地 Agent 收到群聊消息后在你的本机环境里继续定位和处理问题。
-6. **实时查看进展**：飞书卡片会同步终端状态，支持刷新、快捷键、中断、退出 Agent 和继续输入；任务完成后也可以发送消息通知。
-7. **Web 终端与飞书共通**：Web 端嵌入真实终端，配置文本输入框解决终端输入困难问题；支持添加快捷键，飞书和终端双向控制并共享会话。
-8. **轻量级飞书配置**：支持通过扫码完成飞书基础配置，降低自建机器人接入成本。
-9. **飞书快捷键**：在飞书上发送消息后，会回复带快捷键的消息卡片，支持 Esc、Enter、Ctrl-C 等系统快捷键，也可以自定义快捷命令。
-10. **指令预设**：支持会话名预设和会话启动命令，适合固定目录、固定项目、固定 Agent 的高频工作流。
+- Agent 必选：首次初始化必须选择 Codex 或填写自定义 Agent 命令。
+- 联系人接待：他人私聊机器人后，自动创建“与某某的对话”群聊，并加入联系人、开发者和机器人。
+- 会话复用：同一联系人后续私聊会继续进入已有群聊和 Agent 会话。
+- 艾特模式：联系人群聊和机器人直接加入的群聊默认需要 `@Iris` 才触发回复。
+- 开发者模式：只有配置的开发者可以开关；开启后显示目录、模型、推理等级、Agent 重启、终端快捷键和自定义快捷键。
+- Agent 恢复：Iris 重启时会先检查并升级正在使用的 Codex、Claude Code，再恢复会话；其他 Agent 可通过卡片复用已配置的启动命令重启。
+- 工作目录：可配置显示名称、绝对路径和默认目录；Codex 会话支持从飞书卡片切换白名单目录。
+- 设置保护：首次使用引导设置密码，也允许在明确确认风险后跳过；支持在设置页修改和本机重置。
+- 环境检测：可在设置页按需检查 Node.js、Headless 浏览器、数据目录、飞书连接和 Agent 环境；结果仅即时展示，不保存也不影响主流程。
+- Web 终端：保留真实终端、长文本输入、图片粘贴、快捷命令和会话管理能力。
 
-## 指令预设
+## 开发运行
 
-1. **会话名预设**：如果开启了一个名为 `xx` 的会话，可以为它预设命令，启动前自动执行。例如先进入指定目录，再启动 Claude Code、Codex、Gemini 或其他 Agent。
-2. **启动指令预设**：可以为字符串标识配置命令，飞书发送 `开始 会话名 codex` 或 `开始 会话名 setup,codex` 时，会按标识依次执行对应命令。`0` 保留为仅进入目录，`999999` 用于默认会话 Agent；旧的 `1-2` 数字写法仍兼容。
-3. **会话启动前命令**：可以指定任何会话启动前要执行的命令。例如希望使用 `zsh`，就可以直接配置对应启动命令。
+环境要求：
 
-## 典型场景
+- Go 1.25 或兼容版本
+- macOS 或 Linux
+- 可交互 Shell；优先使用系统配置的 `$SHELL`，并自动回退到 Bash、sh、zsh 或 Fish
+- 已安装并登录所选 Agent，例如 Codex CLI 或 Claude Code
 
-- 用手机在飞书里启动和继续 Codex、OpenCode、Claude Code、Gemini、Aiden 等 CLI Agent。
-- 在一台电脑或服务器上同时管理多个终端会话，例如跑服务、看日志、执行测试、处理代码任务。
-- 让 QA、开发、产品在同一个飞书群里补充上下文，共同推进同一个本地 Agent 任务。
-- 复用本机环境、已有命令、已有账号和本地模型，不把所有任务都改造成云端 API 调用。
-
-## 启动
-
-开源地址：
-
-```text
-https://gitee.com/eleven_lj/easy_terminal.git
-```
-
-快速安装：
-
-```sh
-npm install -g @lijuneleven/easy-terminal
-easy-terminal
-```
-
-查看版本：
-
-```sh
-easy-terminal --version
-easy-terminal -v
-easy-terminal -version
-```
-
-开发启动：
+启动服务：
 
 ```sh
 make run
-```
-
-默认监听本机 `8080` 端口。需要换端口时：
-
-```sh
-PORT=9090 make run
-go run ./cmd --port 9090
-go run ./cmd -p 9090
-```
-
-启动时会自动生成本机配置文件 `~/.easy_terminal/conf/config.local.json`。需要固定配置和运行数据目录时：
-
-```sh
-easy_terminal --config-dir /data/easy_terminal
-EASY_TERMINAL_CONFIG_DIR=/data/easy_terminal easy_terminal
-```
-
-指定后，配置文件、会话数据库、上传文件和日志都会写入该目录。
-
-构建二进制：
-
-```sh
 make build
-./easy_terminal
-./easy_terminal --port 9090
-./easy_terminal -p 9090
-./easy_terminal --config-dir /data/easy_terminal
+./iris
 ```
 
-端口配置优先级为：启动参数 `--port` / `-p` > 环境变量 `PORT` > 配置文件 > 默认端口 `8080`。
-
-## 必要配置
-
-1. 选择本地 Agent。可以直接选择，也可以通过快捷键或会话预设启动，建议按自己的工作流配置。
-2. 配置飞书。Web 端支持扫码配置，完成后即可在飞书中联动终端会话。
-
-## 查看内置帮助
-
-启动服务后，在浏览器打开服务页面，点击右上角“帮助”查看内置帮助中心。
-
-也可以直接查看仓库文档：
-
-- [架构说明](docs/ARCHITECTURE.md)：代码模块和主要实现边界。
-
-## 常用命令
+默认监听 `8080`。也可以指定端口或独立配置目录：
 
 ```sh
-make run          # go run ./cmd
-make build        # 构建 easy_terminal 二进制
-make test         # Go 单元测试
-make test-browser # 浏览器 E2E 测试
-make test-all     # Go 测试 + 浏览器 E2E
-make tidy         # go mod tidy
+go run ./cmd --port 8082
+go run ./cmd --config-dir /data/iris
+IRIS_CONFIG_DIR=/data/iris go run ./cmd
 ```
 
-## 运行环境
+首次打开页面时，依次完成设置密码和 Agent 选择。之后在设置页配置飞书应用、开发者 open_id、工作目录和自定义快捷键。
 
-必需环境：
+Iris 启动时会自动安装并维护 Codex `notify` 与 Claude Code `Stop` Hook，保留用户已有配置。安装包也会在安装完成后执行同样的配置；如当时没有写入权限，首次启动会自动重试。可手动执行 `iris --install-agent-hooks` 重新安装。
 
-- Go 1.25 或兼容版本
-- macOS 或 Linux shell 环境
-- 可交互 shell；默认使用 `/bin/zsh -i`
+## 飞书配置
 
-无人值守通知：
+设置页支持扫码创建或配置飞书自建应用。联系人助理流程需要机器人具备消息、群聊、卡片和用户基本信息权限，其中包括：
 
-- 页面关闭后仍要把终端内容推送到飞书时，服务器必须安装 Chrome、Chromium 或 Microsoft Edge；Easy Terminal 会自动启动无头浏览器生成终端快照
-- Linux 可执行 `sudo apt-get install -y chromium`；如果浏览器不在 `PATH` 中，通过 `CHROME_BIN=/path/to/chromium easy-terminal` 指定
-- 无头浏览器冷启动快照默认等待 10000ms，可在“等待与通知”的“无头快照超时(ms)”中调整，或通过 `HEADLESS_SNAPSHOT_TIMEOUT_MS` 覆盖
-- 建议以普通用户运行 Easy Terminal；容器内以 root 运行时会自动为无头浏览器添加 `--no-sandbox`
+- 消息接收与发送
+- 群聊创建与成员管理
+- 卡片读取、写入和回调
+- `contact:user.base:readonly`
 
-飞书联动需要：
+如果希望群聊中不 `@Iris` 也能触发回复，还需在飞书后台开通 `im:message.group_msg` 并发布应用版本。
 
-- 一个飞书自建应用
-- 应用的 `app_id` 和 `app_secret`
-- 已启用机器人能力或消息发送能力
-- 飞书应用信息、基础消息权限、群聊消息事件和卡片回调可在 Web 端通过扫码配置；群里不 @ 机器人也要响应时，还需要在飞书后台开通“获取群组中所有消息（敏感权限）”
+## 飞书使用方式
 
-本地 Agent 需要：
+- 普通私聊：自动建立或复用联系人群聊，消息交给 Agent 处理。
+- `开始 会话名`：创建开发会话，默认开启开发者模式并关闭艾特模式。
+- 直接把机器人拉进群：自动创建绑定会话，默认开启艾特模式、关闭开发者模式。
+- 卡片“开发者模式”：仅配置的开发者可以切换，其他已显示按钮可由普通群成员使用。
 
-- 先在当前机器安装对应 CLI 工具，例如 `opencode`、`codex`、`claude`、`gemini`、`aiden` 等
-- 确保这些命令可以在默认 shell 中直接执行
-- 如果 Agent 依赖 API Key 或本地模型，请提前在本机环境变量或对应工具配置中完成设置
+## 设置密码
+
+设置页可修改密码。忘记密码时，在运行 Iris 的本机执行：
+
+```sh
+go run ./cmd --reset-settings-password
+```
+
+跳过密码会让同一网络中能访问 Iris 页面的人有机会修改飞书凭证、Agent 命令和工作目录，请只在可信环境使用。
 
 ## 运行数据
 
-默认运行时文件会写在用户目录下：
+默认数据目录：
 
-- `~/.easy_terminal/easy_terminal.db`
-- `~/.easy_terminal/data/uploads/`
-- `~/.easy_terminal/log/easy_terminal.log`
-- `~/.easy_terminal/conf/config.local.json`
+- `~/.iris/conf/config.local.json`
+- `~/.iris/iris.db`
+- `~/.iris/data/uploads/`
+- `~/.iris/log/iris.log`
 
-使用 `--config-dir` 或 `EASY_TERMINAL_CONFIG_DIR` 时，运行数据会写在指定目录下。
+同时兼容原 Easy Terminal 的 `EASY_TERMINAL_HOME` 和 `EASY_TERMINAL_CONFIG_DIR` 环境变量，便于迁移旧部署。
 
-这些文件已在 `.gitignore` 中忽略。
+## 验证
+
+```sh
+make test
+make test-browser
+make test-codex-tui
+make test-claude-hook
+```
+
+浏览器 E2E 会验证首次密码、Agent 初始化和真实终端链路；Codex TUI E2E 会验证 Iris 自动启动 Codex、单轮内容截取以及模型和推理菜单；Claude Hook E2E 会通过真实 Claude 回合验证 Stop Hook 的最终回复回调。
