@@ -394,15 +394,29 @@ func mergeTerminalWrappedLinesForLark(text string) string {
 	}
 	var b strings.Builder
 	b.WriteString(lines[0])
+	inCodeFence := isMarkdownCodeFenceLine(lines[0])
 	for i := 1; i < len(lines); i++ {
-		if shouldMergeTerminalWrappedLineBreak(lines[i-1], lines[i]) {
+		currentFence := isMarkdownCodeFenceLine(lines[i])
+		previousFence := isMarkdownCodeFenceLine(lines[i-1])
+		if !inCodeFence && !currentFence && !previousFence && shouldMergeTerminalWrappedLineBreak(lines[i-1], lines[i]) {
 			b.WriteString(lines[i])
 			continue
 		}
 		b.WriteByte('\n')
 		b.WriteString(lines[i])
+		if currentFence {
+			inCodeFence = !inCodeFence
+		}
 	}
 	return b.String()
+}
+
+func isMarkdownCodeFenceLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if len(trimmed) < 3 {
+		return false
+	}
+	return strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~")
 }
 
 func shouldMergeTerminalWrappedLineBreak(left, right string) bool {

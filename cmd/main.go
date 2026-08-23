@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -245,10 +247,22 @@ func run() error {
 	addr := ":" + cfg.Port
 	log.Printf("iris listening on http://localhost%s", addr)
 	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- httpSrv.ListenAndServe()
+		errCh <- httpSrv.Serve(listener)
 	}()
+	if !envBool("IRIS_NO_OPEN", false) {
+		go func() {
+			settingsURL := "http://localhost:" + listenerPort(listener.Addr(), cfg.Port) + "/?settings=1"
+			if err := openBrowserURL(settingsURL); err != nil {
+				log.Printf("failed to open Iris configuration page: %v", err)
+			}
+		}()
+	}
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, interruptSignals()...)
 	defer signal.Stop(sigCh)
@@ -267,6 +281,39 @@ func run() error {
 			return err
 		}
 		return nil
+	}
+}
+
+func listenerPort(addr net.Addr, fallback string) string {
+	if tcp, ok := addr.(*net.TCPAddr); ok && tcp.Port > 0 {
+		return strconv.Itoa(tcp.Port)
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func openBrowserURL(target string) error {
+	name, args, err := browserOpenCommand(runtime.GOOS, target)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(name, args...)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
+}
+
+func browserOpenCommand(goos, target string) (string, []string, error) {
+	switch goos {
+	case "darwin":
+		return "open", []string{target}, nil
+	case "windows":
+		return "rundll32", []string{"url.dll,FileProtocolHandler", target}, nil
+	case "linux":
+		return "xdg-open", []string{target}, nil
+	default:
+		return "", nil, fmt.Errorf("browser auto-open is unsupported on %s", goos)
 	}
 }
 
@@ -791,6 +838,18 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 type headlessBrowserManager struct {

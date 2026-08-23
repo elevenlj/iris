@@ -78,6 +78,30 @@ func TestParseStartupOptionsInstallAgentHooks(t *testing.T) {
 	}
 }
 
+func TestBrowserOpenCommandUsesPlatformLauncher(t *testing.T) {
+	target := "http://localhost:8080/?settings=1"
+	tests := []struct {
+		goos string
+		name string
+	}{
+		{goos: "darwin", name: "open"},
+		{goos: "linux", name: "xdg-open"},
+		{goos: "windows", name: "rundll32"},
+	}
+	for _, tt := range tests {
+		name, args, err := browserOpenCommand(tt.goos, target)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.goos, err)
+		}
+		if name != tt.name || len(args) == 0 || args[len(args)-1] != target {
+			t.Fatalf("%s launcher = %q %#v", tt.goos, name, args)
+		}
+	}
+	if _, _, err := browserOpenCommand("plan9", target); err == nil {
+		t.Fatal("unsupported platform should return an error")
+	}
+}
+
 func TestHeadlessChromeArgsUseStableViewport(t *testing.T) {
 	args := headlessChromeArgsForUID("/tmp/profile", "http://localhost:8080/?session=sess-1", 1000)
 	for _, want := range []string{

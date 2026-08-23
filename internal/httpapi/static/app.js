@@ -7,7 +7,6 @@ const state = {
   quick: [],
   config: null,
   security: null,
-  settingsAccessMode: "setup",
   search: "",
   larkRegistrationTimer: null,
   editingPresetCommand: null,
@@ -1032,46 +1031,19 @@ async function openConfigDialog(targetID = "config-security") {
   $("config-dialog").showModal();
 }
 
-function showSettingsAccess(mode = "login") {
-  state.settingsAccessMode = mode;
-  const setup = mode === "setup";
-  $("settings-access-title").textContent = setup ? "保护 Iris 设置" : "验证设置密码";
-  $("settings-access-copy").textContent = setup
-    ? "首次使用请设置一个密码，用于保护飞书凭证、Agent 命令和工作目录。"
-    : "输入设置密码后继续。";
-  $("settings-access-password-text").textContent = setup ? "设置密码" : "输入密码";
-  $("settings-access-password").value = "";
-  $("settings-access-password").autocomplete = setup ? "new-password" : "current-password";
-  $("settings-skip-confirm-row").hidden = !setup;
-  $("settings-skip-confirm-row").classList.toggle("hidden", !setup);
-  $("settings-access-skip").hidden = !setup;
-  $("settings-access-skip").classList.toggle("hidden", !setup);
-  $("settings-access-cancel").hidden = setup && Boolean(state.security?.onboarding_required);
-  $("settings-access-error").textContent = "";
-  if (!$("settings-access-dialog").open) $("settings-access-dialog").showModal();
-  setTimeout(() => $("settings-access-password").focus(), 0);
-}
-
-async function finishSettingsAccess(payload) {
-  const setup = state.settingsAccessMode === "setup";
-  await api(setup ? "/api/settings/security/setup" : "/api/settings/security/login", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-  $("settings-access-dialog").close();
-  await loadSecurityStatus();
-  await loadConfig();
-  await maybeShowOnboarding();
+function settingsAuthURL(path) {
+  const next = `${location.pathname}${location.search}`;
+  return `${path}?next=${encodeURIComponent(next)}`;
 }
 
 async function ensureSettingsAccess(openSettings = true) {
   const status = await loadSecurityStatus();
-  if (!status.configured && !status.skipped) {
-    showSettingsAccess("setup");
+	if (!status.configured) {
+		location.assign(settingsAuthURL("/setup-password"));
     return false;
   }
   if (!status.authenticated) {
-    showSettingsAccess("login");
+		location.assign(settingsAuthURL("/login"));
     return false;
   }
   await loadConfig();
@@ -2321,27 +2293,6 @@ $("config-open").onclick = async () => {
   }
 };
 
-$("settings-access-form").onsubmit = async (ev) => {
-  ev.preventDefault();
-  try {
-    const password = $("settings-access-password").value;
-    await finishSettingsAccess({ password });
-  } catch (err) {
-    $("settings-access-error").textContent = err.message || String(err);
-  }
-};
-
-$("settings-access-skip").onclick = async () => {
-  try {
-    if (!$("settings-skip-confirm").checked) throw new Error("请先确认你了解跳过密码的风险");
-    await finishSettingsAccess({ skip: true, confirm_risk: true });
-  } catch (err) {
-    $("settings-access-error").textContent = err.message || String(err);
-  }
-};
-
-$("settings-access-cancel").onclick = () => $("settings-access-dialog").close();
-
 $("settings-password-save").onclick = async () => {
   const status = $("settings-password-status");
   try {
@@ -2579,16 +2530,27 @@ document.addEventListener("paste", handleImagePaste);
 
 async function initializeIris() {
   const security = await loadSecurityStatus();
-  if (!security.configured && !security.skipped) {
-    showSettingsAccess("setup");
+	const settingsRequested = new URLSearchParams(location.search).get("settings") === "1";
+	if (settingsRequested && !security.configured) {
+		location.replace(settingsAuthURL("/setup-password"));
     return;
   }
-  if (security.onboarding_required) {
-    if (!security.authenticated) {
-      showSettingsAccess("login");
+	if (settingsRequested && !security.authenticated) {
+		location.replace(settingsAuthURL("/login"));
+		return;
+	}
+	if (settingsRequested) {
+		await loadConfig();
+		await openConfigDialog();
+		return;
+	}
+  if (security.onboarding_required && security.authenticated) {
+		if (!state.config) {
+			await loadConfig();
+		}
+		if (!state.config) {
       return;
     }
-    await loadConfig();
     await maybeShowOnboarding();
   }
 }

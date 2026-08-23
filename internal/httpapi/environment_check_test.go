@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeEnvironmentChecker struct {
@@ -37,7 +38,12 @@ func TestEnvironmentCheckRequiresSettingsAccess(t *testing.T) {
 
 func TestEnvironmentCheckIsOneShotAndDoesNotPersistSubmittedConfig(t *testing.T) {
 	stored := RuntimeConfig{AgentKind: "codex", AgentCommand: "codex"}
-	cfg := &secureTestConfig{runtime: stored, security: SettingsSecurity{Skipped: true}}
+	hash, err := hashSettingsPassword("strong-pass-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	security := SettingsSecurity{PasswordHash: hash, AuthVersion: 1}
+	cfg := &secureTestConfig{runtime: stored, security: security}
 	checker := &fakeEnvironmentChecker{result: EnvironmentCheckResult{
 		OK:      true,
 		Checked: "2026-08-23T08:00:00Z",
@@ -47,6 +53,7 @@ func TestEnvironmentCheckIsOneShotAndDoesNotPersistSubmittedConfig(t *testing.T)
 	srv.environmentChecker = checker
 
 	req := httptest.NewRequest(http.MethodPost, "/api/environment-check", strings.NewReader(`{"agent_kind":"custom","agent_command":"my-agent --serve"}`))
+	req.AddCookie(&http.Cookie{Name: settingsCookieName, Value: signSettingsSession(security, time.Now().Add(time.Hour), "test")})
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -67,6 +74,7 @@ func TestEnvironmentCheckIsOneShotAndDoesNotPersistSubmittedConfig(t *testing.T)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/environment-check", nil)
+	req.AddCookie(&http.Cookie{Name: settingsCookieName, Value: signSettingsSession(security, time.Now().Add(time.Hour), "test")})
 	rec = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {

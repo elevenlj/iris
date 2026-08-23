@@ -13,7 +13,7 @@ Iris 是一个运行在本机的飞书个人 AI 助理。它把飞书机器人�
 - Agent 切换：开发者模式卡片只展示本机已安装的 Codex、Claude Code 和已配置的自定义 Agent，并在确认旧 Agent 退出后完成切换。
 - Agent 恢复：Iris 重启时会先检查并升级正在使用的 Codex、Claude Code，再恢复会话；其他 Agent 可通过卡片复用已配置的启动命令重启。
 - 工作目录：每个会话默认使用 `~/Iris_Workspace/会话名称`，并可从飞书卡片切换到额外配置的项目目录。
-- 设置保护：首次使用引导设置密码，也允许在明确确认风险后跳过；支持在设置页修改和本机重置。
+- 设置保护：首次使用必须在独立页面设置并确认密码；后续通过独立登录页验证，安全登录状态保留 30 天。
 - 环境检测：可在设置页按需检查 Node.js、Headless 浏览器、数据目录、飞书连接和 Agent 环境；结果仅即时展示，不保存也不影响主流程。
 - Web 终端：保留真实终端、长文本输入、图片粘贴、快捷命令和会话管理能力。
 
@@ -42,7 +42,7 @@ go run ./cmd --config-dir /data/iris
 IRIS_CONFIG_DIR=/data/iris go run ./cmd
 ```
 
-首次打开页面时，依次完成设置密码和 Agent 选择。之后在设置页配置飞书应用、开发者 open_id、工作目录和自定义快捷键。
+Iris 启动成功后会自动打开本机配置页。首次使用先进入独立的密码设置页，完成密码确认后才能进入配置台；之后在设置页配置飞书应用、开发者 open_id、工作目录和自定义快捷键。
 
 Iris 启动时会自动安装并维护 Codex `notify`、Claude Code `Stop` Hook，以及两者用于识别当前飞书群的 Skill，保留用户已有配置。安装包也会在安装完成后执行同样的配置；如当时没有写入权限，首次启动会自动重试。可手动执行 `iris --install-agent-hooks` 重新安装。
 
@@ -69,10 +69,10 @@ Iris 启动时会自动安装并维护 Codex `notify`、Claude Code `Stop` Hook�
 设置页可修改密码。忘记密码时，在运行 Iris 的本机执行：
 
 ```sh
-go run ./cmd --reset-settings-password
+iris --reset-settings-password
 ```
 
-跳过密码会让同一网络中能访问 Iris 页面的人有机会修改飞书凭证、Agent 命令和工作目录，请只在可信环境使用。
+配置台不允许跳过密码。登录凭证通过 HttpOnly Cookie 保留 30 天，Cookie 不保存明文密码；修改或重置密码后，旧登录凭证立即失效。
 
 ## 运行数据
 

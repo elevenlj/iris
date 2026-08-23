@@ -2082,6 +2082,60 @@ func TestLarkTerminalMarkdownTextUsesHardBreaksOutsideCodeFences(t *testing.T) {
 	}
 }
 
+func TestLarkTerminalMarkdownTextPreservesCodeCommandsWhenMergingWrappedLines(t *testing.T) {
+	SetLarkNotifyMergeWrappedLines(true)
+	t.Cleanup(func() { SetLarkNotifyMergeWrappedLines(false) })
+
+	got := larkTerminalMarkdownText(strings.Join([]string{
+		"启动命令：",
+		"```bash",
+		"iris",
+		"iris --port 8080",
+		"```",
+		"完成。",
+	}, "\n"))
+	want := strings.Join([]string{
+		"启动命令：  ",
+		"```bash",
+		"iris",
+		"iris --port 8080",
+		"```",
+		"完成。",
+	}, "\n")
+	if got != want {
+		t.Fatalf("Markdown code commands changed during wrapped-line merge: got %q want %q", got, want)
+	}
+}
+
+func TestLarkNotificationCardKeepsHookMarkdownUnmerged(t *testing.T) {
+	SetLarkNotifyMergeWrappedLines(true)
+	t.Cleanup(func() { SetLarkNotifyMergeWrappedLines(false) })
+
+	content, err := larkNotificationCardContent(WaitingNotification{
+		SessionID:      "sess-hook-markdown",
+		Name:           "Iris",
+		Content:        "第一行\n第二行\n```bash\niris --port 8080\n```",
+		SnapshotSource: "codex_hook:last_assistant_message",
+	}, "open-id", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var card struct {
+		Body struct {
+			Elements []struct {
+				Content string `json:"content"`
+			} `json:"elements"`
+		} `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(content), &card); err != nil {
+		t.Fatal(err)
+	}
+	want := "第一行  \n第二行  \n```bash\niris --port 8080\n```"
+	if len(card.Body.Elements) == 0 || card.Body.Elements[0].Content != want {
+		t.Fatalf("hook Markdown should retain original line boundaries: %#v", card.Body.Elements)
+	}
+}
+
 func TestLarkNotificationCardContentDoesNotWarnOnBufferFallback(t *testing.T) {
 	content, err := larkNotificationCardContent(WaitingNotification{
 		SessionID:      "sess-1",

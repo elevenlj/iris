@@ -31,6 +31,7 @@ try {
       AGENT_MONITOR_DB: path.join(tmp, "iris.db"),
       AGENT_MONITOR_UPLOADS_DIR: path.join(tmp, "data", "uploads"),
       AGENT_MONITOR_LOG_DIR: path.join(tmp, "log"),
+		IRIS_NO_OPEN: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -53,11 +54,10 @@ try {
   cdp = await CDPClient.connect(pageInfo.webSocketDebuggerUrl);
   await cdp.send("Page.enable");
   await cdp.send("Runtime.enable");
-  await cdp.send("Page.navigate", { url: `http://localhost:${port}` });
-  await waitFor(() => evalExpr("document.readyState === 'complete' || document.readyState === 'interactive'"));
-  await waitFor(() => evalExpr("Boolean(window.irisApp && document.querySelector('#session-name'))"));
+	await cdp.send("Page.navigate", { url: `http://localhost:${port}/?settings=1` });
+	await waitFor(() => evalExpr("document.readyState === 'complete' || document.readyState === 'interactive'"));
 
-  await initializeIrisForE2E();
+	await initializeIrisForE2E();
 
   await createSession("browser-e2e");
   await waitFor(() => evalExpr("document.querySelectorAll('.session').length === 1"));
@@ -142,13 +142,14 @@ try {
 }
 
 async function initializeIrisForE2E() {
-  await waitFor(() => evalExpr("document.querySelector('#settings-access-dialog').open === true"));
+	await waitFor(() => evalExpr("location.pathname === '/setup-password' && Boolean(document.querySelector('#auth-form'))"));
   await evalExpr(`
-    document.querySelector('#settings-access-password').value = 'browser-e2e-password';
-    document.querySelector('#settings-access-form').requestSubmit();
+		document.querySelector('#auth-password').value = 'browser-e2e-password';
+		document.querySelector('#auth-confirm-password').value = 'browser-e2e-password';
+		document.querySelector('#auth-form').requestSubmit();
     true
   `);
-  await waitFor(() => evalExpr("document.querySelector('#settings-access-dialog').open !== true"));
+	await waitFor(() => evalExpr("location.pathname === '/' && Boolean(window.irisApp) && document.querySelector('#config-dialog').open === true"));
   await evalExpr(`(async () => {
     const config = await fetch('/api/config').then((response) => response.json());
     config.agent_kind = 'custom';
@@ -161,6 +162,7 @@ async function initializeIrisForE2E() {
     }).then((response) => response.json());
     window.irisApp.state.config = updated;
     document.querySelector('#onboarding-dialog').close();
+		document.querySelector('#config-dialog').close();
     return true;
   })()`);
 }

@@ -149,7 +149,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		interactionElement = larkTerminalInteractionElement(note.SessionID, note.Interaction)
 	}
 	if interactionElement == nil {
-		elements = append(elements, larkTerminalTextElement(note.Content))
+		elements = append(elements, larkTerminalTextElement(note.Content, note.SnapshotSource))
 	} else {
 		if note.Interaction.Kind == TerminalInteractionCodexResume {
 			elements = append(elements, larkTerminalInteractionHeadingElement("选择要恢复的会话"))
@@ -347,15 +347,23 @@ func normalizeLarkCustomShortcuts(shortcuts []LarkCustomShortcut) []LarkCustomSh
 	return out
 }
 
-func larkTerminalTextElement(content string) map[string]any {
+func larkTerminalTextElement(content string, snapshotSource ...string) map[string]any {
+	preserveOriginalMarkdown := false
+	if len(snapshotSource) > 0 {
+		preserveOriginalMarkdown = strings.Contains(snapshotSource[0], "hook:last_assistant_message")
+	}
 	return map[string]any{
 		"tag":     "markdown",
-		"content": larkTerminalMarkdownText(content),
+		"content": larkTerminalMarkdownTextWithMerge(content, !preserveOriginalMarkdown),
 	}
 }
 
 func larkTerminalMarkdownText(content string) string {
-	sourceLines := strings.Split(larkTerminalPlainText(content), "\n")
+	return larkTerminalMarkdownTextWithMerge(content, true)
+}
+
+func larkTerminalMarkdownTextWithMerge(content string, allowWrappedLineMerge bool) string {
+	sourceLines := strings.Split(larkTerminalPlainTextWithMerge(content, allowWrappedLineMerge), "\n")
 	lines := make([]string, 0, len(sourceLines))
 	inCodeFence := false
 	for _, line := range sourceLines {
@@ -368,7 +376,7 @@ func larkTerminalMarkdownText(content string) string {
 		}
 		lines = append(lines, line)
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
+		if isMarkdownCodeFenceLine(trimmed) {
 			inCodeFence = !inCodeFence
 		}
 	}
@@ -376,7 +384,7 @@ func larkTerminalMarkdownText(content string) string {
 	inCodeFence = false
 	for i := range lines {
 		trimmed := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(trimmed, "```") {
+		if isMarkdownCodeFenceLine(trimmed) {
 			inCodeFence = !inCodeFence
 			continue
 		}
@@ -530,9 +538,13 @@ func truncateLarkInteractionText(text string, maxRunes int) string {
 }
 
 func larkTerminalPlainText(content string) string {
+	return larkTerminalPlainTextWithMerge(content, true)
+}
+
+func larkTerminalPlainTextWithMerge(content string, allowWrappedLineMerge bool) string {
 	content = strings.ReplaceAll(content, "\r\n", "\n")
 	content = strings.ReplaceAll(content, "\r", "\n")
-	if larkNotifyMergeWrappedLines.Load() {
+	if allowWrappedLineMerge && larkNotifyMergeWrappedLines.Load() {
 		content = mergeTerminalWrappedLinesForLark(content)
 	}
 	return content

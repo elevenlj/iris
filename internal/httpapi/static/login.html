@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>登录 · Iris</title>
+    <link rel="stylesheet" href="/auth.css">
+  </head>
+  <body data-auth-mode="login">
+    <main class="auth-shell">
+      <section class="auth-card" aria-labelledby="auth-title">
+        <div class="auth-brand" aria-label="Iris">Iris</div>
+        <div class="auth-kicker">安全验证</div>
+        <h1 id="auth-title">欢迎回来</h1>
+        <p class="auth-copy">输入访问密码，继续管理你的飞书助理与 Agent。</p>
+        <form id="auth-form" novalidate>
+          <label>
+            <span>访问密码</span>
+            <input id="auth-password" name="password" type="password" autocomplete="current-password" maxlength="256" required autofocus>
+          </label>
+          <div id="auth-error" class="auth-error" role="alert" aria-live="polite"></div>
+          <button id="auth-submit" type="submit">进入配置台</button>
+        </form>
+        <p class="auth-footnote">登录状态将在当前浏览器中保留 30 天。</p>
+      </section>
+    </main>
+    <script src="/auth.js" defer></script>
+  </body>
+</html>

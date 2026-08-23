@@ -12,23 +12,15 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
 const (
-	settingsCookieName = "iris_settings_session"
-	passwordRounds     = 120000
+	settingsCookieName     = "iris_settings_session"
+	settingsSessionVersion = "v1"
+	settingsSessionMaxAge  = 30 * 24 * time.Hour
+	passwordRounds         = 120000
 )
-
-type settingsAuth struct {
-	mu       sync.Mutex
-	sessions map[string]int64
-}
-
-func newSettingsAuth() *settingsAuth {
-	return &settingsAuth{sessions: make(map[string]int64)}
-}
 
 func (s *Server) handleSettingsSecurity(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/settings/security/")
@@ -48,9 +40,9 @@ func (s *Server) handleSettingsSecurity(w http.ResponseWriter, r *http.Request) 
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"configured":          strings.TrimSpace(security.PasswordHash) != "",
-			"skipped":             security.Skipped,
+			"skipped":             false,
 			"authenticated":       s.settingsAuthenticated(r, security),
-			"risk_warning":        security.Skipped,
+			"risk_warning":        false,
 			"onboarding_required": onboardingRequired,
 		}, nil)
 	case "setup":
@@ -72,47 +64,43 @@ func (s *Server) handleSettingsSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current := s.settingsSecurity()
-	if current.PasswordHash != "" || current.Skipped {
+	if current.PasswordHash != "" {
 		writeError(w, http.StatusConflict, errors.New("安全设置已初始化"))
 		return
 	}
 	var req struct {
-		Password    string `json:"password"`
-		Skip        bool   `json:"skip"`
-		ConfirmRisk bool   `json:"confirm_risk"`
+		Password        string `json:"password"`
+		ConfirmPassword string `json:"confirm_password"`
+		Skip            bool   `json:"skip"`
 	}
 	if err := decodeLimitedJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	next := SettingsSecurity{AuthVersion: current.AuthVersion + 1}
 	if req.Skip {
-		if !req.ConfirmRisk {
-			writeError(w, http.StatusBadRequest, errors.New("跳过密码前必须确认风险"))
-			return
-		}
-		next.Skipped = true
-	} else {
-		if err := validateSettingsPassword(req.Password); err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-		hash, err := hashSettingsPassword(req.Password)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		next.PasswordHash = hash
+		writeError(w, http.StatusBadRequest, errors.New("Iris 必须设置访问密码"))
+		return
 	}
+	if err := validateSettingsPassword(req.Password); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Password != req.ConfirmPassword {
+		writeError(w, http.StatusBadRequest, errors.New("两次输入的密码不一致"))
+		return
+	}
+	hash, err := hashSettingsPassword(req.Password)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	next := SettingsSecurity{PasswordHash: hash, AuthVersion: current.AuthVersion + 1}
 	if err := s.securityConfig.UpdateSettingsSecurity(next); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.settingsAuth.invalidateAll()
-	if !next.Skipped {
-		s.issueSettingsSession(w, r, next.AuthVersion)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"configured": !next.Skipped, "skipped": next.Skipped, "authenticated": true}, nil)
+	s.issueSettingsSession(w, r, next)
+	writeJSON(w, http.StatusOK, map[string]any{"configured": true, "skipped": false, "authenticated": true}, nil)
 }
 
 func (s *Server) handleSettingsLogin(w http.ResponseWriter, r *http.Request) {
@@ -121,10 +109,6 @@ func (s *Server) handleSettingsLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	security := s.settingsSecurity()
-	if security.Skipped {
-		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true}, nil)
-		return
-	}
 	if security.PasswordHash == "" {
 		writeError(w, http.StatusPreconditionRequired, errors.New("请先完成安全初始化"))
 		return
@@ -140,7 +124,7 @@ func (s *Server) handleSettingsLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, errors.New("密码错误"))
 		return
 	}
-	s.issueSettingsSession(w, r, security.AuthVersion)
+	s.issueSettingsSession(w, r, security)
 	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true}, nil)
 }
 
@@ -149,10 +133,10 @@ func (s *Server) handleSettingsLogout(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if cookie, err := r.Cookie(settingsCookieName); err == nil {
-		s.settingsAuth.remove(cookie.Value)
-	}
-	http.SetCookie(w, &http.Cookie{Name: settingsCookieName, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{
+		Name: settingsCookieName, Path: "/", MaxAge: -1, Expires: time.Unix(1, 0),
+		HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -192,14 +176,13 @@ func (s *Server) handleSettingsPassword(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.settingsAuth.invalidateAll()
-	s.issueSettingsSession(w, r, next.AuthVersion)
+	s.issueSettingsSession(w, r, next)
 	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true}, nil)
 }
 
 func (s *Server) settingsSecurity() SettingsSecurity {
 	if s.securityConfig == nil {
-		return SettingsSecurity{Skipped: true, AuthVersion: 1}
+		return SettingsSecurity{AuthVersion: 1}
 	}
 	security := s.securityConfig.SettingsSecurity()
 	if security.AuthVersion <= 0 {
@@ -211,9 +194,6 @@ func (s *Server) settingsSecurity() SettingsSecurity {
 func (s *Server) requireSettingsAuth(w http.ResponseWriter, r *http.Request) bool {
 	security := s.settingsSecurity()
 	if s.settingsAuthenticated(r, security) {
-		if security.Skipped {
-			w.Header().Set("X-Iris-Security-Warning", "password-skipped")
-		}
 		return true
 	}
 	writeError(w, http.StatusUnauthorized, errors.New("需要设置密码验证"))
@@ -221,47 +201,55 @@ func (s *Server) requireSettingsAuth(w http.ResponseWriter, r *http.Request) boo
 }
 
 func (s *Server) settingsAuthenticated(r *http.Request, security SettingsSecurity) bool {
-	if security.Skipped || s.securityConfig == nil {
+	if s.securityConfig == nil {
 		return true
 	}
 	if security.PasswordHash == "" {
 		return false
 	}
 	cookie, err := r.Cookie(settingsCookieName)
-	return err == nil && s.settingsAuth.valid(cookie.Value, security.AuthVersion)
+	return err == nil && validSettingsSession(cookie.Value, security, time.Now())
 }
 
-func (s *Server) issueSettingsSession(w http.ResponseWriter, r *http.Request, version int64) {
-	token := randomToken(32)
-	s.settingsAuth.add(token, version)
+func (s *Server) issueSettingsSession(w http.ResponseWriter, r *http.Request, security SettingsSecurity) {
+	expires := time.Now().Add(settingsSessionMaxAge).UTC()
+	token := signSettingsSession(security, expires, randomToken(24))
 	http.SetCookie(w, &http.Cookie{
-		Name: settingsCookieName, Value: token, Path: "/", MaxAge: 12 * 60 * 60,
+		Name: settingsCookieName, Value: token, Path: "/", MaxAge: int(settingsSessionMaxAge.Seconds()), Expires: expires,
 		HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode,
 	})
 }
 
-func (a *settingsAuth) add(token string, version int64) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.sessions[token] = version
+func signSettingsSession(security SettingsSecurity, expires time.Time, nonce string) string {
+	payload := strings.Join([]string{
+		settingsSessionVersion,
+		strconv.FormatInt(security.AuthVersion, 10),
+		strconv.FormatInt(expires.Unix(), 10),
+		nonce,
+	}, ".")
+	mac := hmac.New(sha256.New, []byte(security.PasswordHash))
+	_, _ = mac.Write([]byte(payload))
+	return payload + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func (a *settingsAuth) valid(token string, version int64) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return token != "" && a.sessions[token] == version
-}
-
-func (a *settingsAuth) remove(token string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	delete(a.sessions, token)
-}
-
-func (a *settingsAuth) invalidateAll() {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.sessions = make(map[string]int64)
+func validSettingsSession(token string, security SettingsSecurity, now time.Time) bool {
+	parts := strings.Split(token, ".")
+	if len(parts) != 5 || parts[0] != settingsSessionVersion || strings.TrimSpace(security.PasswordHash) == "" {
+		return false
+	}
+	version, versionErr := strconv.ParseInt(parts[1], 10, 64)
+	expires, expiresErr := strconv.ParseInt(parts[2], 10, 64)
+	if versionErr != nil || expiresErr != nil || version != security.AuthVersion || now.Unix() >= expires {
+		return false
+	}
+	payload := strings.Join(parts[:4], ".")
+	provided, err := base64.RawURLEncoding.DecodeString(parts[4])
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(security.PasswordHash))
+	_, _ = mac.Write([]byte(payload))
+	return hmac.Equal(provided, mac.Sum(nil))
 }
 
 func decodeLimitedJSON(w http.ResponseWriter, r *http.Request, dst any) error {

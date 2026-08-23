@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -25,7 +26,6 @@ type Server struct {
 	uploadsDir          string
 	config              ConfigService
 	securityConfig      SecurityConfigService
-	settingsAuth        *settingsAuth
 	larkAppRegistration interface {
 		Begin(context.Context, string) (LarkAppRegistrationBegin, error)
 		Poll(context.Context, string, string) (LarkAppRegistrationResult, error)
@@ -43,7 +43,6 @@ func NewServer(manager *session.Manager, uploadsDir string, config ...ConfigServ
 		larkConfigTester:    realLarkConfigTester{probe: manager},
 		environmentChecker:  realEnvironmentChecker{},
 		mux:                 http.NewServeMux(),
-		settingsAuth:        newSettingsAuth(),
 	}
 	if len(config) > 0 {
 		s.config = config[0]
@@ -105,9 +104,47 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	requestPath := strings.TrimSuffix(r.URL.Path, ".html")
+	security := s.settingsSecurity()
+	next := safeSettingsNextPath(r.URL.Query().Get("next"))
+	switch requestPath {
+	case "/setup-password":
+		if strings.TrimSpace(security.PasswordHash) != "" {
+			if s.settingsAuthenticated(r, security) {
+				http.Redirect(w, r, next, http.StatusSeeOther)
+			} else {
+				http.Redirect(w, r, settingsAuthPageURL("/login", next), http.StatusSeeOther)
+			}
+			return
+		}
+	case "/login":
+		if strings.TrimSpace(security.PasswordHash) == "" {
+			http.Redirect(w, r, settingsAuthPageURL("/setup-password", next), http.StatusSeeOther)
+			return
+		}
+		if s.settingsAuthenticated(r, security) {
+			http.Redirect(w, r, next, http.StatusSeeOther)
+			return
+		}
+	case "/":
+		if r.URL.Query().Get("settings") == "1" {
+			if strings.TrimSpace(security.PasswordHash) == "" {
+				http.Redirect(w, r, settingsAuthPageURL("/setup-password", r.URL.RequestURI()), http.StatusSeeOther)
+				return
+			}
+			if !s.settingsAuthenticated(r, security) {
+				http.Redirect(w, r, settingsAuthPageURL("/login", r.URL.RequestURI()), http.StatusSeeOther)
+				return
+			}
+		}
+	}
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	if path == "" {
 		path = "index.html"
+	} else if requestPath == "/setup-password" {
+		path = "setup-password.html"
+	} else if requestPath == "/login" {
+		path = "login.html"
 	}
 	b, err := staticFiles.ReadFile("static/" + path)
 	if err != nil {
@@ -125,6 +162,18 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", ct)
 	}
 	_, _ = w.Write(b)
+}
+
+func safeSettingsNextPath(next string) string {
+	next = strings.TrimSpace(next)
+	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		return "/?settings=1"
+	}
+	return next
+}
+
+func settingsAuthPageURL(path, next string) string {
+	return path + "?next=" + url.QueryEscape(safeSettingsNextPath(next))
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {

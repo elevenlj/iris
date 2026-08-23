@@ -71,27 +71,6 @@
         </div>
       </div>
     </dialog>
-    <dialog id="settings-access-dialog" class="onboarding-dialog" aria-labelledby="settings-access-title">
-      <form id="settings-access-form" class="onboarding-body">
-        <div class="onboarding-kicker">安全验证</div>
-        <h2 id="settings-access-title">保护 Iris 设置</h2>
-        <p id="settings-access-copy">首次使用请设置一个密码，用于保护飞书凭证、Agent 命令和工作目录。</p>
-        <label id="settings-access-password-label">
-          <span id="settings-access-password-text">设置密码</span>
-          <input id="settings-access-password" type="password" autocomplete="new-password" minlength="8">
-        </label>
-        <label id="settings-skip-confirm-row" class="config-check">
-          <input id="settings-skip-confirm" type="checkbox">
-          <span>我了解跳过密码后，同一网络内能访问 Iris 的人都可能修改敏感配置。</span>
-        </label>
-        <div id="settings-access-error" class="config-error" role="alert"></div>
-        <div class="onboarding-actions">
-          <button id="settings-access-cancel" type="button">取消</button>
-          <button id="settings-access-skip" type="button">跳过并承担风险</button>
-          <button id="settings-access-submit" type="submit">继续</button>
-        </div>
-      </form>
-    </dialog>
     <dialog id="config-dialog" class="config-dialog">
       <form id="config-form" method="dialog">
         <div class="config-head">
