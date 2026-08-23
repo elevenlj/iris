@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DIR="/Users/eleven/project/easy_terminal"
-SESSION_NAME="easy_terminal_8080"
+PROJECT_DIR="/Users/eleven/project/iris"
+SESSION_NAME="iris_8080"
 PORT="8080"
 CONFIG_DIR="conf"
 LOG_DIR="$PROJECT_DIR/log"
-LOG_FILE="$LOG_DIR/restart_easy_terminal_8080.log"
+LOG_FILE="$LOG_DIR/restart_iris_8080.log"
 
 mkdir -p "$LOG_DIR"
 
@@ -23,7 +23,7 @@ mkdir -p "$LOG_DIR"
   fi
 
   cd "$PROJECT_DIR"
-  tmux new-session -d -s "$SESSION_NAME" "./easy_terminal -p $PORT --config-dir $CONFIG_DIR >> log/easy_terminal_8080.log 2>&1"
+  tmux new-session -d -s "$SESSION_NAME" "./iris -p $PORT --config-dir $CONFIG_DIR >> log/iris_8080.log 2>&1"
 
   sleep 3
 

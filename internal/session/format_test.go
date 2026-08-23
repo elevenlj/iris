@@ -445,12 +445,12 @@ func TestPickNotifyContentRejectsReflowWithOnlyWeakCommonFooter(t *testing.T) {
 	previous := strings.Join([]string{
 		"OLD_SENTINEL first historical line",
 		"OLD_SENTINEL second historical line",
-		"gpt-5.6-sol medium fast · ~/project/easy_terminal",
+		"gpt-5.6-sol medium fast · ~/project/iris",
 	}, "\n")
 	visible := strings.Join([]string{
 		"reflowed OLD_SENTINEL first and second historical lines",
 		"current answer without a trustworthy prompt",
-		"gpt-5.6-sol medium fast · ~/project/easy_terminal",
+		"gpt-5.6-sol medium fast · ~/project/iris",
 	}, "\n")
 	if got := PickNotifyContent(visible, previous, nil, "missing current input"); got != "" {
 		t.Fatalf("a shared status footer must not authorize a near-full-screen diff: %q", got)
@@ -511,13 +511,13 @@ func TestPickNotifyContentUsesComposerAnchorAlreadyPresentInBaseline(t *testing.
 	previous := strings.Join([]string{
 		"OLD_SENTINEL historical answer",
 		"› 当前问题",
-		"gpt-5.6-sol medium fast · ~/project/easy_terminal",
+		"gpt-5.6-sol medium fast · ~/project/iris",
 	}, "\n")
 	visible := strings.Join([]string{
 		"OLD_SENTINEL historical answer",
 		"› 当前问题",
 		"• 只发送当前回答。",
-		"gpt-5.6-sol medium fast · ~/project/easy_terminal",
+		"gpt-5.6-sol medium fast · ~/project/iris",
 	}, "\n")
 	if got := PickNotifyContent(visible, previous, nil, "当前问题"); got != "• 只发送当前回答。" {
 		t.Fatalf("the pre-Enter composer line should remain a valid round anchor, got %q", got)
@@ -529,14 +529,14 @@ func TestPickNotifyContentUsesCorrectRepeatedComposerOccurrenceFromBaseline(t *t
 		"› 重复问题",
 		"• OLD_SENTINEL old answer",
 		"› 重复问题",
-		"gpt-5.6-sol high fast · ~/project/easy_terminal",
+		"gpt-5.6-sol high fast · ~/project/iris",
 	}, "\n")
 	visible := strings.Join([]string{
 		"› 重复问题",
 		"• OLD_SENTINEL old answer",
 		"› 重复问题",
 		"• 当前回答里引用了：重复问题",
-		"gpt-5.6-sol high fast · ~/project/easy_terminal",
+		"gpt-5.6-sol high fast · ~/project/iris",
 	}, "\n")
 	want := "• 当前回答里引用了：重复问题"
 	if got := PickNotifyContent(visible, previous, nil, "重复问题"); got != want {
@@ -564,7 +564,7 @@ func TestPickNotifyContentUsesNewestRemainingDuplicateWhenBaselineOccurrenceDisa
 		"› 重复问题",
 		"ok",
 		"› 重复问题",
-		"gpt-5.6-sol medium fast · ~/project/easy_terminal",
+		"gpt-5.6-sol medium fast · ~/project/iris",
 	}, "\n")
 	visible := strings.Join([]string{
 		"› 重复问题",
@@ -624,7 +624,7 @@ func TestPickNotifyContentUsesTailBeforeStableFooter(t *testing.T) {
 	previous := strings.Join([]string{
 		"older stable output detail",
 		"old output",
-		"gpt-5.4 low fast · ~/Easy_Terminal_Workspace/测试",
+		"gpt-5.4 low fast · ~/Iris_Workspace/测试",
 	}, "\n")
 	visible := strings.Join([]string{
 		"older stable output detail",
@@ -632,7 +632,7 @@ func TestPickNotifyContentUsesTailBeforeStableFooter(t *testing.T) {
 		"• Ran lsof -nP -iTCP:8083 -sTCP:LISTEN",
 		"  (no output)",
 		"已关闭 8083 接口。",
-		"gpt-5.4 low fast · ~/Easy_Terminal_Workspace/测试",
+		"gpt-5.4 low fast · ~/Iris_Workspace/测试",
 	}, "\n")
 	got := PickNotifyContent(visible, previous, nil, "关闭 8083")
 	want := strings.Join([]string{
@@ -770,14 +770,14 @@ func TestPickNotifyContentUsesAdaptiveTailAnchorAcrossChangingTUIFooter(t *testi
 	previous := strings.Join([]string{
 		"• 上一轮结论具有足够长度和辨识度。",
 		"  上一轮补充说明同样具有足够长度。",
-		"gpt-5.6-sol medium fast · ~/project/easy_terminal",
+		"gpt-5.6-sol medium fast · ~/project/iris",
 		"1 background terminal running · /ps to view · /stop to close",
 	}, "\n")
 	visible := strings.Join([]string{
 		"• 上一轮结论具有足够长度和辨识度。",
 		"  上一轮补充说明同样具有足够长度。",
 		"• 本轮只应发送这一条新回答。",
-		"gpt-5.6-terra high fast · ~/project/easy_terminal",
+		"gpt-5.6-terra high fast · ~/project/iris",
 		"2 background terminals running · /ps to view · /stop to close",
 	}, "\n")
 	if got := PickNotifyContent(visible, previous, nil, "当前输入没有显示在屏幕中"); got != "• 本轮只应发送这一条新回答。" {
@@ -791,14 +791,14 @@ func TestAdaptiveTailAnchorUsesPreviousOutputWhenComposerEchoDisappears(t *testi
 		"  上一轮补充说明同样具有足够长度。",
 		"Worked for 8m 30s",
 		"› 当前输入可能在重绘后消失",
-		"gpt-5.6-sol medium fast · ~/project/easy_terminal",
+		"gpt-5.6-sol medium fast · ~/project/iris",
 	}, "\n")
 	visible := strings.Join([]string{
 		"• 上一轮结论具有足够长度和辨识度。",
 		"  上一轮补充说明同样具有足够长度。",
 		"Worked for 8m 30s",
 		"• CURRENT_REPLY_ONLY",
-		"gpt-5.6-sol medium fast · ~/project/easy_terminal",
+		"gpt-5.6-sol medium fast · ~/project/iris",
 	}, "\n")
 	if got := PickNotifyContent(visible, previous, nil, "当前输入可能在重绘后消失"); got != "• CURRENT_REPLY_ONLY" {
 		t.Fatalf("the previous output tail should survive a disappearing composer echo, got %q", got)
@@ -1044,7 +1044,7 @@ func TestPickNotifyContentDropsCodexTUIStatusOnlySnapshot(t *testing.T) {
 		"• Working (1s • esc to interrupt)",
 		"1 background terminal running · /ps to view · /stop to close",
 		"› Run /review on my current changes",
-		"gpt-5.5 xhigh fast · ~/Easy_Terminal_Workspace/减肥",
+		"gpt-5.5 xhigh fast · ~/Iris_Workspace/减肥",
 	}, "\n")
 	if !NotifyContentNeedsMoreSnapshot(visible, "", nil, "你好") {
 		t.Fatalf("TUI status-only snapshot should wait for real reply")
@@ -1069,7 +1069,7 @@ func TestPickNotifyContentKeepsRawOutputForCodexCCommand(t *testing.T) {
 	visible := strings.Join([]string{
 		"• Ran go test ./...",
 		"tool output me@example.com",
-		"gpt-5.6-sol medium fast · ~/project/easy_terminal",
+		"gpt-5.6-sol medium fast · ~/project/iris",
 	}, "\n")
 	if got := PickNotifyContent(visible, "", nil, "/c"); got != visible {
 		t.Fatalf("/c must bypass every notification filter:\n%q\nwant:\n%q", got, visible)
@@ -1144,13 +1144,13 @@ func TestPickNotifyContentDropsCodexToolBlocksAndFooterStatus(t *testing.T) {
 		"└ conf_8081/data/uploads/example.png",
 		"• Ran go test ./...",
 		"wrapped command argument without indentation",
-		"ok easy_terminal/internal/session",
+		"ok github.com/elevenlj/iris/internal/session",
 		"• Waited for background terminal · go test ./...",
 		"PASS",
 		"• Explored",
 		"  Read manager.go",
 		"• 已完成修复并通过全部测试。",
-		"gpt-5.6-terra high fast · ~/project/easy_terminal",
+		"gpt-5.6-terra high fast · ~/project/iris",
 	}, "\n"), previous, nil, "修复问题")
 	if got != "• 已完成修复并通过全部测试。" {
 		t.Fatalf("Codex process output should be hidden from the final notification:\n%q", got)

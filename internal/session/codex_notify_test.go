@@ -76,7 +76,7 @@ func TestRunCodexNotifyPostsOfficialPayload(t *testing.T) {
 		if r.URL.Path != "/api/sessions/session-9/hook/turn-ended" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		if got := r.Header.Get("X-Easy-Terminal-Hook-Token"); got != "token-9" {
+		if got := r.Header.Get("X-Iris-Agent-Token"); got != "token-9" {
 			t.Errorf("token = %q", got)
 		}
 		body, _ := io.ReadAll(r.Body)
@@ -86,9 +86,9 @@ func TestRunCodexNotifyPostsOfficialPayload(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-	t.Setenv("EASY_TERMINAL_HOOK_URL", server.URL)
-	t.Setenv("EASY_TERMINAL_SESSION_ID", "session-9")
-	t.Setenv("EASY_TERMINAL_HOOK_TOKEN", "token-9")
+	t.Setenv("IRIS_API_URL", server.URL)
+	t.Setenv("IRIS_SESSION_ID", "session-9")
+	t.Setenv("IRIS_SESSION_TOKEN", "token-9")
 
 	if err := RunCodexNotify([]string{payload}); err != nil {
 		t.Fatal(err)
@@ -99,9 +99,9 @@ func TestRunCodexNotifyPostsOfficialPayload(t *testing.T) {
 }
 
 func TestRunCodexNotifyIgnoresOtherEvents(t *testing.T) {
-	t.Setenv("EASY_TERMINAL_HOOK_URL", "http://127.0.0.1:1")
-	t.Setenv("EASY_TERMINAL_SESSION_ID", "session-9")
-	t.Setenv("EASY_TERMINAL_HOOK_TOKEN", "token-9")
+	t.Setenv("IRIS_API_URL", "http://127.0.0.1:1")
+	t.Setenv("IRIS_SESSION_ID", "session-9")
+	t.Setenv("IRIS_SESSION_TOKEN", "token-9")
 	if err := RunCodexNotify([]string{`{"type":"approval-requested"}`}); err != nil {
 		t.Fatal(err)
 	}

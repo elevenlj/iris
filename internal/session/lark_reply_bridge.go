@@ -69,7 +69,6 @@ var structuredInputNumericOnlyRE = regexp.MustCompile(`^\d+$`)
 const larkProcessingReactionEmoji = "THINKING"
 const defaultLarkSessionChatPrefix = "Iris · "
 const larkDisabledCardToastContent = "已失效，请点击最新卡片的按钮"
-const defaultWorkspaceRootDir = "Easy_Terminal_Workspace"
 const maxLarkReferencedItems = 20
 const maxLarkReferencedTextRunes = 12000
 const maxLarkReferencedAttachments = 10
@@ -339,7 +338,11 @@ func (b *LarkReplyBridge) handleCardAction(ctx context.Context, action *callback
 	if value == nil {
 		value = map[string]interface{}{}
 	}
-	switch fmt.Sprint(value["easy_terminal_action"]) {
+	actionName := fmt.Sprint(value["iris_action"])
+	if strings.TrimSpace(actionName) == "" || actionName == "<nil>" {
+		actionName = fmt.Sprint(value["easy_terminal_action"])
+	}
+	switch actionName {
 	case "shortcut":
 		return b.handleCardShortcut(ctx, value, openMessageID)
 	case "custom_shortcut":
@@ -1832,7 +1835,7 @@ func (b *LarkReplyBridge) runDefaultWorkspacePreset(sess Session) error {
 	if !ok {
 		return fmt.Errorf("runtime not found")
 	}
-	workspaceDir := defaultWorkspaceShellPath(sess.Name)
+	workspaceDir := defaultSessionWorkspaceShellPath(sess.Name)
 	preset := SessionStartPreset{Commands: []string{
 		"mkdir -p " + workspaceDir,
 		"cd " + workspaceDir,
@@ -1957,10 +1960,6 @@ func safeWorkspaceSessionDir(value string) string {
 		return "session"
 	}
 	return out
-}
-
-func defaultWorkspaceShellPath(sessionName string) string {
-	return "${HOME}/" + shellQuote(defaultWorkspaceRootDir+"/"+safeWorkspaceSessionDir(sessionName))
 }
 
 func slugForShellPath(value string) string {
@@ -2287,7 +2286,7 @@ func (b *LarkReplyBridge) fetchLarkReferencedMessages(ctx context.Context, messa
 }
 
 func larkCreateChatUUID(sessionID string) string {
-	return fmt.Sprintf("easy-terminal-%s-%d", strings.TrimSpace(sessionID), time.Now().UnixNano())
+	return fmt.Sprintf("iris-%s-%d", strings.TrimSpace(sessionID), time.Now().UnixNano())
 }
 
 func (b *LarkReplyBridge) larkSessionChatName(sessionName string) string {

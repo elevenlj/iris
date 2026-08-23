@@ -68,7 +68,7 @@ func TestManualRefreshUsesSubmittedInputAnchorAndKeepsWorking(t *testing.T) {
 	visible := strings.Join([]string{
 		"› " + input,
 		"• Working (8s • esc to interrupt)",
-		"gpt-5.6-sol high fast · ~/project/easy_terminal",
+		"gpt-5.6-sol high fast · ~/project/iris",
 	}, "\n")
 
 	got := pickManualRefreshNotifyContentWithWindowAnchorPolicy(visible, "旧快照", nil, input, "", notifyTextAnchorPolicy{})
@@ -82,7 +82,7 @@ func TestManualRefreshTailFallbackDropsOnlyCodexFooter(t *testing.T) {
 	visible := strings.Join([]string{
 		"普通正文必须保留",
 		"• Working (8s • esc to interrupt)",
-		"gpt-5.6-sol high fast · ~/project/easy_terminal",
+		"gpt-5.6-sol high fast · ~/project/iris",
 	}, "\n")
 	want := strings.Join([]string{
 		"普通正文必须保留",

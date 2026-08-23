@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"easy_terminal/internal/session"
+	"github.com/elevenlj/iris/internal/session"
 )
 
 func TestSnapshotRequestPayloadIncludesPurpose(t *testing.T) {

@@ -66,7 +66,7 @@ func TestLarkBridgeWSCardHandlerExecutesShortcutWithEmptyAck(t *testing.T) {
 	client := newLarkBridgeWSClient("app", "secret", nil, bridge.handleCardActionPayload)
 	frame := larkws.Frame{
 		Method:  int32(larkws.FrameTypeData),
-		Payload: []byte(`{"open_message_id":"bot-card","action":{"value":{"easy_terminal_action":"shortcut","session_id":"` + sess.ID + `","key":"ctrl_c"}}}`),
+		Payload: []byte(`{"open_message_id":"bot-card","action":{"value":{"iris_action":"shortcut","session_id":"` + sess.ID + `","key":"ctrl_c"}}}`),
 		Headers: []larkws.Header{
 			{Key: larkws.HeaderType, Value: string(larkws.MessageTypeCard)},
 		},

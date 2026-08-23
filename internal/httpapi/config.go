@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"easy_terminal/internal/session"
+	"github.com/elevenlj/iris/internal/session"
 )
 
 type RuntimeConfig struct {
@@ -252,10 +252,10 @@ func createLarkPermissionProbeChat(client *http.Client, token string, receiveID 
 	u, _ := url.Parse(feishuOpenBase + "/open-apis/im/v1/chats")
 	q := u.Query()
 	q.Set("user_id_type", "open_id")
-	q.Set("uuid", "easy-terminal-permission-probe-"+time.Now().Format("20060102150405"))
+	q.Set("uuid", "iris-permission-probe-"+time.Now().Format("20060102150405"))
 	u.RawQuery = q.Encode()
 	body, _ := json.Marshal(map[string]any{
-		"name":                     "Easy Terminal 权限测试",
+		"name":                     "Iris 权限测试",
 		"user_id_list":             []string{receiveID},
 		"chat_mode":                "group",
 		"chat_type":                "private",

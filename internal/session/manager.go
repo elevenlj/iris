@@ -150,7 +150,6 @@ func normalizeWorkspaceOptions(workspaces []WorkspaceOption) []WorkspaceOption {
 	out := make([]WorkspaceOption, 0, len(workspaces))
 	seenLabels := map[string]bool{}
 	seenPaths := map[string]bool{}
-	defaultSeen := false
 	for _, workspace := range workspaces {
 		workspace.Label = strings.TrimSpace(workspace.Label)
 		workspace.Value = strings.TrimSpace(workspace.Value)
@@ -160,33 +159,18 @@ func normalizeWorkspaceOptions(workspaces []WorkspaceOption) []WorkspaceOption {
 		if abs, err := filepath.Abs(workspace.Value); err == nil {
 			workspace.Value = abs
 		}
-		if workspace.Default && !defaultSeen {
-			defaultSeen = true
-		} else {
-			workspace.Default = false
-		}
+		workspace.Default = false
 		seenLabels[workspace.Label] = true
 		seenPaths[workspace.Value] = true
 		out = append(out, workspace)
 	}
-	if len(out) > 0 && !defaultSeen {
-		out[0].Default = true
-	}
 	return out
 }
 
-func (m *Manager) defaultAgentSnapshot() (AgentConfig, string) {
+func (m *Manager) defaultAgentSnapshot() AgentConfig {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	agent := m.defaultAgent
-	dir := ""
-	for _, workspace := range m.workspaceOptions {
-		if workspace.Default {
-			dir = workspace.Value
-			break
-		}
-	}
-	return agent, dir
+	return m.defaultAgent
 }
 
 type ManagerOption func(*Manager)
@@ -419,6 +403,7 @@ func (m *Manager) CreateSession(ctx context.Context, name string) (Session, erro
 	if name == "" {
 		return Session{}, errors.New("session name is required")
 	}
+	workspaceDir := defaultSessionWorkspaceDir(name)
 	now := time.Now().UTC()
 	id, err := m.nextSessionID(ctx)
 	if err != nil {
@@ -433,7 +418,7 @@ func (m *Manager) CreateSession(ctx context.Context, name string) (Session, erro
 		Live:        true,
 		RecoveryKey: newRecoveryKey(),
 		LastMode:    SessionModeShell,
-		LastCWD:     m.defaultWorkingDir(),
+		LastCWD:     workspaceDir,
 	}
 	handle, err := m.launcher.Launch(context.Background())
 	if err != nil {
@@ -466,12 +451,12 @@ func (m *Manager) CreateSession(ctx context.Context, name string) (Session, erro
 	go rt.waitForExit()
 	rt.runRecoveryEnvironmentSetup()
 	rt.runPreStartCommand()
-	if agent, dir := m.defaultAgentSnapshot(); agent.Command != "" {
+	if agent := m.defaultAgentSnapshot(); agent.Command != "" {
+		workspaceShellPath := defaultSessionWorkspaceShellPath(name)
 		rt.SuppressStartupNotifications()
-		if dir != "" {
-			rt.RecordShellCommandForRecovery("cd " + shellQuote(dir))
-			_, _ = rt.terminal.Write([]byte("cd " + shellQuote(dir) + "\r"))
-		}
+		_, _ = rt.terminal.Write([]byte("mkdir -p " + workspaceShellPath + "\r"))
+		rt.RecordShellCommandForRecovery("cd " + shellQuote(workspaceDir))
+		_, _ = rt.terminal.Write([]byte("cd " + workspaceShellPath + "\r"))
 		rt.ConfigureAgentForRecovery(agent)
 		_, _ = rt.terminal.Write([]byte(agent.Command + "\r"))
 		rt.FinishStartupNotifications()
@@ -511,6 +496,44 @@ func (m *Manager) defaultWorkingDir() string {
 		return dir
 	}
 	return "."
+}
+
+func irisWorkspaceRootDir() string {
+	if dir := strings.TrimSpace(os.Getenv("IRIS_WORKSPACE_DIR")); dir != "" {
+		if abs, err := filepath.Abs(dir); err == nil {
+			return abs
+		}
+		return dir
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		return filepath.Join(home, "Iris_Workspace")
+	}
+	return filepath.Join(".", "Iris_Workspace")
+}
+
+func defaultSessionWorkspaceDir(sessionName string) string {
+	return filepath.Join(irisWorkspaceRootDir(), safeWorkspaceSessionDir(sessionName))
+}
+
+func defaultSessionWorkspaceShellPath(sessionName string) string {
+	if strings.TrimSpace(os.Getenv("IRIS_WORKSPACE_DIR")) != "" {
+		return shellQuote(defaultSessionWorkspaceDir(sessionName))
+	}
+	return "${HOME}/" + shellQuote("Iris_Workspace/"+safeWorkspaceSessionDir(sessionName))
+}
+
+func (m *Manager) WorkspaceOptionsForSession(sess Session) []WorkspaceOption {
+	defaultDir := defaultSessionWorkspaceDir(sess.Name)
+	out := []WorkspaceOption{{Label: "默认目录", Value: defaultDir, Default: true}}
+	_, configured := m.AgentConfig()
+	for _, workspace := range configured {
+		workspace.Default = false
+		if workspace.Value == defaultDir {
+			continue
+		}
+		out = append(out, workspace)
+	}
+	return out
 }
 
 func (m *Manager) sessionRecoveryDir(sess Session) string {
@@ -775,7 +798,8 @@ func (m *Manager) SwitchWorkspace(ctx context.Context, id, path string) (Session
 	if !ok {
 		return Session{}, false, nil
 	}
-	_, workspaces := m.AgentConfig()
+	sess := rt.Snapshot()
+	workspaces := m.WorkspaceOptionsForSession(sess)
 	allowed := false
 	for _, workspace := range workspaces {
 		if workspace.Value == path {
@@ -790,7 +814,6 @@ func (m *Manager) SwitchWorkspace(ctx context.Context, id, path string) (Session
 	if err != nil || !info.IsDir() {
 		return Session{}, true, errors.New("目录不存在或不可访问")
 	}
-	sess := rt.Snapshot()
 	input := "/cd " + path
 	if strings.EqualFold(sess.LastAgentKind, "codex") {
 		if err := SubmitStructuredInputWithMention(rt, input, rt.NotificationMentionOpenID()); err != nil {
@@ -1527,9 +1550,6 @@ func (rt *RuntimeSession) runRecoveryEnvironmentSetup() {
 	}
 	if hookURL := rt.manager.AgentTurnHookURL(); hookURL != "" && strings.TrimSpace(sess.RecoveryKey) != "" {
 		exports = append(exports,
-			"EASY_TERMINAL_HOOK_URL="+shellQuote(hookURL),
-			"EASY_TERMINAL_SESSION_ID="+shellQuote(sess.ID),
-			"EASY_TERMINAL_HOOK_TOKEN="+shellQuote(sess.RecoveryKey),
 			"IRIS_API_URL="+shellQuote(hookURL),
 			"IRIS_SESSION_ID="+shellQuote(sess.ID),
 			"IRIS_SESSION_TOKEN="+shellQuote(sess.RecoveryKey),
@@ -3953,8 +3973,7 @@ func (rt *RuntimeSession) decorateWaitingNotification(note WaitingNotification) 
 	sess := rt.Snapshot()
 	note.DeveloperModeEnabled = sess.DeveloperModeEnabled
 	note.AgentKind = sess.LastAgentKind
-	_, workspaces := rt.manager.AgentConfig()
-	note.WorkspaceOptions = workspaces
+	note.WorkspaceOptions = rt.manager.WorkspaceOptionsForSession(sess)
 	note.AgentOptions = rt.manager.AvailableAgentOptions()
 	return note
 }

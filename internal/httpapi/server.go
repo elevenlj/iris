@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"easy_terminal/internal/session"
+	"github.com/elevenlj/iris/internal/session"
 )
 
 //go:embed static/*
@@ -219,7 +219,7 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"content": string(out)}, nil)
 	case "current-round":
-		if os.Getenv("EASY_TERMINAL_E2E_DEBUG") != "1" {
+		if os.Getenv("IRIS_E2E_DEBUG") != "1" && os.Getenv("EASY_TERMINAL_E2E_DEBUG") != "1" {
 			http.NotFound(w, r)
 			return
 		}

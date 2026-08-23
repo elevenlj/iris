@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"easy_terminal/internal/session"
+	"github.com/elevenlj/iris/internal/session"
 )
 
 func TestConfigEndpointGetAndPatch(t *testing.T) {

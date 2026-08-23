@@ -31,7 +31,7 @@ async function main() {
         AGENT_MONITOR_DB: path.join(tmp, "iris.db"),
         AGENT_MONITOR_UPLOADS_DIR: path.join(tmp, "data", "uploads"),
         AGENT_MONITOR_LOG_DIR: path.join(tmp, "log"),
-        EASY_TERMINAL_E2E_DEBUG: "1",
+        IRIS_E2E_DEBUG: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -56,12 +56,12 @@ async function main() {
     await cdp.send("Runtime.enable");
     await cdp.send("Page.navigate", { url: `http://localhost:${port}` });
     await waitFor(() => evalExpr("document.readyState === 'complete' || document.readyState === 'interactive'"));
-    await waitFor(() => evalExpr("Boolean(window.easyTerminalApp && document.querySelector('#session-name'))"));
+    await waitFor(() => evalExpr("Boolean(window.irisApp && document.querySelector('#session-name'))"));
 
     await initializeIrisForCodexE2E();
 
     await createSession("real-codex-tui-e2e");
-    await waitFor(() => evalExpr("window.easyTerminalApp.state.active && window.easyTerminalApp.state.socket && window.easyTerminalApp.state.socket.readyState === WebSocket.OPEN"));
+    await waitFor(() => evalExpr("window.irisApp.state.active && window.irisApp.state.socket && window.irisApp.state.socket.readyState === WebSocket.OPEN"));
     await waitForTerminalSize();
     const bootSnapshot = await completeCodexStartup();
     assertNoMojibake(bootSnapshot);
@@ -111,7 +111,7 @@ async function initializeIrisForCodexE2E() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
     }).then((response) => response.json());
-    window.easyTerminalApp.state.config = updated;
+    window.irisApp.state.config = updated;
     if (document.querySelector('#onboarding-dialog').open) {
       document.querySelector('#onboarding-dialog').close();
     }
@@ -143,23 +143,23 @@ async function completeCodexStartup() {
 }
 
 async function runCodexPromptNotificationContentE2E() {
-  const firstPrompt = "请只回复由 EASY、TERMINAL、E2E、ALPHA 用下划线拼接后的字符串，不要解释。";
-  const secondPrompt = "请只回复由 EASY、TERMINAL、E2E、BETA 用下划线拼接后的字符串，不要解释。";
+  const firstPrompt = "请只回复由 IRIS、E2E、ALPHA 用下划线拼接后的字符串，不要解释。";
+  const secondPrompt = "请只回复由 IRIS、E2E、BETA 用下划线拼接后的字符串，不要解释。";
 
   await submitComposer(firstPrompt);
-  await waitForTerminalSnapshot("EASY_TERMINAL_E2E_ALPHA", 90000);
-  const firstContent = await waitForCurrentRoundContent("EASY_TERMINAL_E2E_ALPHA", 15000);
+  await waitForTerminalSnapshot("IRIS_E2E_ALPHA", 90000);
+  const firstContent = await waitForCurrentRoundContent("IRIS_E2E_ALPHA", 15000);
   assertNoMojibake(firstContent);
   assert.equal(firstContent.includes(firstPrompt), false, "current-round content should start after the first input anchor");
   await waitForCodexReady();
 
   await submitComposer(secondPrompt);
-  await waitForTerminalSnapshot("EASY_TERMINAL_E2E_BETA", 90000);
-  const secondContent = await waitForCurrentRoundContent("EASY_TERMINAL_E2E_BETA", 15000);
+  await waitForTerminalSnapshot("IRIS_E2E_BETA", 90000);
+  const secondContent = await waitForCurrentRoundContent("IRIS_E2E_BETA", 15000);
   assertNoMojibake(secondContent);
   assert.equal(secondContent.includes(secondPrompt), false, "current-round content should start after the second input anchor");
   assert.equal(secondContent.includes(firstPrompt), false, "current-round content should not include the previous input");
-  assert.equal(secondContent.includes("EASY_TERMINAL_E2E_ALPHA"), false, "current-round content should not include the previous answer");
+  assert.equal(secondContent.includes("IRIS_E2E_ALPHA"), false, "current-round content should not include the previous answer");
   await waitForCodexReady();
 }
 
@@ -198,7 +198,7 @@ async function waitForAnyTerminalSnapshot(texts, timeoutMs = 10000) {
 }
 
 async function terminalSnapshot() {
-  return await evalExpr("window.easyTerminalApp.terminalVisibleSnapshot()") || "";
+  return await evalExpr("window.irisApp.terminalVisibleSnapshot()") || "";
 }
 
 async function waitForCurrentRoundContent(text, timeoutMs = 10000, options = {}) {
@@ -216,7 +216,7 @@ async function waitForCurrentRoundContent(text, timeoutMs = 10000, options = {})
 }
 
 async function currentRoundContent(options = {}) {
-  const sessionID = await evalExpr("window.easyTerminalApp.state.active");
+  const sessionID = await evalExpr("window.irisApp.state.active");
   const query = options.fresh === false ? "?fresh=0" : "";
   return fetchJSON(`http://localhost:${port}/api/sessions/${encodeURIComponent(sessionID)}/current-round${query}`);
 }
@@ -250,7 +250,7 @@ async function openCodexModelMenu() {
 async function waitForTerminalSize() {
   let size = null;
   await waitFor(async () => {
-    size = await evalExpr("({ cols: window.easyTerminalApp.state.term?.cols || 0, rows: window.easyTerminalApp.state.term?.rows || 0 })");
+    size = await evalExpr("({ cols: window.irisApp.state.term?.cols || 0, rows: window.irisApp.state.term?.rows || 0 })");
     return size.cols >= 80 && size.rows >= 20;
   }, 8000);
   return size;
@@ -313,8 +313,8 @@ async function singlePageTarget() {
 }
 
 async function safeCurrentRoundDiagnostics(content) {
-  const sessionID = await evalExpr("window.easyTerminalApp?.state?.active || ''").catch(() => "");
-  const snapshot = await evalExpr("window.easyTerminalApp?.terminalSnapshotMetadata?.() || null").catch(() => null);
+  const sessionID = await evalExpr("window.irisApp?.state?.active || ''").catch(() => "");
+  const snapshot = await evalExpr("window.irisApp?.terminalSnapshotMetadata?.() || null").catch(() => null);
   let session = null;
   try {
     const sessions = await fetchJSON(`http://localhost:${port}/api/sessions`);

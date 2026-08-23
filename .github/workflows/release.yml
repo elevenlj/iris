@@ -17,19 +17,19 @@ jobs:
         include:
           - goos: darwin
             goarch: amd64
-            asset: easy_terminal-darwin-amd64
+            asset: iris-darwin-amd64
           - goos: darwin
             goarch: arm64
-            asset: easy_terminal-darwin-arm64
+            asset: iris-darwin-arm64
           - goos: linux
             goarch: amd64
-            asset: easy_terminal-linux-amd64
+            asset: iris-linux-amd64
           - goos: linux
             goarch: arm64
-            asset: easy_terminal-linux-arm64
+            asset: iris-linux-arm64
           - goos: windows
             goarch: amd64
-            asset: easy_terminal-windows-amd64.exe
+            asset: iris-windows-amd64.exe
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

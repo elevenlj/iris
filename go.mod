@@ -1,4 +1,4 @@
-module easy_terminal
+module github.com/elevenlj/iris
 
 go 1.25.0
 

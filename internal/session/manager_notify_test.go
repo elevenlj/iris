@@ -921,7 +921,7 @@ func TestWaitingNotificationUsesRoundStartSnapshotBeforeLastNotificationSnapshot
 		snapshotAtRoundStart: strings.Join([]string{
 			"old output",
 			"› 关闭 8083",
-			"gpt-5.4 low fast · ~/Easy_Terminal_Workspace/测试",
+			"gpt-5.4 low fast · ~/Iris_Workspace/测试",
 		}, "\n"),
 		snapshotAtRoundStartSet: true,
 		visibleSnapshot: strings.Join([]string{
@@ -930,7 +930,7 @@ func TestWaitingNotificationUsesRoundStartSnapshotBeforeLastNotificationSnapshot
 			"• Ran lsof -nP -iTCP:8083 -sTCP:LISTEN",
 			"  (no output)",
 			"已关闭 8083 接口。",
-			"gpt-5.4 low fast · ~/Easy_Terminal_Workspace/测试",
+			"gpt-5.4 low fast · ~/Iris_Workspace/测试",
 		}, "\n"),
 		visibleSnapshotVersion: 2,
 		snapshotAtRoundVersion: 1,
@@ -2153,16 +2153,16 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 	if strings.Contains(content, "退出agent") || strings.Contains(content, "exit_agent") {
 		t.Fatalf("card content should not include the removed exit agent shortcut, got %s", content)
 	}
-	if !strings.Contains(content, "刷新") || !strings.Contains(content, `"easy_terminal_action":"refresh"`) {
+	if !strings.Contains(content, "刷新") || !strings.Contains(content, `"iris_action":"refresh"`) {
 		t.Fatalf("card content should include manual refresh button, got %s", content)
 	}
-	if strings.Contains(content, "自动刷新") || strings.Contains(content, "停自动") || strings.Contains(content, `"easy_terminal_action":"toggle_auto_refresh"`) {
+	if strings.Contains(content, "自动刷新") || strings.Contains(content, "停自动") || strings.Contains(content, `"iris_action":"toggle_auto_refresh"`) {
 		t.Fatalf("card content should not include auto refresh button, got %s", content)
 	}
-	if !strings.Contains(content, "艾特模式") || !strings.Contains(content, `"easy_terminal_action":"toggle_mention_mode"`) {
+	if !strings.Contains(content, "艾特模式") || !strings.Contains(content, `"iris_action":"toggle_mention_mode"`) {
 		t.Fatalf("card content should include mention mode button, got %s", content)
 	}
-	if !strings.Contains(content, "删除会话") || !strings.Contains(content, `"easy_terminal_action":"delete_session"`) || !strings.Contains(content, `"type":"danger"`) {
+	if !strings.Contains(content, "删除会话") || !strings.Contains(content, `"iris_action":"delete_session"`) || !strings.Contains(content, `"type":"danger"`) {
 		t.Fatalf("card content should include prominent delete button, got %s", content)
 	}
 	if !strings.Contains(content, `"confirm"`) || !strings.Contains(content, "确认删除会话？") || !strings.Contains(content, "机器人从当前群聊移除") {
@@ -2173,10 +2173,10 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 		strings.Index(content, `"content":"Ctrl-C"`) < strings.Index(content, `"content":"Esc"`) &&
 		strings.Index(content, `"content":"Esc"`) < strings.Index(content, `"content":"Enter"`) &&
 		strings.Index(content, `"content":"Enter"`) < strings.Index(content, `"content":"删除会话"`) &&
-		strings.Index(content, `"content":"删除会话"`) < strings.Index(content, `"easy_terminal_action":"custom_shortcut"`)) {
+		strings.Index(content, `"content":"删除会话"`) < strings.Index(content, `"iris_action":"custom_shortcut"`)) {
 		t.Fatalf("refresh button should be first and custom shortcuts below system shortcuts, got %s", content)
 	}
-	if !strings.Contains(content, "状态") || !strings.Contains(content, `"easy_terminal_action":"custom_shortcut"`) || !strings.Contains(content, "git status") {
+	if !strings.Contains(content, "状态") || !strings.Contains(content, `"iris_action":"custom_shortcut"`) || !strings.Contains(content, "git status") {
 		t.Fatalf("card content should include custom shortcut row, got %s", content)
 	}
 	for _, label := range []string{"刷新", "关闭开发者模式", "艾特模式", "删除会话", "Ctrl-C", "Esc", "Enter"} {
@@ -2228,7 +2228,7 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(enabled, "自动刷新") || strings.Contains(enabled, "停自动") || strings.Contains(enabled, `"easy_terminal_action":"toggle_auto_refresh"`) {
+	if strings.Contains(enabled, "自动刷新") || strings.Contains(enabled, "停自动") || strings.Contains(enabled, `"iris_action":"toggle_auto_refresh"`) {
 		t.Fatalf("enabled auto refresh state should not restore the removed button, got %s", enabled)
 	}
 	mentionModeEnabled, err := larkNotificationCardContent(WaitingNotification{
@@ -2262,7 +2262,7 @@ func TestLarkNotificationCardContentListsOnlyAvailableAgentOptions(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{`"content":"Agent"`, `"content":"Codex"`, `"content":"Claude Code"`, `"easy_terminal_action":"agent_select"`, `"initial_option":"claude"`} {
+	for _, expected := range []string{`"content":"Agent"`, `"content":"Codex"`, `"content":"Claude Code"`, `"iris_action":"agent_select"`, `"initial_option":"claude"`} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("Agent selector missing %s: %s", expected, content)
 		}
@@ -2280,7 +2280,7 @@ func TestLarkNotificationCardContentListsOnlyAvailableAgentOptions(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(hidden, `"easy_terminal_action":"agent_select"`) {
+	if strings.Contains(hidden, `"iris_action":"agent_select"`) {
 		t.Fatalf("Agent selector must stay hidden outside developer mode: %s", hidden)
 	}
 }
@@ -2300,7 +2300,7 @@ func TestLarkNotificationCardContentDisabledRemovesButtons(t *testing.T) {
 	if strings.Contains(content, "状态：") {
 		t.Fatalf("disabled card should not include duplicate status text, got %s", content)
 	}
-	for _, forbidden := range []string{`"tag":"button"`, `"easy_terminal_action"`, `"custom_shortcut"`, `"content":"刷新"`, `"content":"Ctrl-C"`, "任务执行中"} {
+	for _, forbidden := range []string{`"tag":"button"`, `"iris_action"`, `"custom_shortcut"`, `"content":"刷新"`, `"content":"Ctrl-C"`, "任务执行中"} {
 		if strings.Contains(content, forbidden) {
 			t.Fatalf("disabled card should remove buttons and running title, found %q in %s", forbidden, content)
 		}
@@ -2368,7 +2368,7 @@ func findLarkActionRows(value any, action string) []map[string]any {
 				walk(item)
 			}
 		case map[string]any:
-			if typed["tag"] == "column_set" && strings.Contains(mustJSONForTest(typed), `"easy_terminal_action":"`+action+`"`) {
+			if typed["tag"] == "column_set" && strings.Contains(mustJSONForTest(typed), `"iris_action":"`+action+`"`) {
 				columns, _ := typed["columns"].([]any)
 				if len(columns) > 0 {
 					column, _ := columns[0].(map[string]any)
@@ -3567,7 +3567,7 @@ func TestManualRefreshKeepsWorkingBelowInputAnchor(t *testing.T) {
 		"• Working (1s • esc to interrupt)",
 		"1 background terminal running · /ps to view · /stop to close",
 		"› Run /review on my current changes",
-		"gpt-5.5 xhigh fast · ~/Easy_Terminal_Workspace/减肥",
+		"gpt-5.5 xhigh fast · ~/Iris_Workspace/减肥",
 	}, "\n"))
 
 	if err := rt.RefreshNotificationMessage("bot-card"); err != nil {

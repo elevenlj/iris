@@ -174,7 +174,7 @@ type ScreenLauncher struct {
 func (l ScreenLauncher) Launch(ctx context.Context) (ProcessHandle, error) {
 	name := l.SessionName
 	if name == "" {
-		name = "easy-terminal"
+		name = "iris"
 	}
 	command := l.Command
 	if command == "" {

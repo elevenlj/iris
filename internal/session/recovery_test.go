@@ -143,7 +143,7 @@ func TestEnsureCodexNotifyPreservesExistingNotifyAndRemovesManagedStopHook(t *te
 	hooks := map[string]any{"hooks": map[string]any{
 		"Stop": []any{
 			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "existing-stop", "timeout": 30}}},
-			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": easyTerminalCodexStopHookCommand, "timeout": 5}}},
+			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": legacyEasyTerminalCodexStopHookCommand, "timeout": 5}}},
 		},
 		"PostToolUse": []any{map[string]any{"matcher": ".*", "hooks": []any{}}},
 	}}
@@ -349,9 +349,9 @@ func TestRecoveryEnvironmentExportsAgentTurnHookCredentials(t *testing.T) {
 	rt.runRecoveryEnvironmentSetup()
 	writes := terminal.writes()
 	for _, want := range []string{
-		"EASY_TERMINAL_HOOK_URL='http://127.0.0.1:8001'",
-		"EASY_TERMINAL_SESSION_ID='sess-9'",
-		"EASY_TERMINAL_HOOK_TOKEN='secret-token'",
+		"IRIS_API_URL='http://127.0.0.1:8001'",
+		"IRIS_SESSION_ID='sess-9'",
+		"IRIS_SESSION_TOKEN='secret-token'",
 	} {
 		if !strings.Contains(writes, want) {
 			t.Fatalf("hook environment missing %q from %q", want, writes)

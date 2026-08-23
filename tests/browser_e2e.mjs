@@ -55,18 +55,18 @@ try {
   await cdp.send("Runtime.enable");
   await cdp.send("Page.navigate", { url: `http://localhost:${port}` });
   await waitFor(() => evalExpr("document.readyState === 'complete' || document.readyState === 'interactive'"));
-  await waitFor(() => evalExpr("Boolean(window.easyTerminalApp && document.querySelector('#session-name'))"));
+  await waitFor(() => evalExpr("Boolean(window.irisApp && document.querySelector('#session-name'))"));
 
   await initializeIrisForE2E();
 
   await createSession("browser-e2e");
   await waitFor(() => evalExpr("document.querySelectorAll('.session').length === 1"));
   await waitFor(() => evalExpr("document.querySelector('.session').className.includes('session-running')"));
-  await waitFor(() => evalExpr("window.easyTerminalApp.state.active && window.easyTerminalApp.state.socket && window.easyTerminalApp.state.socket.readyState === WebSocket.OPEN"));
+  await waitFor(() => evalExpr("window.irisApp.state.active && window.irisApp.state.socket && window.irisApp.state.socket.readyState === WebSocket.OPEN"));
   const browserTerminalSize = await waitForTerminalSize();
   assert.ok(browserTerminalSize.cols >= 80 && browserTerminalSize.rows >= 20, "browser should fit terminal to the visible shell");
-  assert.equal(await evalExpr("window.easyTerminalApp.standardTerminal.cols"), 120, "browser should use the standard terminal width");
-  assert.equal(await evalExpr("window.easyTerminalApp.standardTerminal.rows"), 36, "browser should use the standard terminal height");
+  assert.equal(await evalExpr("window.irisApp.standardTerminal.cols"), 120, "browser should use the standard terminal width");
+  assert.equal(await evalExpr("window.irisApp.standardTerminal.rows"), 36, "browser should use the standard terminal height");
   await waitFor(() => fetchJSON(`http://localhost:${port}/api/sessions`).then((sessions) => sessions[0]?.status === "waiting"), 7000);
   await waitFor(() => evalExpr("document.querySelector('.session').className.includes('session-waiting')"), 7000);
 
@@ -95,11 +95,11 @@ try {
   const fullBufferSnapshot = await waitForTerminalSnapshot("FULL_BUFFER_E2E_01");
   assert.ok(fullBufferSnapshot.includes("FULL_BUFFER_E2E_50"), "terminal snapshot should include full scrollback output");
 
-  const activeSessionID = await evalExpr("window.easyTerminalApp.state.active");
+  const activeSessionID = await evalExpr("window.irisApp.state.active");
   await cdp.send("Page.navigate", { url: `http://localhost:${port}/?session=${encodeURIComponent(activeSessionID)}` });
-  await waitFor(() => evalExpr("Boolean(window.easyTerminalApp && document.querySelector('#session-name'))"));
-  await waitFor(() => evalExpr(`window.easyTerminalApp.state.active === ${JSON.stringify(activeSessionID)}`));
-  await waitFor(() => evalExpr("window.easyTerminalApp.state.socket && window.easyTerminalApp.state.socket.readyState === WebSocket.OPEN"));
+  await waitFor(() => evalExpr("Boolean(window.irisApp && document.querySelector('#session-name'))"));
+  await waitFor(() => evalExpr(`window.irisApp.state.active === ${JSON.stringify(activeSessionID)}`));
+  await waitFor(() => evalExpr("window.irisApp.state.socket && window.irisApp.state.socket.readyState === WebSocket.OPEN"));
   const reconnectedSnapshot = await waitForTerminalSnapshot("中文快照_OK");
   assert.ok(reconnectedSnapshot.includes("BROWSER_BUTTON_E2E"), "browser reconnect should keep earlier terminal history");
 
@@ -117,7 +117,7 @@ try {
   // The paste handler intentionally inserts the uploaded path without
   // submitting it. Execute the pending shell line so the assertion observes
   // deterministic PTY output instead of depending on terminal-driver echo.
-  await evalExpr("window.easyTerminalApp.queueTerminalInput('\\r').then(() => true)");
+  await evalExpr("window.irisApp.queueTerminalInput('\\r').then(() => true)");
   await waitForOutput("/data/uploads/");
   await waitForOutput(".png");
 
@@ -127,9 +127,9 @@ try {
 
   const headlessTarget = await createSessionViaAPI("headless-target");
   await cdp.send("Page.navigate", { url: `http://localhost:${port}/?session=${encodeURIComponent(headlessTarget.id)}` });
-  await waitFor(() => evalExpr("Boolean(window.easyTerminalApp && document.querySelector('#session-name'))"));
-  await waitFor(() => evalExpr(`window.easyTerminalApp.state.active === ${JSON.stringify(headlessTarget.id)}`));
-  await waitFor(() => evalExpr("window.easyTerminalApp.state.socket && window.easyTerminalApp.state.socket.readyState === WebSocket.OPEN"));
+  await waitFor(() => evalExpr("Boolean(window.irisApp && document.querySelector('#session-name'))"));
+  await waitFor(() => evalExpr(`window.irisApp.state.active === ${JSON.stringify(headlessTarget.id)}`));
+  await waitFor(() => evalExpr("window.irisApp.state.socket && window.irisApp.state.socket.readyState === WebSocket.OPEN"));
 
   await deleteActiveSession();
   assert.deepEqual(await fetchJSON(`http://localhost:${port}/api/sessions`), [], "test session should be cleaned up");
@@ -159,7 +159,7 @@ async function initializeIrisForE2E() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
     }).then((response) => response.json());
-    window.easyTerminalApp.state.config = updated;
+    window.irisApp.state.config = updated;
     document.querySelector('#onboarding-dialog').close();
     return true;
   })()`);
@@ -241,7 +241,7 @@ async function runTUILikeSnapshotE2E() {
 async function waitForTerminalLine(expected, timeoutMs = 10000) {
   let snapshot = "";
   await waitFor(async () => {
-    snapshot = await evalExpr("window.easyTerminalApp.terminalVisibleSnapshot()") || "";
+    snapshot = await evalExpr("window.irisApp.terminalVisibleSnapshot()") || "";
     return snapshot.split(/\r?\n/).some((line) => line.trimEnd() === expected);
   }, timeoutMs);
   return snapshot;
@@ -299,7 +299,7 @@ async function waitForOutput(text) {
 async function waitForTerminalSnapshot(text) {
   let snapshot = "";
   await waitFor(async () => {
-    snapshot = await evalExpr("window.easyTerminalApp.terminalVisibleSnapshot()");
+    snapshot = await evalExpr("window.irisApp.terminalVisibleSnapshot()");
     return typeof snapshot === "string" && snapshot.includes(text);
   }, 8000);
   return snapshot;
@@ -308,7 +308,7 @@ async function waitForTerminalSnapshot(text) {
 async function waitForTerminalSize() {
   let size = null;
   await waitFor(async () => {
-    size = await evalExpr("({ cols: window.easyTerminalApp.state.term?.cols || 0, rows: window.easyTerminalApp.state.term?.rows || 0 })");
+    size = await evalExpr("({ cols: window.irisApp.state.term?.cols || 0, rows: window.irisApp.state.term?.rows || 0 })");
     return size.cols >= 80 && size.rows >= 20;
   }, 8000);
   return size;

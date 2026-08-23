@@ -12,7 +12,7 @@ Iris 是一个运行在本机的飞书个人 AI 助理。它把飞书机器人�
 - 开发者模式：只有配置的开发者可以开关；开启后显示目录、模型、推理等级、Agent 重启、终端快捷键和自定义快捷键。
 - Agent 切换：开发者模式卡片只展示本机已安装的 Codex、Claude Code 和已配置的自定义 Agent，并在确认旧 Agent 退出后完成切换。
 - Agent 恢复：Iris 重启时会先检查并升级正在使用的 Codex、Claude Code，再恢复会话；其他 Agent 可通过卡片复用已配置的启动命令重启。
-- 工作目录：可配置显示名称、绝对路径和默认目录；Codex 会话支持从飞书卡片切换白名单目录。
+- 工作目录：每个会话默认使用 `~/Iris_Workspace/会话名称`，并可从飞书卡片切换到额外配置的项目目录。
 - 设置保护：首次使用引导设置密码，也允许在明确确认风险后跳过；支持在设置页修改和本机重置。
 - 环境检测：可在设置页按需检查 Node.js、Headless 浏览器、数据目录、飞书连接和 Agent 环境；结果仅即时展示，不保存也不影响主流程。
 - Web 终端：保留真实终端、长文本输入、图片粘贴、快捷命令和会话管理能力。
@@ -83,7 +83,7 @@ go run ./cmd --reset-settings-password
 - `~/.iris/data/uploads/`
 - `~/.iris/log/iris.log`
 
-同时兼容原 Easy Terminal 的 `EASY_TERMINAL_HOME` 和 `EASY_TERMINAL_CONFIG_DIR` 环境变量，便于迁移旧部署。
+迁移旧部署时仍可读取旧版环境变量，但新配置统一使用 `IRIS_HOME` 和 `IRIS_CONFIG_DIR`。
 
 ## 验证
 

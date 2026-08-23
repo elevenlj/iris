@@ -501,7 +501,7 @@ const context = {
       });
     }
     if (path === "/api/sessions/sess-1/uploads" && options.method === "POST") {
-      return jsonResponse({ path: "/tmp/easy-terminal-test/paste.png" }, 201);
+      return jsonResponse({ path: "/tmp/iris-test/paste.png" }, 201);
     }
     return jsonResponse({}, 200);
   },
@@ -521,7 +521,7 @@ vm.runInContext(fs.readFileSync(new URL("./app.js", import.meta.url), "utf8"), c
 await Promise.resolve();
 await Promise.resolve();
 
-const app = context.window.easyTerminalApp;
+const app = context.window.irisApp;
 
 const originalSetTimeout = context.setTimeout;
 const originalClearTimeout = context.clearTimeout;
@@ -1197,7 +1197,7 @@ await elements.terminal.dispatchEvent({
 });
 await Promise.resolve();
 assert.equal(pastePrevented, true, "terminal image paste should prevent default paste handling");
-assert.deepEqual(sentMessages.pop(), { type: "input", data: " /tmp/easy-terminal-test/paste.png " });
+assert.deepEqual(sentMessages.pop(), { type: "input", data: " /tmp/iris-test/paste.png " });
 
 app.state.sessions = [{
   id: "sess-1",

@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/easy_terminal.iml" filepath="$PROJECT_DIR$/.idea/easy_terminal.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/iris.iml" filepath="$PROJECT_DIR$/.idea/iris.iml" />
     </modules>
   </component>
 </project>

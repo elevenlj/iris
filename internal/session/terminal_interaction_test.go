@@ -194,7 +194,7 @@ func TestDetectCodexReasoningRejectsHistoricalMenuAfterTurnCompleted(t *testing.
 		"• Ran curl https://wttr.in/Chengdu",
 		"成都现在约 31°C，多云。",
 		"› Improve documentation in @filename",
-		"gpt-5.6-sol medium fast · ~/project/easy_terminal",
+		"gpt-5.6-sol medium fast · ~/project/iris",
 	}, "\n")
 
 	if got := DetectCodexTerminalInteraction(text, "sess-1", "成都天气如何", 10, 20); got != nil {
@@ -209,7 +209,7 @@ func TestDetectCodexReasoningWithoutFooterRejectsNewPromptAfterMenu(t *testing.T
 		"› 2. Medium (default)",
 		"3. High",
 		"› Improve documentation in @filename",
-		"gpt-5.6-sol medium fast · ~/project/easy_terminal",
+		"gpt-5.6-sol medium fast · ~/project/iris",
 	}, "\n")
 
 	if got := DetectCodexTerminalInteraction(text, "sess-1", "2", 10, 20); got != nil {
@@ -385,7 +385,7 @@ func TestLarkNotificationCardRendersTerminalSelect(t *testing.T) {
 	}
 	behaviors := selectElement["behaviors"].([]any)
 	value := behaviors[0].(map[string]any)["value"].(map[string]any)
-	if value["easy_terminal_action"] != "terminal_select" || value["interaction_id"] != "ti_model_1" || value["session_id"] != "sess-1" {
+	if value["iris_action"] != "terminal_select" || value["interaction_id"] != "ti_model_1" || value["session_id"] != "sess-1" {
 		t.Fatalf("select callback value = %#v", value)
 	}
 	if strings.Contains(content, `"value":"2"`) {
@@ -484,9 +484,9 @@ func TestLarkReplyBridgeTerminalSelectWritesOptionOnceWithoutEnter(t *testing.T)
 		Operator: &callback.Operator{OpenID: "ou_clicker"},
 		Action: &callback.CallBackAction{
 			Value: map[string]interface{}{
-				"easy_terminal_action": "terminal_select",
-				"session_id":           sess.ID,
-				"interaction_id":       "ti_model",
+				"iris_action":    "terminal_select",
+				"session_id":     sess.ID,
+				"interaction_id": "ti_model",
 			},
 			Option: "opt_2",
 		},

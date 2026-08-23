@@ -15,15 +15,15 @@
 1. 会话名预设：如果开启了一个名为 xx 的会话，你可以给他预设命令，启动的前直接执行命令，比如你希望能够在不同的目录下工作，那就可以预设进到某一个目录，也可以在进到目录后启动你的agent，可以是任何的agent，claude code、codex、gemini等等
 2. 会话启动命令：你可以指定任何一个会话启动前要执行的命令，比如你想使用zsh，那直接设置使用zsh的命令
    安装&使用
-   开源地址：https://gitee.com/eleven_lj/easy_terminal.git
-   一键安装：npm install -g @lijuneleven/easy-terminal
+   开源地址：https://github.com/elevenlj/iris.git
+   一键安装：npm install -g @lijuneleven/iris
    启动：
-1. easy-terminal
+1. iris
    默认8080端口，网页访问：localhost:8080
-2. easy-terminal  -p 8888
+2. iris  -p 8888
    指定端口号
-3. easy-terminal  -p 8888 --config-dir xxxx
-   指定配置和运行数据目录，默认 ~/.easy_terminal
+3. iris  -p 8888 --config-dir xxxx
+   指定配置和运行数据目录，默认 ~/.iris
    必要配置：
 1. 选择本地agent，可以不选，自己单独添加agent启动快捷键或者会话预设agent启动命令，建议选上
 2. 飞书配置：飞书扫码一键配置

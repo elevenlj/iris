@@ -272,8 +272,8 @@ func TestLarkReplyBridgeBotAddedCreatesBoundMentionModeAgentSession(t *testing.T
 	}
 	writes := launcher.terminals[0].writeParts()
 	wantWrites := []string{
-		"mkdir -p ${HOME}/'Easy_Terminal_Workspace/项目开发群'\r",
-		"cd ${HOME}/'Easy_Terminal_Workspace/项目开发群'\r",
+		"mkdir -p ${HOME}/'Iris_Workspace/项目开发群'\r",
+		"cd ${HOME}/'Iris_Workspace/项目开发群'\r",
 		"codex --dangerously-bypass-approvals-and-sandbox\r",
 	}
 	if len(writes) < len(wantWrites) {
@@ -289,7 +289,7 @@ func TestLarkReplyBridgeBotAddedCreatesBoundMentionModeAgentSession(t *testing.T
 	if len(chatMessages) != 1 || chatMessages[0] != wantMessage {
 		t.Fatalf("chat messages = %#v, want %q", chatMessages, wantMessage)
 	}
-	if strings.Contains(chatMessages[0], "Easy_Terminal_Workspace") || strings.Contains(chatMessages[0], "codex") {
+	if strings.Contains(chatMessages[0], "Iris_Workspace") || strings.Contains(chatMessages[0], "codex") {
 		t.Fatalf("intro should not expose workspace or agent: %q", chatMessages[0])
 	}
 
@@ -617,7 +617,7 @@ func TestLarkCreateChatUUIDIsUniqueAcrossSameSessionID(t *testing.T) {
 	if first == second {
 		t.Fatalf("chat create uuid should be unique across reused session ids, got %q", first)
 	}
-	if !strings.HasPrefix(first, "easy-terminal-sess-1-") || !strings.HasPrefix(second, "easy-terminal-sess-1-") {
+	if !strings.HasPrefix(first, "iris-sess-1-") || !strings.HasPrefix(second, "iris-sess-1-") {
 		t.Fatalf("unexpected chat create uuid format: %q %q", first, second)
 	}
 }
@@ -1748,9 +1748,9 @@ func TestLarkReplyBridgeCardShortcutSendsCtrlC(t *testing.T) {
 	}
 	event := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
 		Action: &callback.CallBackAction{Value: map[string]interface{}{
-			"easy_terminal_action": "shortcut",
-			"session_id":           sess.ID,
-			"key":                  "ctrl_c",
+			"iris_action": "shortcut",
+			"session_id":  sess.ID,
+			"key":         "ctrl_c",
 		}},
 		Context: &callback.Context{OpenMessageID: "bot-card"},
 	}}
@@ -1788,7 +1788,7 @@ func TestLarkReplyBridgeLegacyCardPayloadSendsCtrlC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := []byte(`{"open_message_id":"bot-card","action":{"value":{"easy_terminal_action":"shortcut","session_id":"` + sess.ID + `","key":"ctrl_c"}}}`)
+	payload := []byte(`{"open_message_id":"bot-card","action":{"value":{"iris_action":"shortcut","session_id":"` + sess.ID + `","key":"ctrl_c"}}}`)
 
 	resp, err := bridge.handleCardActionPayload(context.Background(), payload)
 	if err != nil {
@@ -1828,8 +1828,8 @@ func TestLarkReplyBridgeCardDeleteSessionRemovesBotFromChat(t *testing.T) {
 	defaultLarkMessageRegistry.remember(sess.ID, "bot-card")
 	event := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
 		Action: &callback.CallBackAction{Value: map[string]interface{}{
-			"easy_terminal_action": "delete_session",
-			"session_id":           sess.ID,
+			"iris_action": "delete_session",
+			"session_id":  sess.ID,
 		}},
 		Context: &callback.Context{OpenMessageID: "bot-card", OpenChatID: "oc-chat-delete"},
 	}}
@@ -1875,8 +1875,8 @@ func TestLarkReplyBridgeCardDeleteSessionReportsBotRemovalFailure(t *testing.T) 
 	}
 	event := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
 		Action: &callback.CallBackAction{Value: map[string]interface{}{
-			"easy_terminal_action": "delete_session",
-			"session_id":           sess.ID,
+			"iris_action": "delete_session",
+			"session_id":  sess.ID,
 		}},
 		Context: &callback.Context{OpenMessageID: "bot-card", OpenChatID: "oc-chat-delete"},
 	}}
@@ -1904,9 +1904,9 @@ func TestLarkReplyBridgeCardShortcutExitsAgentWithDoubleCtrlC(t *testing.T) {
 	}
 	event := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
 		Action: &callback.CallBackAction{Value: map[string]interface{}{
-			"easy_terminal_action": "shortcut",
-			"session_id":           sess.ID,
-			"key":                  "exit_agent",
+			"iris_action": "shortcut",
+			"session_id":  sess.ID,
+			"key":         "exit_agent",
 		}},
 		Context: &callback.Context{OpenMessageID: "bot-card"},
 	}}
@@ -1941,8 +1941,8 @@ func TestLarkReplyBridgeCardRefreshUpdatesClickedMessage(t *testing.T) {
 	setTrustedLegacyRoundFixture(rt, "$", "echo hello\r", "$ echo hello\nhello\n$")
 	event := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
 		Action: &callback.CallBackAction{Value: map[string]interface{}{
-			"easy_terminal_action": "refresh",
-			"session_id":           sess.ID,
+			"iris_action": "refresh",
+			"session_id":  sess.ID,
 		}},
 		Context: &callback.Context{OpenMessageID: "bot-card"},
 	}}
@@ -1978,8 +1978,8 @@ func TestLarkReplyBridgeCardToggleAutoRefreshWaitsForInterval(t *testing.T) {
 	rt.SetVisibleSnapshot("$ echo hello\nhello\n$")
 	event := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
 		Action: &callback.CallBackAction{Value: map[string]interface{}{
-			"easy_terminal_action": "toggle_auto_refresh",
-			"session_id":           sess.ID,
+			"iris_action": "toggle_auto_refresh",
+			"session_id":  sess.ID,
 		}},
 		Context: &callback.Context{OpenMessageID: "bot-card"},
 	}}
@@ -2031,8 +2031,8 @@ func TestLarkReplyBridgeCardToggleAutoSummaryPatchesCard(t *testing.T) {
 	rt.SetVisibleSnapshot("$ echo hello\nhello\n$")
 	event := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
 		Action: &callback.CallBackAction{Value: map[string]interface{}{
-			"easy_terminal_action": "toggle_auto_summary",
-			"session_id":           sess.ID,
+			"iris_action": "toggle_auto_summary",
+			"session_id":  sess.ID,
 		}},
 		Context: &callback.Context{OpenMessageID: "bot-card"},
 	}}
@@ -2080,8 +2080,8 @@ func TestLarkReplyBridgeCardToggleMentionModePatchesCard(t *testing.T) {
 	rt.SetVisibleSnapshot("$ echo hello\nhello\n$")
 	event := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
 		Action: &callback.CallBackAction{Value: map[string]interface{}{
-			"easy_terminal_action": "toggle_mention_mode",
-			"session_id":           sess.ID,
+			"iris_action": "toggle_mention_mode",
+			"session_id":  sess.ID,
 		}},
 		Context: &callback.Context{OpenMessageID: "bot-card"},
 	}}
@@ -2121,8 +2121,8 @@ func TestLarkReplyBridgeDeveloperModeToggleIsOwnerOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	action := &callback.CallBackAction{Value: map[string]interface{}{
-		"easy_terminal_action": "toggle_developer_mode",
-		"session_id":           sess.ID,
+		"iris_action": "toggle_developer_mode",
+		"session_id":  sess.ID,
 	}}
 	resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-guest")
 	if err != nil {
@@ -2157,8 +2157,8 @@ func TestLarkReplyBridgeWorkspaceSelectionRequiresDeveloperModeAndUsesConfigured
 		t.Fatal(err)
 	}
 	action := &callback.CallBackAction{Option: workspace, Value: map[string]interface{}{
-		"easy_terminal_action": "workspace_select",
-		"session_id":           sess.ID,
+		"iris_action": "workspace_select",
+		"session_id":  sess.ID,
 	}}
 	resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
 	if err != nil {
@@ -2196,8 +2196,8 @@ func TestLarkReplyBridgeRestartAgentRequiresDeveloperModeAndReusesStartCommand(t
 		t.Fatal(err)
 	}
 	action := &callback.CallBackAction{Value: map[string]interface{}{
-		"easy_terminal_action": "restart_agent",
-		"session_id":           sess.ID,
+		"iris_action": "restart_agent",
+		"session_id":  sess.ID,
 	}}
 	resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
 	if err != nil {
@@ -2245,8 +2245,8 @@ func TestLarkReplyBridgeAgentSelectSwitchesToAvailableYoloCommand(t *testing.T) 
 		t.Fatal(err)
 	}
 	action := &callback.CallBackAction{Option: "claude", Value: map[string]interface{}{
-		"easy_terminal_action": "agent_select",
-		"session_id":           sess.ID,
+		"iris_action": "agent_select",
+		"session_id":  sess.ID,
 	}}
 	resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
 	if err != nil {
@@ -2288,51 +2288,51 @@ func TestLarkReplyBridgeDisabledCardActionsAreBlockedEndToEnd(t *testing.T) {
 		{
 			name: "shortcut",
 			value: map[string]interface{}{
-				"easy_terminal_action": "shortcut",
-				"key":                  "ctrl_c",
+				"iris_action": "shortcut",
+				"key":         "ctrl_c",
 			},
 		},
 		{
 			name: "custom shortcut",
 			value: map[string]interface{}{
-				"easy_terminal_action": "custom_shortcut",
-				"command":              "git status",
+				"iris_action": "custom_shortcut",
+				"command":     "git status",
 			},
 		},
 		{
 			name: "refresh",
 			value: map[string]interface{}{
-				"easy_terminal_action": "refresh",
+				"iris_action": "refresh",
 			},
 		},
 		{
 			name: "toggle auto refresh",
 			value: map[string]interface{}{
-				"easy_terminal_action": "toggle_auto_refresh",
+				"iris_action": "toggle_auto_refresh",
 			},
 		},
 		{
 			name: "toggle auto summary",
 			value: map[string]interface{}{
-				"easy_terminal_action": "toggle_auto_summary",
+				"iris_action": "toggle_auto_summary",
 			},
 		},
 		{
 			name: "toggle mention mode",
 			value: map[string]interface{}{
-				"easy_terminal_action": "toggle_mention_mode",
+				"iris_action": "toggle_mention_mode",
 			},
 		},
 		{
 			name: "restart agent",
 			value: map[string]interface{}{
-				"easy_terminal_action": "restart_agent",
+				"iris_action": "restart_agent",
 			},
 		},
 		{
 			name: "delete session",
 			value: map[string]interface{}{
-				"easy_terminal_action": "delete_session",
+				"iris_action": "delete_session",
 			},
 		},
 	}
@@ -2397,8 +2397,8 @@ func TestLarkReplyBridgeRefreshCanReanchorClickedCard(t *testing.T) {
 	defaultLarkMessageRegistry.remember(sess.ID, "clicked-card", "newer-card")
 	event := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
 		Action: &callback.CallBackAction{Value: map[string]interface{}{
-			"easy_terminal_action": "refresh",
-			"session_id":           sess.ID,
+			"iris_action": "refresh",
+			"session_id":  sess.ID,
 		}},
 		Context: &callback.Context{OpenMessageID: "clicked-card"},
 	}}
@@ -2478,9 +2478,9 @@ func TestLarkReplyBridgeCardCustomShortcutSubmitsCommand(t *testing.T) {
 	}
 	event := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
 		Action: &callback.CallBackAction{Value: map[string]interface{}{
-			"easy_terminal_action": "custom_shortcut",
-			"session_id":           sess.ID,
-			"command":              "git status",
+			"iris_action": "custom_shortcut",
+			"session_id":  sess.ID,
+			"command":     "git status",
 		}},
 		Context: &callback.Context{OpenMessageID: "bot-card"},
 	}}
@@ -2670,9 +2670,9 @@ func TestLarkReplyBridgeCardShortcutsDoNotTriggerAutoSummary(t *testing.T) {
 
 	customEvent := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
 		Action: &callback.CallBackAction{Value: map[string]interface{}{
-			"easy_terminal_action": "custom_shortcut",
-			"session_id":           sess.ID,
-			"command":              "git status",
+			"iris_action": "custom_shortcut",
+			"session_id":  sess.ID,
+			"command":     "git status",
 		}},
 		Context: &callback.Context{OpenMessageID: "bot-card"},
 	}}
@@ -2682,9 +2682,9 @@ func TestLarkReplyBridgeCardShortcutsDoNotTriggerAutoSummary(t *testing.T) {
 
 	shortcutEvent := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
 		Action: &callback.CallBackAction{Value: map[string]interface{}{
-			"easy_terminal_action": "shortcut",
-			"session_id":           sess.ID,
-			"key":                  "enter",
+			"iris_action": "shortcut",
+			"session_id":  sess.ID,
+			"key":         "enter",
 		}},
 		Context: &callback.Context{OpenMessageID: "bot-card"},
 	}}
@@ -2719,8 +2719,8 @@ func TestLarkReplyBridgeStartRunsConfiguredPresets(t *testing.T) {
 	}
 	parts := launcher.terminals[0].writeParts()
 	want := []string{
-		"mkdir -p ${HOME}/'Easy_Terminal_Workspace/测试'\r",
-		"cd ${HOME}/'Easy_Terminal_Workspace/测试'\r",
+		"mkdir -p ${HOME}/'Iris_Workspace/测试'\r",
+		"cd ${HOME}/'Iris_Workspace/测试'\r",
 		"mkdir -p '测试'\r",
 		"cd '测试'\r",
 		"codex\r",
@@ -2757,8 +2757,8 @@ func TestLarkReplyBridgeStartRunsStringPresetCode(t *testing.T) {
 	}
 	parts := launcher.terminals[0].writeParts()
 	want := []string{
-		"mkdir -p ${HOME}/'Easy_Terminal_Workspace/测试'\r",
-		"cd ${HOME}/'Easy_Terminal_Workspace/测试'\r",
+		"mkdir -p ${HOME}/'Iris_Workspace/测试'\r",
+		"cd ${HOME}/'Iris_Workspace/测试'\r",
 		"setup-project\r",
 		"qa-agent --run\r",
 	}
@@ -2786,8 +2786,8 @@ func TestLarkReplyBridgeStartWithoutCodesUsesDefaultAgentPreset(t *testing.T) {
 	}
 	parts := launcher.terminals[0].writeParts()
 	want := []string{
-		"mkdir -p ${HOME}/'Easy_Terminal_Workspace/测试'\r",
-		"cd ${HOME}/'Easy_Terminal_Workspace/测试'\r",
+		"mkdir -p ${HOME}/'Iris_Workspace/测试'\r",
+		"cd ${HOME}/'Iris_Workspace/测试'\r",
 		"codex --dangerously-bypass-approvals-and-sandbox\r",
 	}
 	if len(parts) != len(want) {
@@ -2814,8 +2814,8 @@ func TestLarkReplyBridgeSlashStartWithoutCodesUsesDefaultAgentPreset(t *testing.
 	}
 	parts := launcher.terminals[0].writeParts()
 	want := []string{
-		"mkdir -p ${HOME}/'Easy_Terminal_Workspace/测试'\r",
-		"cd ${HOME}/'Easy_Terminal_Workspace/测试'\r",
+		"mkdir -p ${HOME}/'Iris_Workspace/测试'\r",
+		"cd ${HOME}/'Iris_Workspace/测试'\r",
 		"codex --dangerously-bypass-approvals-and-sandbox\r",
 	}
 	if len(parts) != len(want) {
@@ -2842,8 +2842,8 @@ func TestLarkReplyBridgeStartCodeZeroOnlyEntersWorkspace(t *testing.T) {
 	}
 	parts := launcher.terminals[0].writeParts()
 	want := []string{
-		"mkdir -p ${HOME}/'Easy_Terminal_Workspace/测试'\r",
-		"cd ${HOME}/'Easy_Terminal_Workspace/测试'\r",
+		"mkdir -p ${HOME}/'Iris_Workspace/测试'\r",
+		"cd ${HOME}/'Iris_Workspace/测试'\r",
 	}
 	if len(parts) != len(want) {
 		t.Fatalf("code zero writes = %#v, want %#v", parts, want)
@@ -2869,8 +2869,8 @@ func TestLarkReplyBridgeStartDefaultAgentPresetUsesReservedCode(t *testing.T) {
 	}
 	parts := launcher.terminals[0].writeParts()
 	want := []string{
-		"mkdir -p ${HOME}/'Easy_Terminal_Workspace/测试'\r",
-		"cd ${HOME}/'Easy_Terminal_Workspace/测试'\r",
+		"mkdir -p ${HOME}/'Iris_Workspace/测试'\r",
+		"cd ${HOME}/'Iris_Workspace/测试'\r",
 		"codex --dangerously-bypass-approvals-and-sandbox\r",
 	}
 	if len(parts) != len(want) {
@@ -2962,8 +2962,8 @@ func TestLarkReplyBridgeStartNamePresetRequiresExactMatch(t *testing.T) {
 	}
 	parts := launcher.terminals[0].writeParts()
 	want := []string{
-		"mkdir -p ${HOME}/'Easy_Terminal_Workspace/会话 A 草稿'\r",
-		"cd ${HOME}/'Easy_Terminal_Workspace/会话 A 草稿'\r",
+		"mkdir -p ${HOME}/'Iris_Workspace/会话 A 草稿'\r",
+		"cd ${HOME}/'Iris_Workspace/会话 A 草稿'\r",
 	}
 	if len(parts) != len(want) {
 		t.Fatalf("non-exact name preset should only run default workspace commands, got %#v want %#v", parts, want)
@@ -3066,8 +3066,8 @@ func TestLarkReplyBridgeStartRunsHyphenSeparatedPresetCodes(t *testing.T) {
 	}
 	parts := launcher.terminals[0].writeParts()
 	want := []string{
-		"mkdir -p ${HOME}/'Easy_Terminal_Workspace/测试'\r",
-		"cd ${HOME}/'Easy_Terminal_Workspace/测试'\r",
+		"mkdir -p ${HOME}/'Iris_Workspace/测试'\r",
+		"cd ${HOME}/'Iris_Workspace/测试'\r",
 		"one\r",
 		"twenty-three\r",
 		"two-two-three\r",
@@ -3098,10 +3098,10 @@ func TestLarkReplyBridgeStartPresetQuotesVariables(t *testing.T) {
 	if len(parts) != 4 {
 		t.Fatalf("preset writes = %#v", parts)
 	}
-	if parts[0] != "mkdir -p ${HOME}/'Easy_Terminal_Workspace/项目 O'\\''Brien'\r" {
+	if parts[0] != "mkdir -p ${HOME}/'Iris_Workspace/项目 O'\\''Brien'\r" {
 		t.Fatalf("workspace mkdir write = %q", parts[0])
 	}
-	if parts[1] != "cd ${HOME}/'Easy_Terminal_Workspace/项目 O'\\''Brien'\r" {
+	if parts[1] != "cd ${HOME}/'Iris_Workspace/项目 O'\\''Brien'\r" {
 		t.Fatalf("workspace cd write = %q", parts[1])
 	}
 	if parts[2] != "mkdir -p '项目 O'\\''Brien'\r" {

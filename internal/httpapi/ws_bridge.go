@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	"easy_terminal/internal/session"
+	"github.com/elevenlj/iris/internal/session"
 
 	"github.com/gorilla/websocket"
 )

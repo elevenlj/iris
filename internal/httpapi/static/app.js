@@ -1594,13 +1594,10 @@ function renderWorkspaceOptions() {
     row.innerHTML = `
       <label><span>名称</span><input class="workspace-label"></label>
       <label><span>绝对路径</span><input class="workspace-value"></label>
-      <label class="workspace-default"><input type="radio" name="workspace-default"><span>默认</span></label>
       <button class="workspace-remove" type="button" aria-label="删除目录">删除</button>`;
     row.querySelector(".workspace-label").value = option.label || "";
     row.querySelector(".workspace-value").value = option.value || "";
-    row.querySelector(".workspace-default input").checked = Boolean(option.default);
     row.querySelectorAll("input").forEach((input) => input.oninput = syncWorkspaceOptions);
-    row.querySelector(".workspace-default input").onchange = syncWorkspaceOptions;
     row.querySelector(".workspace-remove").onclick = () => {
       options.splice(index, 1);
       $("cfg-workspace-options").value = JSON.stringify(options);
@@ -1614,7 +1611,6 @@ function syncWorkspaceOptions() {
   const options = [...$("workspace-option-list").querySelectorAll(".workspace-option-row")].map((row) => ({
     label: row.querySelector(".workspace-label").value.trim(),
     value: row.querySelector(".workspace-value").value.trim(),
-    default: row.querySelector(".workspace-default input").checked,
   }));
   $("cfg-workspace-options").value = JSON.stringify(options);
 }
@@ -1623,7 +1619,7 @@ function addWorkspaceOption() {
   syncWorkspaceOptions();
   let options = [];
   try { options = JSON.parse($("cfg-workspace-options").value || "[]"); } catch {}
-  options.push({ label: "", value: "", default: options.length === 0 });
+  options.push({ label: "", value: "" });
   $("cfg-workspace-options").value = JSON.stringify(options);
   renderWorkspaceOptions();
   $("workspace-option-list").lastElementChild?.querySelector(".workspace-label")?.focus();
@@ -2558,11 +2554,11 @@ function clipboardImageFile(ev) {
 }
 
 async function handleImagePaste(ev) {
-  if (ev.easyTerminalImagePasteHandled) return;
+  if (ev.irisImagePasteHandled) return;
   if (!state.active) return;
   const file = clipboardImageFile(ev);
   if (!file) return;
-  ev.easyTerminalImagePasteHandled = true;
+  ev.irisImagePasteHandled = true;
   ev.preventDefault();
   const form = new FormData();
   form.append("file", file, file.name || "paste.png");
@@ -2603,7 +2599,7 @@ loadQuick().catch(console.error);
 initializeIris().catch(console.error);
 
 if (typeof window !== "undefined") {
-  window.easyTerminalApp = {
+  window.irisApp = {
     state,
     sendComposer,
     renderSessions,

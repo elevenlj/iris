@@ -9,7 +9,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"easy_terminal/internal/session"
+	"github.com/elevenlj/iris/internal/session"
 )
 
 type SQLite struct {

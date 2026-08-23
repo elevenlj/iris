@@ -1,4 +1,4 @@
-# easy_terminal Architecture
+# Iris Architecture
 
 This implementation follows the supplied product specification:
 

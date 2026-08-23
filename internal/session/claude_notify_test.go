@@ -103,7 +103,7 @@ func TestRunClaudeStopHookPostsOfficialPayload(t *testing.T) {
 		if r.URL.Path != "/api/sessions/session-claude/hook/turn-ended" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		if got := r.Header.Get("X-Easy-Terminal-Hook-Token"); got != "token-claude" {
+		if got := r.Header.Get("X-Iris-Agent-Token"); got != "token-claude" {
 			t.Errorf("token = %q", got)
 		}
 		var got map[string]any
@@ -116,9 +116,9 @@ func TestRunClaudeStopHookPostsOfficialPayload(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-	t.Setenv("EASY_TERMINAL_HOOK_URL", server.URL)
-	t.Setenv("EASY_TERMINAL_SESSION_ID", "session-claude")
-	t.Setenv("EASY_TERMINAL_HOOK_TOKEN", "token-claude")
+	t.Setenv("IRIS_API_URL", server.URL)
+	t.Setenv("IRIS_SESSION_ID", "session-claude")
+	t.Setenv("IRIS_SESSION_TOKEN", "token-claude")
 
 	if err := RunClaudeStopHook(strings.NewReader(payload)); err != nil {
 		t.Fatal(err)

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"easy_terminal/internal/session"
+	"github.com/elevenlj/iris/internal/session"
 )
 
 type httpTestLarkProvider struct{}
@@ -65,7 +65,7 @@ func TestAgentStopHookAcceptsLastAssistantMessage(t *testing.T) {
 		"session_id":"019f5153-6e7f-7742-9f61-3ffe1530d61c",
 		"last_assistant_message":"本轮 Hook 最终回复"
 	}`))
-	req.Header.Set("X-Easy-Terminal-Hook-Token", sess.RecoveryKey)
+	req.Header.Set("X-Iris-Agent-Token", sess.RecoveryKey)
 	rec := httptest.NewRecorder()
 	NewServer(manager, "").Handler().ServeHTTP(rec, req)
 

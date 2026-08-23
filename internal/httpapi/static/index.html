@@ -18,7 +18,6 @@
       <input id="session-search" class="search" aria-label="搜索会话" placeholder="搜索会话" autocomplete="off">
       <div id="sessions" class="sessions"></div>
       <div class="sidebar-footer">
-        <a class="game-link" href="/snake.html" title="打开贪吃蛇游戏">贪吃蛇</a>
         <button id="config-open" class="settings-btn" type="button" title="配置" aria-label="配置">⚙</button>
       </div>
     </aside>
@@ -152,7 +151,7 @@
           </section>
           <section id="config-workspaces" class="config-section config-panel">
             <h2>工作目录</h2>
-            <p class="config-subtitle">开发者模式下可从飞书卡片切换。路径必须是本机已存在的绝对目录。</p>
+            <p class="config-subtitle">每个会话都会自动使用 Iris_Workspace 下的专属默认目录。这里仅添加需要额外切换的现有项目目录。</p>
             <div id="workspace-option-list" class="workspace-option-list"></div>
             <button id="workspace-option-add" type="button">添加目录</button>
             <textarea id="cfg-workspace-options" class="hidden" hidden spellcheck="false"></textarea>
@@ -379,7 +378,7 @@
               <div><strong>App ID / App Secret</strong><span>飞书应用凭证，用于接收事件、发通知、创建群聊。</span></div>
               <div><strong>开发者 open_id</strong><span>“通知接收 ID”同时用于识别开发者，并作为联系人群聊中的开发者成员。</span></div>
               <div><strong>Agent</strong><span>首次使用会自动选择本机 Agent，也可以改为 Codex、Claude Code 或自定义命令。</span></div>
-              <div><strong>工作目录</strong><span>可配置名称、绝对路径和默认项。Codex 开发者卡片支持在白名单目录间切换。</span></div>
+              <div><strong>工作目录</strong><span>默认目录为 ~/Iris_Workspace/会话名称；还可配置其他项目目录供 Codex 开发者卡片切换。</span></div>
               <div><strong>设置密码</strong><span>保护飞书凭证、Agent 命令和目录；可在安全页修改，也可通过本机命令重置。</span></div>
               <div><strong>飞书自定义快捷键</strong><span>配置按钮名称和指令。按钮会显示在系统快捷键下一行，点击后提交该指令。</span></div>
             </div>

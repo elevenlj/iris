@@ -4,15 +4,14 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 
-const exeName = process.platform === "win32" ? "easy_terminal.exe" : "easy_terminal";
-const binaryPath = process.env.EASY_TERMINAL_BINARY
-  ? path.resolve(process.env.EASY_TERMINAL_BINARY)
+const exeName = process.platform === "win32" ? "iris.exe" : "iris";
+const configuredBinary = process.env.IRIS_BINARY || process.env.EASY_TERMINAL_BINARY;
+const binaryPath = configuredBinary
+  ? path.resolve(configuredBinary)
   : path.resolve(__dirname, "..", "vendor", exeName);
 
 if (!fs.existsSync(binaryPath)) {
-  console.error(
-    "easy-terminal binary is missing. Reinstall the package or set EASY_TERMINAL_BINARY to a local binary."
-  );
+  console.error("Iris binary is missing. Reinstall the package or set IRIS_BINARY to a local binary.");
   process.exit(1);
 }
 

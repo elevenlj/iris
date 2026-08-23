@@ -216,7 +216,7 @@ func larkAgentSelectElement(sessionID string, agents []AgentOption, currentKind 
 		"placeholder": map[string]any{"tag": "plain_text", "content": "切换 Agent"},
 		"options":     options,
 		"behaviors": []map[string]any{{"type": "callback", "value": map[string]any{
-			"easy_terminal_action": "agent_select", "session_id": sessionID,
+			"iris_action": "agent_select", "session_id": sessionID,
 		}}},
 	}
 	if initial != "" {
@@ -267,7 +267,7 @@ func larkWorkspaceSelectElement(sessionID string, workspaces []WorkspaceOption, 
 		"placeholder": map[string]any{"tag": "plain_text", "content": "切换工作目录"},
 		"options":     options,
 		"behaviors": []map[string]any{{"type": "callback", "value": map[string]any{
-			"easy_terminal_action": "workspace_select", "session_id": sessionID,
+			"iris_action": "workspace_select", "session_id": sessionID,
 		}}},
 	}
 	if initial != "" {
@@ -442,7 +442,7 @@ func larkTerminalInteractionElement(sessionID string, interaction *TerminalInter
 	element := map[string]any{
 		"tag":        "select_static",
 		"element_id": interaction.ID,
-		"name":       "easy_terminal_select",
+		"name":       "iris_select",
 		"width":      "fill",
 		"placeholder": map[string]any{
 			"tag":     "plain_text",
@@ -453,9 +453,9 @@ func larkTerminalInteractionElement(sessionID string, interaction *TerminalInter
 			{
 				"type": "callback",
 				"value": map[string]any{
-					"easy_terminal_action": "terminal_select",
-					"session_id":           sessionID,
-					"interaction_id":       interaction.ID,
+					"iris_action":    "terminal_select",
+					"session_id":     sessionID,
+					"interaction_id": interaction.ID,
 				},
 			},
 		},
@@ -562,7 +562,7 @@ func larkRestartAgentButtonColumn(sessionID string) map[string]any {
 			"tag": "button", "type": "default", "size": "tiny", "width": "default",
 			"text": map[string]any{"tag": "plain_text", "content": "重启 Agent"},
 			"behaviors": []map[string]any{{"type": "callback", "value": map[string]any{
-				"easy_terminal_action": "restart_agent", "session_id": sessionID,
+				"iris_action": "restart_agent", "session_id": sessionID,
 			}}},
 		}},
 	}
@@ -579,7 +579,7 @@ func larkDeveloperModeButtonColumn(sessionID string, updateNo int, enabled bool)
 			"tag": "button", "type": "default", "size": "tiny", "width": "default",
 			"text": map[string]any{"tag": "plain_text", "content": label},
 			"behaviors": []map[string]any{{"type": "callback", "value": map[string]any{
-				"easy_terminal_action": "toggle_developer_mode", "session_id": sessionID, "update_no": updateNo,
+				"iris_action": "toggle_developer_mode", "session_id": sessionID, "update_no": updateNo,
 			}}},
 		}},
 	}
@@ -623,9 +623,9 @@ func larkMentionModeButtonColumn(sessionID string, updateNo int, enabled bool) m
 					{
 						"type": "callback",
 						"value": map[string]any{
-							"easy_terminal_action": "toggle_mention_mode",
-							"session_id":           sessionID,
-							"update_no":            updateNo,
+							"iris_action": "toggle_mention_mode",
+							"session_id":  sessionID,
+							"update_no":   updateNo,
 						},
 					},
 				},
@@ -656,9 +656,9 @@ func larkShortcutButton(label, buttonType, sessionID, key string) map[string]any
 			{
 				"type": "callback",
 				"value": map[string]any{
-					"easy_terminal_action": "shortcut",
-					"session_id":           sessionID,
-					"key":                  key,
+					"iris_action": "shortcut",
+					"session_id":  sessionID,
+					"key":         key,
 				},
 			},
 		},
@@ -682,8 +682,8 @@ func larkDeleteSessionButtonColumn(sessionID string) map[string]any {
 					{
 						"type": "callback",
 						"value": map[string]any{
-							"easy_terminal_action": "delete_session",
-							"session_id":           sessionID,
+							"iris_action": "delete_session",
+							"session_id":  sessionID,
 						},
 					},
 				},
@@ -715,9 +715,9 @@ func larkRefreshButtonColumn(sessionID string, updateNo int) map[string]any {
 					{
 						"type": "callback",
 						"value": map[string]any{
-							"easy_terminal_action": "refresh",
-							"session_id":           sessionID,
-							"update_no":            updateNo,
+							"iris_action": "refresh",
+							"session_id":  sessionID,
+							"update_no":   updateNo,
 						},
 					},
 				},
@@ -760,9 +760,9 @@ func larkCustomShortcutButtonColumn(sessionID string, shortcut LarkCustomShortcu
 					{
 						"type": "callback",
 						"value": map[string]any{
-							"easy_terminal_action": "custom_shortcut",
-							"session_id":           sessionID,
-							"command":              shortcut.Command,
+							"iris_action": "custom_shortcut",
+							"session_id":  sessionID,
+							"command":     shortcut.Command,
 						},
 					},
 				},

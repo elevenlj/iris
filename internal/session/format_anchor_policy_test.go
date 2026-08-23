@@ -176,7 +176,7 @@ func TestInputAnchorWinsWhenCurrentReplyReemitsPreviousTail(t *testing.T) {
 		previousTail[0],
 		previousTail[1],
 		"› " + input,
-		"gpt-5.6-sol medium fast · ~/project/easy_terminal",
+		"gpt-5.6-sol medium fast · ~/project/iris",
 	}, "\n")
 	visible := strings.Join([]string{
 		previousTail[0],
@@ -187,7 +187,7 @@ func TestInputAnchorWinsWhenCurrentReplyReemitsPreviousTail(t *testing.T) {
 		previousTail[0],
 		previousTail[1],
 		"• CURRENT_REPLY_END",
-		"gpt-5.6-sol medium fast · ~/project/easy_terminal",
+		"gpt-5.6-sol medium fast · ~/project/iris",
 	}, "\n")
 	roundReply := []byte(strings.Join([]string{
 		"• CURRENT_REPLY_START",
@@ -372,7 +372,7 @@ func TestComposerAnchorPolicyUsesNewInputPromptWhenTUIBaselineTextIsRedrawn(t *t
 	previous := strings.Join([]string{
 		"› hello",
 		"• historical answer",
-		"Find and fix a bug in @filenamegpt-5.6-sol high fast · ~/project/easy_terminalhello",
+		"Find and fix a bug in @filenamegpt-5.6-sol high fast · ~/project/irishello",
 	}, "\n")
 	visible := strings.Join([]string{
 		"› hello",
@@ -394,7 +394,7 @@ func TestComposerPromptRecoveryIgnoresGuardedWindow(t *testing.T) {
 	const input = "hello"
 	previous := strings.Join([]string{
 		"• historical answer",
-		"Find and fix a bug in @filenamegpt-5.6-sol high fast · ~/project/easy_terminalhello",
+		"Find and fix a bug in @filenamegpt-5.6-sol high fast · ~/project/irishello",
 	}, "\n")
 	visible := strings.Join([]string{
 		"────────────────────────────────────────",
@@ -414,7 +414,7 @@ func TestComposerPromptRecoveryUsesLatestMatchingPromptFallback(t *testing.T) {
 	previous := strings.Join([]string{
 		"› hello",
 		"• historical answer",
-		"gpt-5.6-sol high fast · ~/project/easy_terminalhello",
+		"gpt-5.6-sol high fast · ~/project/irishello",
 	}, "\n")
 	visible := strings.Join([]string{
 		"› hello",

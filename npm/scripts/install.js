@@ -10,13 +10,13 @@ const { createWriteStream } = require("fs");
 
 const packageJson = require("../package.json");
 
-const owner = process.env.EASY_TERMINAL_GITHUB_OWNER || "elevenlj";
-const repo = process.env.EASY_TERMINAL_GITHUB_REPO || "easy_terminal";
-const giteeRepo = process.env.EASY_TERMINAL_GITEE_REPO || "eleven_lj/easy_terminal";
+const owner = process.env.IRIS_GITHUB_OWNER || process.env.EASY_TERMINAL_GITHUB_OWNER || "elevenlj";
+const repo = process.env.IRIS_GITHUB_REPO || process.env.EASY_TERMINAL_GITHUB_REPO || "iris";
+const giteeRepo = process.env.IRIS_GITEE_REPO || process.env.EASY_TERMINAL_GITEE_REPO || "eleven_lj/iris";
 const version = packageJson.version;
 const platform = process.platform;
 const arch = process.arch;
-const requestTimeoutMs = Number(process.env.EASY_TERMINAL_DOWNLOAD_TIMEOUT_MS || 120000);
+const requestTimeoutMs = Number(process.env.IRIS_DOWNLOAD_TIMEOUT_MS || process.env.EASY_TERMINAL_DOWNLOAD_TIMEOUT_MS || 120000);
 
 const platformMap = {
   darwin: "darwin",
@@ -30,11 +30,11 @@ const archMap = {
 };
 
 function fail(message) {
-  console.error(`easy-terminal install failed: ${message}`);
+  console.error(`Iris install failed: ${message}`);
   process.exit(1);
 }
 
-if (process.env.EASY_TERMINAL_SKIP_DOWNLOAD === "1") {
+if (process.env.IRIS_SKIP_DOWNLOAD === "1" || process.env.EASY_TERMINAL_SKIP_DOWNLOAD === "1") {
   process.exit(0);
 }
 
@@ -46,13 +46,13 @@ if (!targetPlatform || !targetArch) {
 }
 
 const ext = targetPlatform === "windows" ? ".exe" : "";
-const assetName = `easy_terminal-${targetPlatform}-${targetArch}${ext}`;
+const assetName = `iris-${targetPlatform}-${targetArch}${ext}`;
 const urls = [
   `https://github.com/${owner}/${repo}/releases/download/v${version}/${assetName}`,
   `https://gitee.com/${giteeRepo}/releases/download/v${version}/${assetName}`
 ];
 const vendorDir = path.resolve(__dirname, "..", "vendor");
-const outPath = path.join(vendorDir, targetPlatform === "windows" ? "easy_terminal.exe" : "easy_terminal");
+const outPath = path.join(vendorDir, targetPlatform === "windows" ? "iris.exe" : "iris");
 
 async function download(downloadUrl, redirects = 0) {
   if (redirects > 5) {
@@ -64,7 +64,7 @@ async function download(downloadUrl, redirects = 0) {
   await new Promise((resolve, reject) => {
     const mod = downloadUrl.startsWith("https:") ? https : http;
     const request = mod
-      .get(downloadUrl, { headers: { "User-Agent": "easy-terminal-npm" } }, (res) => {
+      .get(downloadUrl, { headers: { "User-Agent": "iris-npm" } }, (res) => {
         if ([301, 302, 303, 307, 308].includes(res.statusCode || 0)) {
           res.resume();
           download(res.headers.location, redirects + 1).then(resolve, reject);
@@ -102,7 +102,7 @@ async function downloadWithCurl(downloadUrl) {
       "--max-time",
       String(timeoutSeconds),
       "-H",
-      "User-Agent: easy-terminal-npm",
+      "User-Agent: iris-npm",
       "-o",
       outPath,
       downloadUrl
@@ -155,20 +155,20 @@ async function main() {
 
   for (const url of urls) {
     try {
-      console.log(`[easy-terminal] downloading ${assetName}`);
-      console.log(`[easy-terminal] source: ${url}`);
+      console.log(`[iris] downloading ${assetName}`);
+      console.log(`[iris] source: ${url}`);
       try {
         await downloadWithCurl(url);
       } catch (curlErr) {
-        console.warn(`[easy-terminal] curl download failed, trying node downloader`);
+        console.warn(`[iris] curl download failed, trying node downloader`);
         await download(url);
       }
-      console.log(`[easy-terminal] installed binary to ${outPath}`);
+      console.log(`[iris] installed binary to ${outPath}`);
       try {
         await installAgentHooks();
-        console.log("[easy-terminal] installed Agent hooks and Feishu context skills");
+        console.log("[iris] installed Agent hooks and Feishu context skills");
       } catch (hookErr) {
-        console.warn(`[easy-terminal] Agent integration setup deferred until first launch: ${hookErr.message}`);
+        console.warn(`[iris] Agent integration setup deferred until first launch: ${hookErr.message}`);
       }
       return;
     } catch (err) {
@@ -177,7 +177,7 @@ async function main() {
       } catch (_) {
       }
       failures.push(`${url}: ${err.message}`);
-      console.warn(`[easy-terminal] download failed, trying next source`);
+      console.warn(`[iris] download failed, trying next source`);
     }
   }
 

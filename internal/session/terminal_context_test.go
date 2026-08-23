@@ -11,7 +11,7 @@ func TestDetectCodexTerminalAgentContext(t *testing.T) {
 		"╭────────────────────────────╮",
 		"│ >_ OpenAI Codex (v0.130.0) │",
 		"│ model: gpt-5.6-terra xhigh fast │",
-		"│ directory: ~/project/easy_terminal │",
+		"│ directory: ~/project/iris │",
 		"╰────────────────────────────╯",
 		"› explain the current diff",
 	}, "\n")
@@ -20,13 +20,13 @@ func TestDetectCodexTerminalAgentContext(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected Codex agent context")
 	}
-	if got.Directory != "~/project/easy_terminal" || got.Model != "gpt-5.6-terra" || got.Reasoning != "Extra high" {
+	if got.Directory != "~/project/iris" || got.Model != "gpt-5.6-terra" || got.Reasoning != "Extra high" {
 		t.Fatalf("context = %#v", got)
 	}
 }
 
 func TestDetectCodexTerminalAgentContextRequiresCodexHeader(t *testing.T) {
-	snapshot := "model: gpt-5.6-terra xhigh fast\ndirectory: ~/project/easy_terminal"
+	snapshot := "model: gpt-5.6-terra xhigh fast\ndirectory: ~/project/iris"
 	if got := DetectCodexTerminalAgentContext(snapshot); got != nil {
 		t.Fatalf("plain terminal content must not expose an agent context: %#v", got)
 	}
@@ -35,14 +35,14 @@ func TestDetectCodexTerminalAgentContextRequiresCodexHeader(t *testing.T) {
 func TestDetectCodexTerminalAgentContextFromCurrentStatusLine(t *testing.T) {
 	snapshot := strings.Join([]string{
 		"Codex is ready.",
-		"gpt-5.6-terra high fast · ~/Easy_Terminal_Workspace/默认",
+		"gpt-5.6-terra high fast · ~/Iris_Workspace/默认",
 	}, "\n")
 
 	got := DetectCodexTerminalAgentContext(snapshot)
 	if got == nil {
 		t.Fatal("expected Codex context from current status line")
 	}
-	if got.Directory != "~/Easy_Terminal_Workspace/默认" || got.Model != "gpt-5.6-terra" || got.Reasoning != "High" {
+	if got.Directory != "~/Iris_Workspace/默认" || got.Model != "gpt-5.6-terra" || got.Reasoning != "High" {
 		t.Fatalf("context = %#v", got)
 	}
 }
@@ -51,7 +51,7 @@ func TestDetectCodexTerminalAgentContextIgnoresStaleScrollbackHeader(t *testing.
 	lines := []string{
 		"│ >_ OpenAI Codex (v0.130.0) │",
 		"│ model: gpt-5.6-terra xhigh fast │",
-		"│ directory: ~/project/easy_terminal │",
+		"│ directory: ~/project/iris │",
 	}
 	for i := 0; i < terminalAgentContextTailLineLimit+1; i++ {
 		lines = append(lines, "shell output")
@@ -70,7 +70,7 @@ func TestLarkNotificationCardRendersAgentContextBeforeButtons(t *testing.T) {
 		Content:              "任务已完成",
 		DeveloperModeEnabled: true,
 		AgentContext: &TerminalAgentContext{
-			Directory: "~/project/easy_terminal",
+			Directory: "~/project/iris",
 			Model:     "gpt-5.6-terra",
 			Reasoning: "Extra high",
 		},
@@ -96,7 +96,7 @@ func TestLarkNotificationCardRendersAgentContextBeforeButtons(t *testing.T) {
 			continue
 		}
 		text, _ := element["text"].(map[string]any)
-		if strings.Contains(text["content"].(string), "目录：~/project/easy_terminal") {
+		if strings.Contains(text["content"].(string), "目录：~/project/iris") {
 			contextIndex = i
 		}
 	}
@@ -107,7 +107,7 @@ func TestLarkNotificationCardRendersAgentContextBeforeButtons(t *testing.T) {
 		t.Fatalf("agent context should be separated from the reply by a divider, elements=%#v", card.Body.Elements)
 	}
 	contextText := card.Body.Elements[contextIndex]["text"].(map[string]any)["content"].(string)
-	if contextText != "目录：~/project/easy_terminal · 模型：gpt-5.6-terra · Reasoning：Extra high" {
+	if contextText != "目录：~/project/iris · 模型：gpt-5.6-terra · Reasoning：Extra high" {
 		t.Fatalf("context text = %q", contextText)
 	}
 }

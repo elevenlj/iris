@@ -1,10 +1,10 @@
 {
-  "name": "@lijuneleven/easy-terminal",
+  "name": "@lijuneleven/iris",
   "version": "0.1.49",
-  "description": "Local web terminal with Feishu remote session control.",
+  "description": "Feishu-first personal AI assistant powered by local Agents.",
   "license": "MIT",
   "bin": {
-    "easy-terminal": "bin/easy-terminal.js"
+    "iris": "bin/iris.js"
   },
   "files": [
     "bin/",
@@ -20,10 +20,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/elevenlj/easy_terminal.git"
+    "url": "git+https://github.com/elevenlj/iris.git"
   },
   "bugs": {
-    "url": "https://github.com/elevenlj/easy_terminal/issues"
+    "url": "https://github.com/elevenlj/iris/issues"
   },
-  "homepage": "https://github.com/elevenlj/easy_terminal#readme"
+  "homepage": "https://github.com/elevenlj/iris#readme"
 }

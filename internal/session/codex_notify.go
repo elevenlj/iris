@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	codexNotifyModeFlag              = "--codex-notify"
-	codexNotifyForwardFlag           = "--forward-base64"
-	easyTerminalCodexStopHookCommand = `if [ -z "${EASY_TERMINAL_HOOK_URL:-}" ] || [ -z "${EASY_TERMINAL_SESSION_ID:-}" ] || [ -z "${EASY_TERMINAL_HOOK_TOKEN:-}" ]; then exit 0; fi; /usr/bin/curl --silent --max-time 2 -o /dev/null -X POST "${EASY_TERMINAL_HOOK_URL}/api/sessions/${EASY_TERMINAL_SESSION_ID}/hook/turn-ended" -H "X-Easy-Terminal-Hook-Token: ${EASY_TERMINAL_HOOK_TOKEN}" -H 'Content-Type: application/json' --data-binary @- >/dev/null 2>&1 || true`
+	codexNotifyModeFlag                    = "--codex-notify"
+	codexNotifyForwardFlag                 = "--forward-base64"
+	legacyEasyTerminalCodexStopHookCommand = `if [ -z "${EASY_TERMINAL_HOOK_URL:-}" ] || [ -z "${EASY_TERMINAL_SESSION_ID:-}" ] || [ -z "${EASY_TERMINAL_HOOK_TOKEN:-}" ]; then exit 0; fi; /usr/bin/curl --silent --max-time 2 -o /dev/null -X POST "${EASY_TERMINAL_HOOK_URL}/api/sessions/${EASY_TERMINAL_SESSION_ID}/hook/turn-ended" -H "X-Easy-Terminal-Hook-Token: ${EASY_TERMINAL_HOOK_TOKEN}" -H 'Content-Type: application/json' --data-binary @- >/dev/null 2>&1 || true`
 )
 
 // IsCodexNotifyInvocation reports whether the executable was launched by the
@@ -351,7 +351,7 @@ func removeLegacyCodexStopHook(path string) error {
 		for _, handler := range handlers {
 			handlerMap, _ := handler.(map[string]any)
 			command, _ := handlerMap["command"].(string)
-			if command == easyTerminalCodexStopHookCommand {
+			if command == legacyEasyTerminalCodexStopHookCommand {
 				changed = true
 				continue
 			}
@@ -445,9 +445,10 @@ func RunCodexNotify(args []string) error {
 }
 
 func postAgentTurnCompleted(payload []byte) error {
-	hookURL := strings.TrimRight(strings.TrimSpace(os.Getenv("EASY_TERMINAL_HOOK_URL")), "/")
-	sessionID := strings.TrimSpace(os.Getenv("EASY_TERMINAL_SESSION_ID"))
-	token := strings.TrimSpace(os.Getenv("EASY_TERMINAL_HOOK_TOKEN"))
+	hookURL := firstNonEmptyEnv("IRIS_API_URL", "EASY_TERMINAL_HOOK_URL")
+	hookURL = strings.TrimRight(strings.TrimSpace(hookURL), "/")
+	sessionID := strings.TrimSpace(firstNonEmptyEnv("IRIS_SESSION_ID", "EASY_TERMINAL_SESSION_ID"))
+	token := strings.TrimSpace(firstNonEmptyEnv("IRIS_SESSION_TOKEN", "EASY_TERMINAL_HOOK_TOKEN"))
 	if hookURL == "" || sessionID == "" || token == "" {
 		return nil
 	}
@@ -459,7 +460,7 @@ func postAgentTurnCompleted(payload []byte) error {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Easy-Terminal-Hook-Token", token)
+	request.Header.Set("X-Iris-Agent-Token", token)
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		return err
@@ -470,4 +471,13 @@ func postAgentTurnCompleted(payload []byte) error {
 		return fmt.Errorf("Iris notify callback returned HTTP %d", response.StatusCode)
 	}
 	return nil
+}
+
+func firstNonEmptyEnv(names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	return ""
 }

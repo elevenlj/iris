@@ -7,17 +7,17 @@ import (
 	"slices"
 	"testing"
 
-	"easy_terminal/internal/httpapi"
-	"easy_terminal/internal/session"
+	"github.com/elevenlj/iris/internal/httpapi"
+	"github.com/elevenlj/iris/internal/session"
 )
 
 func TestEnvFallback(t *testing.T) {
-	t.Setenv("EASY_TERMINAL_TEST_ENV", "")
-	if got := env("EASY_TERMINAL_TEST_ENV", "fallback"); got != "fallback" {
+	t.Setenv("IRIS_TEST_ENV", "")
+	if got := env("IRIS_TEST_ENV", "fallback"); got != "fallback" {
 		t.Fatalf("expected fallback, got %q", got)
 	}
-	t.Setenv("EASY_TERMINAL_TEST_ENV", "value")
-	if got := env("EASY_TERMINAL_TEST_ENV", "fallback"); got != "value" {
+	t.Setenv("IRIS_TEST_ENV", "value")
+	if got := env("IRIS_TEST_ENV", "fallback"); got != "value" {
 		t.Fatalf("expected env value, got %q", got)
 	}
 }

@@ -19,9 +19,9 @@ import (
 	"sync"
 	"time"
 
-	"easy_terminal/internal/httpapi"
-	"easy_terminal/internal/session"
-	"easy_terminal/internal/store"
+	"github.com/elevenlj/iris/internal/httpapi"
+	"github.com/elevenlj/iris/internal/session"
+	"github.com/elevenlj/iris/internal/store"
 )
 
 var version = "dev"
@@ -664,7 +664,6 @@ func validateWorkspaceOptions(options []session.WorkspaceOption) ([]session.Work
 	out := make([]session.WorkspaceOption, 0, len(options))
 	labels := map[string]bool{}
 	paths := map[string]bool{}
-	defaultCount := 0
 	for _, option := range options {
 		option.Label = strings.TrimSpace(option.Label)
 		option.Value = strings.TrimSpace(option.Value)
@@ -683,16 +682,8 @@ func validateWorkspaceOptions(options []session.WorkspaceOption) ([]session.Work
 		}
 		labels[option.Label] = true
 		paths[option.Value] = true
-		if option.Default {
-			defaultCount++
-		}
+		option.Default = false
 		out = append(out, option)
-	}
-	if len(out) > 0 && defaultCount == 0 {
-		out[0].Default = true
-	}
-	if defaultCount > 1 {
-		return nil, errors.New("只能设置一个默认工作目录")
 	}
 	return out, nil
 }
@@ -853,7 +844,7 @@ func (m *headlessBrowserManager) Ensure(sessionID string) {
 		log.Printf("headless browser unavailable: Chrome/Chromium not found")
 		return
 	}
-	profile, err := os.MkdirTemp("", "easy-terminal-headless-*")
+	profile, err := os.MkdirTemp("", "iris-headless-*")
 	if err != nil {
 		log.Printf("headless browser profile setup failed: %v", err)
 		return

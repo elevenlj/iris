@@ -24,7 +24,7 @@ const server = http.createServer(async (request, response) => {
   try {
     assert.equal(request.method, "POST");
     assert.equal(request.url, `/api/sessions/${irisSessionID}/hook/turn-ended`);
-    assert.equal(request.headers["x-easy-terminal-hook-token"], hookToken);
+    assert.equal(request.headers["x-iris-agent-token"], hookToken);
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -69,9 +69,9 @@ try {
     "text",
   ], {
     ...process.env,
-    EASY_TERMINAL_HOOK_URL: `http://127.0.0.1:${address.port}`,
-    EASY_TERMINAL_SESSION_ID: irisSessionID,
-    EASY_TERMINAL_HOOK_TOKEN: hookToken,
+    IRIS_API_URL: `http://127.0.0.1:${address.port}`,
+    IRIS_SESSION_ID: irisSessionID,
+    IRIS_SESSION_TOKEN: hookToken,
   });
   assert.equal(result.code, 0, result.stderr);
   assert.ok(result.stdout.includes(marker), result.stdout);
