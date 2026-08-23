@@ -50,6 +50,7 @@ func TestLarkRegistrationBeginFormRequestsMessageAndCardCapabilities(t *testing.
 		"im:chat.members:bot_access",
 		"cardkit:card:read",
 		"cardkit:card:write",
+		"contact:user.base:readonly",
 	} {
 		if !strings.Contains(scope, want) {
 			t.Fatalf("scope %q should contain %q", scope, want)
