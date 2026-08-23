@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -200,6 +201,8 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	switch parts[1] {
 	case "hook":
 		s.handleAgentHook(w, r, id, parts[2:])
+	case "lark":
+		s.handleAgentLarkContext(w, r, id, parts[2:])
 	case "output":
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -256,19 +259,85 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleAgentLarkContext(w http.ResponseWriter, r *http.Request, sessionID string, parts []string) {
+	if r.Method != http.MethodGet || s.manager == nil || len(parts) != 1 {
+		http.NotFound(w, r)
+		return
+	}
+	token := agentSessionBearerToken(r)
+	switch parts[0] {
+	case "context":
+		current, ok, err := s.manager.AgentLarkContext(r.Context(), sessionID, token)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			writeAgentLarkContextError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, current, nil)
+	case "messages":
+		limit := 50
+		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed <= 0 {
+				writeError(w, http.StatusBadRequest, errors.New("limit must be a positive integer"))
+				return
+			}
+			limit = parsed
+		}
+		page, ok, err := s.manager.AgentLarkMessages(r.Context(), sessionID, token, limit)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			writeAgentLarkContextError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, page, nil)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func writeAgentLarkContextError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, session.ErrInvalidAgentContextToken):
+		writeError(w, http.StatusUnauthorized, err)
+	case errors.Is(err, session.ErrSessionNotBoundToLark):
+		writeError(w, http.StatusConflict, err)
+	case errors.Is(err, session.ErrLarkContextUnavailable):
+		writeError(w, http.StatusServiceUnavailable, err)
+	default:
+		writeError(w, http.StatusBadGateway, err)
+	}
+}
+
+func agentSessionBearerToken(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	for _, header := range []string{"X-Iris-Agent-Token", "X-Easy-Terminal-Hook-Token"} {
+		if token := strings.TrimSpace(r.Header.Get(header)); token != "" {
+			return token
+		}
+	}
+	const bearerPrefix = "Bearer "
+	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(authorization, bearerPrefix) {
+		return strings.TrimSpace(strings.TrimPrefix(authorization, bearerPrefix))
+	}
+	return ""
+}
+
 func (s *Server) handleAgentHook(w http.ResponseWriter, r *http.Request, sessionID string, parts []string) {
 	if len(parts) != 1 || parts[0] != "turn-ended" || r.Method != http.MethodPost || s.manager == nil {
 		http.NotFound(w, r)
 		return
 	}
-	token := strings.TrimSpace(r.Header.Get("X-Easy-Terminal-Hook-Token"))
-	if token == "" {
-		const bearerPrefix = "Bearer "
-		authorization := strings.TrimSpace(r.Header.Get("Authorization"))
-		if strings.HasPrefix(authorization, bearerPrefix) {
-			token = strings.TrimSpace(strings.TrimPrefix(authorization, bearerPrefix))
-		}
-	}
+	token := agentSessionBearerToken(r)
 	var payload struct {
 		SessionID                  string `json:"session_id"`
 		ThreadID                   string `json:"thread-id"`

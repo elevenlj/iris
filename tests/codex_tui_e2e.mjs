@@ -100,14 +100,23 @@ async function initializeIrisForCodexE2E() {
     document.querySelector('#settings-access-form').requestSubmit();
     true
   `);
-  await waitFor(() => evalExpr("document.querySelector('#onboarding-dialog').open === true"));
-  await evalExpr(`
-    document.querySelector('#onboarding-agent-preset').value = 'codex';
-    document.querySelector('#onboarding-agent-preset').dispatchEvent(new Event('change', { bubbles: true }));
-    document.querySelector('#onboarding-config').click();
-    true
-  `);
-  await waitFor(() => evalExpr("document.querySelector('#onboarding-dialog').open !== true"));
+  await waitFor(() => evalExpr("document.querySelector('#settings-access-dialog').open !== true"));
+  await evalExpr(`(async () => {
+    const config = await fetch('/api/config').then((response) => response.json());
+    config.agent_kind = 'codex';
+    config.agent_command = 'codex --dangerously-bypass-approvals-and-sandbox';
+    config.onboarding_completed = true;
+    const updated = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    }).then((response) => response.json());
+    window.easyTerminalApp.state.config = updated;
+    if (document.querySelector('#onboarding-dialog').open) {
+      document.querySelector('#onboarding-dialog').close();
+    }
+    return true;
+  })()`);
 }
 
 async function completeCodexStartup() {

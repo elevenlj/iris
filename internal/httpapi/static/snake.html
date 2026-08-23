@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4efe3">
+    <title>林间贪吃蛇 · Iris</title>
+    <link rel="stylesheet" href="/snake.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="back-link" href="/" aria-label="返回 Iris">← 返回 Iris</a>
+      <div class="wordmark" aria-label="Iris 游戏室">
+        <span>Iris</span>
+        <small>游戏室</small>
+      </div>
+      <div class="keyboard-hint" aria-hidden="true">WASD / 方向键</div>
+    </header>
+
+    <main class="game-layout">
+      <section class="game-column" aria-labelledby="game-title">
+        <div class="title-row">
+          <div>
+            <p class="eyebrow">ARCADE GARDEN · 01</p>
+            <h1 id="game-title">林间贪吃蛇</h1>
+          </div>
+          <p class="intro">穿过苔藓小径，吃下果实，别撞上自己。</p>
+        </div>
+
+        <div class="scoreboard" aria-label="游戏数据">
+          <div class="score-item">
+            <span>本局得分</span>
+            <strong id="score">00</strong>
+          </div>
+          <div class="score-item">
+            <span>最高纪录</span>
+            <strong id="best-score">00</strong>
+          </div>
+          <div class="score-item">
+            <span>当前等级</span>
+            <strong id="level">01</strong>
+          </div>
+          <div class="status-badge" id="status-badge">等待开始</div>
+        </div>
+
+        <div class="board-frame">
+          <canvas id="game-board" role="img" aria-label="贪吃蛇棋盘，等待开始"></canvas>
+          <div class="game-overlay" id="game-overlay">
+            <div class="overlay-mark" aria-hidden="true">●</div>
+            <h2 id="overlay-title">准备好了吗？</h2>
+            <p id="overlay-copy">控制小蛇吃下果实，尽可能刷新纪录。</p>
+            <button id="overlay-action" class="primary-button" type="button">开始游戏</button>
+          </div>
+        </div>
+
+        <div class="action-row">
+          <button id="pause-button" class="secondary-button" type="button" disabled>暂停</button>
+          <button id="restart-button" class="secondary-button" type="button">重新开始</button>
+          <p id="live-status" class="sr-only" role="status" aria-live="polite">游戏等待开始</p>
+        </div>
+      </section>
+
+      <aside class="control-panel" aria-labelledby="controls-title">
+        <div class="panel-heading">
+          <p class="eyebrow">HOW TO PLAY</p>
+          <h2 id="controls-title">控制方向</h2>
+        </div>
+
+        <div class="d-pad" aria-label="触屏方向控制">
+          <button class="direction-button direction-up" type="button" data-direction="up" aria-label="向上">↑</button>
+          <button class="direction-button direction-left" type="button" data-direction="left" aria-label="向左">←</button>
+          <div class="d-pad-center" aria-hidden="true"></div>
+          <button class="direction-button direction-right" type="button" data-direction="right" aria-label="向右">→</button>
+          <button class="direction-button direction-down" type="button" data-direction="down" aria-label="向下">↓</button>
+        </div>
+
+        <div class="rule-list">
+          <div class="rule-item">
+            <span class="rule-number">01</span>
+            <p><strong>吃下果实</strong>每颗果实增加 1 分，蛇身也会变长。</p>
+          </div>
+          <div class="rule-item">
+            <span class="rule-number">02</span>
+            <p><strong>保持灵活</strong>每 4 分提升一级，移动速度会加快。</p>
+          </div>
+          <div class="rule-item">
+            <span class="rule-number">03</span>
+            <p><strong>避开危险</strong>撞到边界或自己的身体，游戏就会结束。</p>
+          </div>
+        </div>
+
+        <div class="key-guide" aria-label="键盘快捷键">
+          <div><kbd>Space</kbd><span>暂停 / 继续</span></div>
+          <div><kbd>Enter</kbd><span>结束后重开</span></div>
+        </div>
+      </aside>
+    </main>
+
+    <script type="module" src="/snake.js"></script>
+  </body>
+</html>

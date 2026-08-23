@@ -148,15 +148,21 @@ async function initializeIrisForE2E() {
     document.querySelector('#settings-access-form').requestSubmit();
     true
   `);
-  await waitFor(() => evalExpr("document.querySelector('#onboarding-dialog').open === true"));
-  await evalExpr(`
-    document.querySelector('#onboarding-agent-preset').value = 'custom';
-    document.querySelector('#onboarding-agent-preset').dispatchEvent(new Event('change', { bubbles: true }));
-    document.querySelector('#onboarding-agent-custom-command').value = 'bash --noprofile --norc';
-    document.querySelector('#onboarding-config').click();
-    true
-  `);
-  await waitFor(() => evalExpr("document.querySelector('#onboarding-dialog').open !== true"));
+  await waitFor(() => evalExpr("document.querySelector('#settings-access-dialog').open !== true"));
+  await evalExpr(`(async () => {
+    const config = await fetch('/api/config').then((response) => response.json());
+    config.agent_kind = 'custom';
+    config.agent_command = 'bash --noprofile --norc';
+    config.onboarding_completed = true;
+    const updated = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    }).then((response) => response.json());
+    window.easyTerminalApp.state.config = updated;
+    document.querySelector('#onboarding-dialog').close();
+    return true;
+  })()`);
 }
 }
 

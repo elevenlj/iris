@@ -21,9 +21,10 @@ func IsClaudeStopInvocation(args []string) bool {
 	return len(args) > 0 && args[0] == claudeStopModeFlag
 }
 
-// EnsureAgentCompletionHooks installs every supported Agent completion
-// integration. Each installer is attempted so one malformed external config
-// does not prevent the other Agent from being configured.
+// EnsureAgentCompletionHooks installs every supported Agent integration,
+// including completion callbacks and the shared Feishu context skill. Each
+// installer is attempted so one malformed external config does not prevent
+// the other integrations from being configured.
 func EnsureAgentCompletionHooks(executable string) error {
 	var errs []error
 	if err := EnsureCodexNotify(executable); err != nil {
@@ -31,6 +32,9 @@ func EnsureAgentCompletionHooks(executable string) error {
 	}
 	if err := EnsureClaudeStopHook(executable); err != nil {
 		errs = append(errs, fmt.Errorf("Claude Stop hook: %w", err))
+	}
+	if err := EnsureAgentContextSkills(); err != nil {
+		errs = append(errs, fmt.Errorf("Agent Feishu context skills: %w", err))
 	}
 	return errors.Join(errs...)
 }

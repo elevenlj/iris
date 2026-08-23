@@ -17,6 +17,8 @@ easy-terminal --config-dir /data/easy_terminal
 `--config-dir` controls the local config and runtime data directory.
 
 The installer downloads the platform binary from GitHub Release first, then falls back to Gitee Release.
-It also installs the Codex `notify` and Claude Code `Stop` completion hooks. The CLI retries hook setup on every service start, and `easy-terminal --install-agent-hooks` can run it manually.
+It also installs the Codex `notify` and Claude Code `Stop` completion hooks together with the Iris Feishu-context Skill for both Agents. The CLI retries Agent integration setup on every service start, and `easy-terminal --install-agent-hooks` can run it manually.
 
 The settings page includes an optional one-time environment check for Node.js, the headless browser, writable data storage, Feishu connectivity, and the configured Agent. The result is not saved and does not block setup.
+
+On first launch Iris automatically chooses an installed Agent in this order: Codex, then Claude Code. Developer-mode Feishu cards can switch between installed built-in Agents and the configured custom Agent; built-in Agents always use unattended permission mode.

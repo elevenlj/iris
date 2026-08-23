@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,16 @@ import (
 
 	"easy_terminal/internal/session"
 )
+
+type httpTestLarkProvider struct{}
+
+func (httpTestLarkProvider) LarkChatMetadata(context.Context, string) (session.LarkChatMetadata, error) {
+	return session.LarkChatMetadata{ChatName: "当前绑定群", ChatType: "group"}, nil
+}
+
+func (httpTestLarkProvider) LarkChatMessages(context.Context, string, int) ([]session.LarkChatMessage, error) {
+	return []session.LarkChatMessage{{MessageID: "om_latest", Text: "群里的最新讨论"}}, nil
+}
 
 func TestEmbeddedStaticAssetsDisableStaleBrowserCaching(t *testing.T) {
 	server := NewServer(nil, "")
@@ -63,5 +74,43 @@ func TestAgentStopHookAcceptsLastAssistantMessage(t *testing.T) {
 	}
 	if got := rt.CachedCurrentRoundContent(); got != "本轮 Hook 最终回复" {
 		t.Fatalf("hook content = %q", got)
+	}
+}
+
+func TestAgentLarkContextEndpointsUseSessionTokenAndBoundChat(t *testing.T) {
+	terminal := newWSBridgeTestTerminal()
+	manager := session.NewManager(nil, wsBridgeTestLauncher{terminal: terminal})
+	sess, err := manager.CreateSession(context.Background(), "context-api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := manager.GetRuntime(sess.ID)
+	defer rt.Close()
+	if _, ok, err := manager.BindLarkChat(context.Background(), sess.ID, "oc_bound"); err != nil || !ok {
+		t.Fatalf("BindLarkChat() ok=%v err=%v", ok, err)
+	}
+	manager.SetLarkConversationProvider(httpTestLarkProvider{})
+	manager.RecordLarkAgentContext(sess.ID, session.LarkAgentContext{LatestMessageID: "om_latest"})
+	server := NewServer(manager, "").Handler()
+
+	unauthorized := httptest.NewRecorder()
+	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID+"/lark/context", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d, body=%s", unauthorized.Code, unauthorized.Body.String())
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID+"/lark/messages?limit=25", nil)
+	request.Header.Set("Authorization", "Bearer "+sess.RecoveryKey)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("messages status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var page session.LarkChatMessagePage
+	if err := json.Unmarshal(recorder.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Context.ChatID != "oc_bound" || page.Context.ChatName != "当前绑定群" || page.Count != 1 || page.Messages[0].Text != "群里的最新讨论" {
+		t.Fatalf("unexpected messages response: %#v", page)
 	}
 }

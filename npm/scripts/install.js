@@ -166,9 +166,9 @@ async function main() {
       console.log(`[easy-terminal] installed binary to ${outPath}`);
       try {
         await installAgentHooks();
-        console.log("[easy-terminal] installed Codex and Claude completion hooks");
+        console.log("[easy-terminal] installed Agent hooks and Feishu context skills");
       } catch (hookErr) {
-        console.warn(`[easy-terminal] Agent hook setup deferred until first launch: ${hookErr.message}`);
+        console.warn(`[easy-terminal] Agent integration setup deferred until first launch: ${hookErr.message}`);
       }
       return;
     } catch (err) {

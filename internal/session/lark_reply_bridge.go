@@ -90,6 +90,7 @@ type larkRouteContext struct {
 	ChatID       string
 	ChatType     string
 	SenderOpenID string
+	MessageTime  time.Time
 	MentionedBot bool
 	Mentions     []*larkim.MentionEvent
 }
@@ -110,6 +111,7 @@ func NewLarkReplyBridge(appID, appSecret string, manager *Manager, uploadsDir st
 	}
 	if manager != nil {
 		manager.SetNotificationSentHook(b.OnNotificationSent)
+		manager.SetLarkConversationProvider(b)
 	}
 	if appID != "" && appSecret != "" {
 		b.apiClient = lark.NewClient(appID, appSecret)
@@ -354,6 +356,8 @@ func (b *LarkReplyBridge) handleCardAction(ctx context.Context, action *callback
 		return b.handleCardToggleDeveloperMode(ctx, value, openMessageID, operatorOpenID)
 	case "restart_agent":
 		return b.handleCardRestartAgent(value, openMessageID)
+	case "agent_select":
+		return b.handleCardAgentSelect(value, action.Option, openMessageID)
 	case "workspace_select":
 		return b.handleCardWorkspaceSelect(ctx, value, action.Option, openMessageID)
 	case "delete_session":
@@ -383,6 +387,27 @@ func (b *LarkReplyBridge) handleCardRestartAgent(value map[string]interface{}, o
 	rt.NotifyInputRunningOnMessage(openMessageID)
 	log.Printf("lark card restarted Agent session=%s message=%s", sessionID, openMessageID)
 	return larkCardToast("info", "正在重启 Agent"), nil
+}
+
+func (b *LarkReplyBridge) handleCardAgentSelect(value map[string]interface{}, option, openMessageID string) (*callback.CardActionTriggerResponse, error) {
+	sessionID, rt, blocked := b.resolveCardActionRuntime(value, openMessageID)
+	if blocked != nil {
+		return blocked, nil
+	}
+	if !rt.Snapshot().DeveloperModeEnabled {
+		return larkCardToast("warning", "请先开启开发者模式"), nil
+	}
+	selected, err := rt.SwitchAgent(strings.TrimSpace(option))
+	if err != nil {
+		return larkCardToast("warning", err.Error()), nil
+	}
+	b.manager.EnsureBrowser(sessionID)
+	if openMessageID != "" {
+		defaultLarkMessageRegistry.remember(sessionID, openMessageID)
+	}
+	rt.NotifyInputRunningOnMessage(openMessageID)
+	log.Printf("lark card switched Agent session=%s message=%s agent=%s", sessionID, openMessageID, selected.Kind)
+	return larkCardToast("info", "正在切换至 "+selected.Label), nil
 }
 
 func (b *LarkReplyBridge) handleCardToggleDeveloperMode(ctx context.Context, value map[string]interface{}, openMessageID, operatorOpenID string) (*callback.CardActionTriggerResponse, error) {
@@ -726,6 +751,7 @@ func (b *LarkReplyBridge) HandleP2MessageReceive(ctx context.Context, event *lar
 		ChatID:       valueOf(msg.ChatId),
 		ChatType:     valueOf(msg.ChatType),
 		SenderOpenID: larkSenderOpenID(event.Event.Sender),
+		MessageTime:  parseLarkMillisecondTime(valueOf(msg.CreateTime)),
 		Mentions:     msg.Mentions,
 	}
 	if _, ignored := b.shouldIgnoreForMentionMode(ctx, routeCtx, incoming); ignored {
@@ -1212,6 +1238,7 @@ func (b *LarkReplyBridge) routeDirectContactMessage(ctx context.Context, routeCt
 	groupRoute := routeCtx
 	groupRoute.ChatID = binding.ChatID
 	groupRoute.ChatType = "group"
+	b.recordAgentLarkContext(rt.Snapshot(), groupRoute)
 	if len(incoming.Attachments) > 0 {
 		return b.routeAttachments(ctx, groupRoute, incoming.Text, parts, incoming.Attachments)
 	}
@@ -1509,6 +1536,7 @@ func (b *LarkReplyBridge) createDirectBotSessionForMessage(ctx context.Context, 
 	if err != nil {
 		return updated, err
 	}
+	b.recordAgentLarkContext(updated, routeCtx)
 	log.Printf("lark reply bridge bound direct bot chat session=%s chat=%s", updated.ID, routeCtx.ChatID)
 	return b.enableLarkSessionNotifications(ctx, updated)
 }
@@ -1527,11 +1555,13 @@ func (b *LarkReplyBridge) createLarkSessionForMessage(ctx context.Context, name 
 		if err != nil {
 			return updated, err
 		}
+		b.recordAgentLarkContext(updated, routeCtx)
 		return b.enableLarkSessionNotifications(ctx, updated)
 	}
 	if routeCtx.SenderOpenID == "" || b.createChat == nil {
 		log.Printf("lark reply bridge skipped dedicated chat creation session=%s name=%q reason=missing_sender_or_creator sender=%q",
 			s.ID, s.Name, routeCtx.SenderOpenID)
+		b.recordAgentLarkContext(s, routeCtx)
 		return b.enableLarkSessionNotifications(ctx, s)
 	}
 	if rt, ok := b.manager.GetRuntime(s.ID); ok {
@@ -1553,6 +1583,7 @@ func (b *LarkReplyBridge) createLarkSessionForMessage(ctx context.Context, name 
 		return updated, err
 	}
 	log.Printf("lark reply bridge bound session=%s to lark chat=%s", updated.ID, chatID)
+	b.recordAgentLarkContext(updated, routeCtx)
 	if b.sendChatText != nil {
 		if err := b.sendChatText(ctx, chatID, fmt.Sprintf("已创建会话 %s（%s）。之后直接在这个对话里发消息。", updated.Name, updated.ID)); err != nil {
 			log.Printf("lark reply bridge failed to send session chat intro session=%s chat=%s: %v", updated.ID, chatID, err)
@@ -1585,6 +1616,7 @@ func (b *LarkReplyBridge) ensureRouteRuntime(ctx context.Context, sessionID stri
 	}
 	if rt, ok := b.manager.GetRuntime(sessionID); ok {
 		s := rt.Snapshot()
+		b.recordAgentLarkContext(s, routeCtx)
 		if routeCtx.SenderOpenID != "" {
 			rt.SetNotificationMentionOpenID(routeCtx.SenderOpenID)
 		}
@@ -1597,6 +1629,7 @@ func (b *LarkReplyBridge) ensureRouteRuntime(ctx context.Context, sessionID stri
 	if routeCtx.ChatID != "" {
 		defaultLarkMessageRegistry.rememberChat(routeCtx.ChatID, sess.ID)
 	}
+	b.recordAgentLarkContext(sess, routeCtx)
 	if routeCtx.SenderOpenID != "" {
 		rt.SetNotificationMentionOpenID(routeCtx.SenderOpenID)
 	}
@@ -1604,6 +1637,36 @@ func (b *LarkReplyBridge) ensureRouteRuntime(ctx context.Context, sessionID stri
 		time.Sleep(1200 * time.Millisecond)
 	}
 	return rt, sess, true, nil
+}
+
+func (b *LarkReplyBridge) recordAgentLarkContext(sess Session, routeCtx larkRouteContext) {
+	if b == nil || b.manager == nil || strings.TrimSpace(sess.ID) == "" {
+		return
+	}
+	chatID := strings.TrimSpace(sess.LarkChatID)
+	if chatID == "" {
+		chatID = strings.TrimSpace(routeCtx.ChatID)
+	}
+	chatType := strings.TrimSpace(routeCtx.ChatType)
+	if strings.TrimSpace(sess.LarkChatID) != "" && strings.TrimSpace(routeCtx.ChatID) != "" && strings.TrimSpace(sess.LarkChatID) != strings.TrimSpace(routeCtx.ChatID) {
+		chatType = "group"
+	}
+	messageTime := routeCtx.MessageTime
+	if messageTime.IsZero() && strings.TrimSpace(routeCtx.MessageID) != "" {
+		messageTime = time.Now().UTC()
+	}
+	b.manager.RecordLarkAgentContext(sess.ID, LarkAgentContext{
+		SessionID:         sess.ID,
+		SessionName:       sess.Name,
+		ChatID:            chatID,
+		ChatType:          chatType,
+		LatestMessageID:   strings.TrimSpace(routeCtx.MessageID),
+		LatestParentID:    strings.TrimSpace(routeCtx.ParentID),
+		LatestRootID:      strings.TrimSpace(routeCtx.RootID),
+		LatestSenderID:    strings.TrimSpace(routeCtx.SenderOpenID),
+		LatestMessageTime: messageTime,
+		UpdatedAt:         time.Now().UTC(),
+	})
 }
 
 func (b *LarkReplyBridge) parseLarkStartCommand(text string) (string, string, bool) {

@@ -2231,6 +2231,55 @@ func TestLarkReplyBridgeRestartAgentRequiresDeveloperModeAndReusesStartCommand(t
 	}
 }
 
+func TestLarkReplyBridgeAgentSelectSwitchesToAvailableYoloCommand(t *testing.T) {
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	manager.SetAgentConfig(AgentConfig{Kind: "codex", Command: CodexAgentCommand}, nil)
+	manager.SetAvailableAgentOptions([]AgentOption{
+		{ID: "codex", Label: "Codex", Kind: "codex", Command: CodexAgentCommand},
+		{ID: "claude", Label: "Claude Code", Kind: "claude", Command: ClaudeAgentCommand},
+	})
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	sess, err := manager.CreateSession(context.Background(), "Iris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := &callback.CallBackAction{Option: "claude", Value: map[string]interface{}{
+		"easy_terminal_action": "agent_select",
+		"session_id":           sess.ID,
+	}}
+	resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || resp.Toast.Content != "请先开启开发者模式" {
+		t.Fatalf("Agent selection should require developer mode: %#v", resp)
+	}
+	if _, _, err := manager.UpdateDeveloperMode(context.Background(), sess.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	before := len(launcher.terminals[0].writeParts())
+	resp, err = bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || resp.Toast.Content != "正在切换至 Claude Code" {
+		t.Fatalf("Agent selection response = %#v", resp)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for len(launcher.terminals[0].writeParts()) < before+2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	parts := launcher.terminals[0].writeParts()
+	if len(parts) < before+2 || parts[before] != "\x03\x03" || parts[before+1] != ClaudeAgentCommand+"\r" {
+		t.Fatalf("Agent switch writes = %#v", parts)
+	}
+	updated := manager.sessions[sess.ID].Snapshot()
+	if updated.LastMode != SessionModeAgent || updated.LastAgentKind != "claude" || updated.LastAgentStartCommand != ClaudeAgentCommand {
+		t.Fatalf("Agent switch state = %#v", updated)
+	}
+}
+
 func TestLarkReplyBridgeDisabledCardActionsAreBlockedEndToEnd(t *testing.T) {
 	tests := []struct {
 		name  string

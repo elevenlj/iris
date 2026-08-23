@@ -87,6 +87,7 @@ type WaitingNotification struct {
 	MentionModeEnabled   bool
 	DeveloperModeEnabled bool
 	WorkspaceOptions     []WorkspaceOption
+	AgentOptions         []AgentOption
 	AgentKind            string
 	SuppressUpdateTip    bool
 	NotificationVersion  int64

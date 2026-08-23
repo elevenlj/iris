@@ -33,6 +33,8 @@ const (
 	defaultHeadlessSnapshotTimeout       = 10 * time.Second
 	defaultStartupPresetSettleDelay      = 2 * time.Second
 	defaultStartupInputQueueWindow       = 30 * time.Second
+	defaultAgentRestartFallbackDelay     = time.Second
+	defaultAgentTerminationTimeout       = 6 * time.Second
 	defaultNotificationSendAttempts      = 3
 	defaultNotificationSendRetryDelay    = 120 * time.Millisecond
 )
@@ -66,27 +68,30 @@ type Store interface {
 }
 
 type Manager struct {
-	mu                   sync.RWMutex
-	store                Store
-	launcher             Launcher
-	notifier             WaitingNotifier
-	idCounter            atomic.Int64
-	fastWaiting          time.Duration
-	conservativeWaiting  time.Duration
-	autoRefreshInterval  time.Duration
-	headlessSnapshotWait time.Duration
-	updateCoalesce       time.Duration
-	preStartCommand      string
-	recoveryBaseDir      string
-	agentTurnHookURL     string
-	sessions             map[string]*RuntimeSession
-	onBrowserNeeded      func(string)
-	onBrowserActive      func(string)
-	onBrowserStopped     func(string)
-	onNotificationSent   func(string)
-	onSessionEnded       func(string)
-	defaultAgent         AgentConfig
-	workspaceOptions     []WorkspaceOption
+	mu                       sync.RWMutex
+	store                    Store
+	launcher                 Launcher
+	notifier                 WaitingNotifier
+	idCounter                atomic.Int64
+	fastWaiting              time.Duration
+	conservativeWaiting      time.Duration
+	autoRefreshInterval      time.Duration
+	headlessSnapshotWait     time.Duration
+	updateCoalesce           time.Duration
+	preStartCommand          string
+	recoveryBaseDir          string
+	agentTurnHookURL         string
+	sessions                 map[string]*RuntimeSession
+	onBrowserNeeded          func(string)
+	onBrowserActive          func(string)
+	onBrowserStopped         func(string)
+	onNotificationSent       func(string)
+	onSessionEnded           func(string)
+	defaultAgent             AgentConfig
+	agentOptions             []AgentOption
+	workspaceOptions         []WorkspaceOption
+	larkConversationProvider LarkConversationProvider
+	larkAgentContexts        map[string]LarkAgentContext
 }
 
 func (m *Manager) SetAgentConfig(agent AgentConfig, workspaces []WorkspaceOption) {
@@ -102,13 +107,40 @@ func (m *Manager) AgentConfig() (AgentConfig, []WorkspaceOption) {
 	return m.defaultAgent, append([]WorkspaceOption(nil), m.workspaceOptions...)
 }
 
+func (m *Manager) SetAvailableAgentOptions(options []AgentOption) {
+	m.mu.Lock()
+	m.agentOptions = normalizeAgentOptions(options)
+	m.mu.Unlock()
+}
+
+func (m *Manager) AvailableAgentOptions() []AgentOption {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]AgentOption(nil), m.agentOptions...)
+}
+
+func (m *Manager) agentOption(id string) (AgentOption, bool) {
+	id = strings.ToLower(strings.TrimSpace(id))
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, option := range m.agentOptions {
+		if option.ID == id {
+			return option, true
+		}
+	}
+	return AgentOption{}, false
+}
+
 func normalizeAgentConfig(agent AgentConfig) AgentConfig {
 	agent.Kind = strings.ToLower(strings.TrimSpace(agent.Kind))
 	agent.Command = strings.TrimSpace(agent.Command)
-	if agent.Kind == "codex" && agent.Command == "" {
-		agent.Command = "codex"
+	if agent.Kind == "codex" {
+		agent.Command = CodexAgentCommand
 	}
-	if agent.Kind != "codex" && agent.Kind != "custom" {
+	if agent.Kind == "claude" {
+		agent.Command = ClaudeAgentCommand
+	}
+	if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "custom" {
 		return AgentConfig{}
 	}
 	return agent
@@ -169,6 +201,7 @@ func NewManager(store Store, launcher Launcher, opts ...ManagerOption) *Manager 
 		headlessSnapshotWait: defaultHeadlessSnapshotTimeout,
 		updateCoalesce:       defaultNotificationUpdateCoalesce,
 		sessions:             make(map[string]*RuntimeSession),
+		larkAgentContexts:    make(map[string]LarkAgentContext),
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -891,6 +924,7 @@ func (m *Manager) DeleteSession(ctx context.Context, id string) error {
 	if ok {
 		delete(m.sessions, id)
 	}
+	delete(m.larkAgentContexts, id)
 	m.mu.Unlock()
 	if ok {
 		rt.Close()
@@ -1290,43 +1324,77 @@ func (rt *RuntimeSession) RestartAgent() error {
 		rt.mu.Unlock()
 		return errors.New("当前会话没有可用的 Agent 启动命令")
 	}
-	originalCommand := command
 	agentKind := strings.TrimSpace(rt.session.LastAgentKind)
 	resumeCommand := strings.TrimSpace(rt.session.LastAgentResumeCommand)
 	rt.agentRestartPending = true
 	terminal := rt.terminal
 	rt.mu.Unlock()
+	return rt.restartAgentAfterConfirmedExit(terminal, command, agentKind, resumeCommand)
+}
 
-	if _, err := terminal.Write([]byte("\x03\x03")); err != nil {
+func (rt *RuntimeSession) SwitchAgent(optionID string) (AgentOption, error) {
+	if rt == nil || rt.manager == nil {
+		return AgentOption{}, errors.New("会话不在线")
+	}
+	option, ok := rt.manager.agentOption(optionID)
+	if !ok {
+		return AgentOption{}, errors.New("所选 Agent 当前不可用")
+	}
+	rt.mu.Lock()
+	if rt.closed || rt.terminal == nil {
+		rt.mu.Unlock()
+		return AgentOption{}, errors.New("会话不在线")
+	}
+	if rt.agentRestartPending {
+		rt.mu.Unlock()
+		return AgentOption{}, errors.New("Agent 正在重启")
+	}
+	if strings.EqualFold(strings.TrimSpace(rt.session.LastAgentKind), option.Kind) && strings.TrimSpace(rt.session.LastAgentStartCommand) == option.Command {
+		rt.mu.Unlock()
+		return AgentOption{}, errors.New("当前已经是 " + option.Label)
+	}
+	rt.agentRestartPending = true
+	terminal := rt.terminal
+	rt.mu.Unlock()
+	if err := rt.restartAgentAfterConfirmedExit(terminal, option.Command, option.Kind, option.Command); err != nil {
+		return AgentOption{}, err
+	}
+	return option, nil
+}
+
+func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, command, agentKind, resumeCommand string) error {
+	command = strings.TrimSpace(command)
+	if command == "" {
 		rt.mu.Lock()
 		rt.agentRestartPending = false
 		rt.mu.Unlock()
-		return err
+		return errors.New("当前会话没有可用的 Agent 启动命令")
 	}
 	rt.MarkAgentExitActivity()
 	go func() {
-		time.Sleep(500 * time.Millisecond)
-		rt.RecordShellCommandForRecovery(originalCommand)
-		rt.mu.Lock()
-		if rt.session.LastMode != SessionModeAgent {
-			rt.session.LastMode = SessionModeAgent
-			if agentKind == "" {
-				agentKind = "custom"
-			}
-			rt.session.LastAgentKind = agentKind
-			rt.session.LastAgentStartCommand = originalCommand
-			if resumeCommand == "" {
-				resumeCommand = originalCommand
-			}
-			rt.session.LastAgentResumeCommand = resumeCommand
-			rt.session.UpdatedAt = time.Now().UTC()
+		if err := terminateAgentForegroundProcess(terminal); err != nil {
+			rt.finishAgentRestartFailure()
+			log.Printf("agent restart cancelled session=%s: %v", rt.Snapshot().ID, err)
+			return
 		}
+		rt.RecordShellCommandForRecovery(command)
+		rt.mu.Lock()
+		rt.session.LastMode = SessionModeAgent
+		if agentKind == "" {
+			agentKind = "custom"
+		}
+		rt.session.LastAgentKind = agentKind
+		rt.session.LastAgentStartCommand = command
+		if resumeCommand == "" {
+			resumeCommand = command
+		}
+		rt.session.LastAgentResumeCommand = resumeCommand
+		rt.session.UpdatedAt = time.Now().UTC()
 		sess := rt.session
 		rt.mu.Unlock()
 		if rt.manager != nil {
 			_ = rt.manager.persist(context.Background(), sess)
 		}
-		command = originalCommand
 		if !strings.HasSuffix(command, "\r") && !strings.HasSuffix(command, "\n") {
 			command += "\r"
 		}
@@ -1338,6 +1406,57 @@ func (rt *RuntimeSession) RestartAgent() error {
 			log.Printf("agent restart command failed session=%s: %v", rt.Snapshot().ID, err)
 		}
 	}()
+	return nil
+}
+
+func (rt *RuntimeSession) finishAgentRestartFailure() {
+	rt.mu.Lock()
+	rt.agentRestartPending = false
+	rt.session.LastMode = SessionModeAgent
+	rt.session.Status = StatusWaiting
+	rt.session.UpdatedAt = time.Now().UTC()
+	rt.stateVersion++
+	rt.notifyVersion++
+	message := "Agent 重启失败：未能确认旧 Agent 已完全退出，因此没有执行新的启动命令。"
+	if previous := strings.TrimSpace(rt.lastNotifiedContent); previous != "" {
+		rt.lastNotifiedContent = previous + "\n\n" + message
+	} else {
+		rt.lastNotifiedContent = message
+	}
+	note := WaitingNotification{}
+	updateCard := false
+	if rt.manager != nil {
+		note, updateCard = rt.markNotificationWaitingLocked()
+	}
+	sess := rt.session
+	rt.mu.Unlock()
+	if rt.manager != nil {
+		_ = rt.manager.persist(context.Background(), sess)
+	}
+	if updateCard {
+		go rt.updateNotificationRunning(note, false)
+	}
+}
+
+func terminateAgentForegroundProcess(terminal Terminal) error {
+	if terminal == nil {
+		return io.ErrClosedPipe
+	}
+	if controller, ok := terminal.(ForegroundProcessController); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), defaultAgentTerminationTimeout)
+		err := controller.TerminateForegroundProcess(ctx)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, errForegroundProcessControlUnavailable) {
+			return err
+		}
+	}
+	if _, err := terminal.Write([]byte("\x03\x03")); err != nil {
+		return err
+	}
+	time.Sleep(defaultAgentRestartFallbackDelay)
 	return nil
 }
 
@@ -1411,6 +1530,9 @@ func (rt *RuntimeSession) runRecoveryEnvironmentSetup() {
 			"EASY_TERMINAL_HOOK_URL="+shellQuote(hookURL),
 			"EASY_TERMINAL_SESSION_ID="+shellQuote(sess.ID),
 			"EASY_TERMINAL_HOOK_TOKEN="+shellQuote(sess.RecoveryKey),
+			"IRIS_API_URL="+shellQuote(hookURL),
+			"IRIS_SESSION_ID="+shellQuote(sess.ID),
+			"IRIS_SESSION_TOKEN="+shellQuote(sess.RecoveryKey),
 		)
 	}
 	command := ""
@@ -3833,6 +3955,7 @@ func (rt *RuntimeSession) decorateWaitingNotification(note WaitingNotification) 
 	note.AgentKind = sess.LastAgentKind
 	_, workspaces := rt.manager.AgentConfig()
 	note.WorkspaceOptions = workspaces
+	note.AgentOptions = rt.manager.AvailableAgentOptions()
 	return note
 }
 

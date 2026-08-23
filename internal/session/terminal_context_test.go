@@ -185,7 +185,54 @@ func TestLarkWorkspaceSelectorUsesCompactLabeledLayout(t *testing.T) {
 	}
 	selectorElements := columns[1]["elements"].([]map[string]any)
 	selector := selectorElements[0]
-	if selector["tag"] != "select_static" || selector["width"] != "default" || selector["initial_option"] != "/tmp/iris" {
+	if selector["tag"] != "select_static" || selector["width"] != "auto" || selector["initial_option"] != "/tmp/iris" {
 		t.Fatalf("workspace selector = %#v", selector)
+	}
+}
+
+func TestLarkNotificationCardPlacesDeveloperSelectorsInAdaptiveRow(t *testing.T) {
+	content, err := larkNotificationCardContent(WaitingNotification{
+		SessionID:            "sess-1",
+		Name:                 "Iris",
+		Content:              "任务已完成",
+		DeveloperModeEnabled: true,
+		AgentKind:            "codex",
+		AgentOptions: []AgentOption{
+			{ID: "codex", Kind: "codex", Label: "Codex", Command: CodexAgentCommand},
+			{ID: "claude", Kind: "claude", Label: "Claude Code", Command: ClaudeAgentCommand},
+		},
+		WorkspaceOptions: []WorkspaceOption{{Label: "Iris", Value: "/tmp/iris", Default: true}},
+		AgentContext:     &TerminalAgentContext{Directory: "/tmp/iris", Model: "gpt-5.6", Reasoning: "High"},
+	}, "ou-owner", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var card struct {
+		Body struct {
+			Elements []map[string]any `json:"elements"`
+		} `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(content), &card); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, element := range card.Body.Elements {
+		if element["tag"] != "column_set" || element["flex_mode"] != "flow" {
+			continue
+		}
+		columns, ok := element["columns"].([]any)
+		if !ok || len(columns) != 2 {
+			continue
+		}
+		encoded, _ := json.Marshal(element)
+		if strings.Contains(string(encoded), `"name":"iris_agent"`) && strings.Contains(string(encoded), `"name":"iris_workspace"`) {
+			found = true
+			if strings.Count(string(encoded), `"width":"auto"`) < 4 {
+				t.Fatalf("selector row should use content-sized columns and controls: %s", encoded)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("card should place Agent and workspace selectors in one adaptive row: %s", content)
 	}
 }

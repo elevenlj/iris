@@ -1491,12 +1491,13 @@ function agentCommandForPreset(preset, customCommand = "") {
   if (preset === "custom") return customCommand.trim();
   return {
     codex: "codex --dangerously-bypass-approvals-and-sandbox",
+    claude: "claude --dangerously-skip-permissions",
   }[preset] || "";
 }
 
 function presetForAgentCommand(command = "") {
   const normalized = String(command || "").trim();
-  for (const preset of ["codex"]) {
+  for (const preset of ["codex", "claude"]) {
     if (normalized === agentCommandForPreset(preset)) return { preset, customCommand: "" };
   }
   if (normalized) return { preset: "custom", customCommand: normalized };
@@ -1565,7 +1566,7 @@ async function completeOnboarding(options = {}) {
   const defaultSessionName = $("onboarding-default-session-name").value.trim() || DEFAULT_SESSION_NAME;
   const customCommand = $("onboarding-agent-custom-command").value.trim();
   if (!preset || (preset === "custom" && !customCommand)) {
-    setOnboardingAgentStatus("请选择 Codex，或填写自定义 Agent 启动命令。", false);
+    setOnboardingAgentStatus("请选择 Codex、Claude Code，或填写自定义 Agent 启动命令。", false);
     return;
   }
   const command = agentCommandForPreset(preset, customCommand);

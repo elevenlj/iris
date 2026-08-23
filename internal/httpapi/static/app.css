@@ -113,7 +113,26 @@ textarea {
   padding-top: 18px;
   display: flex;
   flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
   justify-content: flex-start;
+}
+
+.game-link {
+  min-height: 42px;
+  padding: 9px 16px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent-dark);
+  background: #f7f0e4;
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.game-link:hover {
+  border-color: var(--accent);
 }
 
 .new-session {

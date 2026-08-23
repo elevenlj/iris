@@ -2247,6 +2247,44 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 	}
 }
 
+func TestLarkNotificationCardContentListsOnlyAvailableAgentOptions(t *testing.T) {
+	content, err := larkNotificationCardContent(WaitingNotification{
+		SessionID:            "sess-agent-select",
+		Name:                 "Iris",
+		Content:              "ready",
+		DeveloperModeEnabled: true,
+		AgentKind:            "claude",
+		AgentOptions: []AgentOption{
+			{ID: "codex", Label: "Codex", Kind: "codex", Command: CodexAgentCommand},
+			{ID: "claude", Label: "Claude Code", Kind: "claude", Command: ClaudeAgentCommand},
+		},
+	}, "ou_1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{`"content":"Agent"`, `"content":"Codex"`, `"content":"Claude Code"`, `"easy_terminal_action":"agent_select"`, `"initial_option":"claude"`} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("Agent selector missing %s: %s", expected, content)
+		}
+	}
+	if strings.Contains(content, "dangerously-bypass") || strings.Contains(content, "dangerously-skip") {
+		t.Fatalf("Agent commands must not be exposed in card payload: %s", content)
+	}
+	hidden, err := larkNotificationCardContent(WaitingNotification{
+		SessionID: "sess-agent-select", Name: "Iris", Content: "ready", AgentKind: "claude",
+		AgentOptions: []AgentOption{
+			{ID: "codex", Label: "Codex", Kind: "codex", Command: CodexAgentCommand},
+			{ID: "claude", Label: "Claude Code", Kind: "claude", Command: ClaudeAgentCommand},
+		},
+	}, "ou_1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(hidden, `"easy_terminal_action":"agent_select"`) {
+		t.Fatalf("Agent selector must stay hidden outside developer mode: %s", hidden)
+	}
+}
+
 func TestLarkNotificationCardContentDisabledRemovesButtons(t *testing.T) {
 	content, err := larkNotificationCardContent(WaitingNotification{
 		SessionID:            "sess-1",

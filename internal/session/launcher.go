@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,12 @@ type Terminal interface {
 	Close() error
 	Resize(cols, rows uint16) error
 }
+
+type ForegroundProcessController interface {
+	TerminateForegroundProcess(context.Context) error
+}
+
+var errForegroundProcessControlUnavailable = errors.New("foreground process control unavailable")
 
 type Launcher interface {
 	Launch(ctx context.Context) (ProcessHandle, error)
@@ -65,7 +72,7 @@ func (l ShellLauncher) Launch(ctx context.Context) (ProcessHandle, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &shellHandle{term: &ptyTerminal{file: f}, process: cmd}, nil
+	return &shellHandle{term: &ptyTerminal{file: f, shellPID: cmd.Process.Pid}, process: cmd}, nil
 }
 
 func defaultInteractiveShell() string {
@@ -143,7 +150,8 @@ func (h *shellHandle) Terminal() Terminal { return h.term }
 func (h *shellHandle) Process() Waiter    { return h.process }
 
 type ptyTerminal struct {
-	file *os.File
+	file     *os.File
+	shellPID int
 }
 
 func (t *ptyTerminal) Read(p []byte) (int, error)  { return t.file.Read(p) }
@@ -151,6 +159,9 @@ func (t *ptyTerminal) Write(p []byte) (int, error) { return t.file.Write(p) }
 func (t *ptyTerminal) Close() error                { return t.file.Close() }
 func (t *ptyTerminal) Resize(cols, rows uint16) error {
 	return pty.Setsize(t.file, &pty.Winsize{Cols: cols, Rows: rows})
+}
+func (t *ptyTerminal) TerminateForegroundProcess(ctx context.Context) error {
+	return terminatePTYForegroundProcess(ctx, t.file, t.shellPID)
 }
 
 type ScreenLauncher struct {

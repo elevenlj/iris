@@ -161,10 +161,17 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 			elements = append(elements, map[string]any{"tag": "hr"})
 			elements = append(elements, contextElement)
 		}
+		developerSelectors := make([]map[string]any, 0, 2)
+		if agentElement := larkAgentSelectElement(note.SessionID, note.AgentOptions, note.AgentKind); agentElement != nil {
+			developerSelectors = append(developerSelectors, agentElement)
+		}
 		if strings.EqualFold(note.AgentKind, "codex") {
 			if workspaceElement := larkWorkspaceSelectElement(note.SessionID, note.WorkspaceOptions, note.AgentContext); workspaceElement != nil {
-				elements = append(elements, workspaceElement)
+				developerSelectors = append(developerSelectors, workspaceElement)
 			}
+		}
+		if selectorRow := larkDeveloperSelectorRow(developerSelectors...); selectorRow != nil {
+			elements = append(elements, selectorRow)
 		}
 	}
 	if !note.Disabled {
@@ -187,6 +194,55 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 	return string(b), err
 }
 
+func larkAgentSelectElement(sessionID string, agents []AgentOption, currentKind string) map[string]any {
+	agents = normalizeAgentOptions(agents)
+	if len(agents) < 2 {
+		return nil
+	}
+	options := make([]map[string]any, 0, len(agents))
+	initial := ""
+	currentKind = strings.ToLower(strings.TrimSpace(currentKind))
+	for _, agent := range agents {
+		options = append(options, map[string]any{
+			"text":  map[string]any{"tag": "plain_text", "content": agent.Label},
+			"value": agent.ID,
+		})
+		if initial == "" && agent.Kind == currentKind {
+			initial = agent.ID
+		}
+	}
+	selector := map[string]any{
+		"tag": "select_static", "name": "iris_agent", "width": "auto",
+		"placeholder": map[string]any{"tag": "plain_text", "content": "切换 Agent"},
+		"options":     options,
+		"behaviors": []map[string]any{{"type": "callback", "value": map[string]any{
+			"easy_terminal_action": "agent_select", "session_id": sessionID,
+		}}},
+	}
+	if initial != "" {
+		selector["initial_option"] = initial
+	}
+	return map[string]any{
+		"tag":                "column_set",
+		"flex_mode":          "none",
+		"horizontal_align":   "left",
+		"horizontal_spacing": "8px",
+		"columns": []map[string]any{
+			{
+				"tag": "column", "width": "auto", "vertical_align": "center",
+				"elements": []map[string]any{{
+					"tag":  "div",
+					"text": map[string]any{"tag": "plain_text", "content": "Agent"},
+				}},
+			},
+			{
+				"tag": "column", "width": "auto", "vertical_align": "center",
+				"elements": []map[string]any{selector},
+			},
+		},
+	}
+}
+
 func larkWorkspaceSelectElement(sessionID string, workspaces []WorkspaceOption, context *TerminalAgentContext) map[string]any {
 	if len(workspaces) == 0 {
 		return nil
@@ -207,7 +263,7 @@ func larkWorkspaceSelectElement(sessionID string, workspaces []WorkspaceOption, 
 		}
 	}
 	selector := map[string]any{
-		"tag": "select_static", "name": "iris_workspace", "width": "default",
+		"tag": "select_static", "name": "iris_workspace", "width": "auto",
 		"placeholder": map[string]any{"tag": "plain_text", "content": "切换工作目录"},
 		"options":     options,
 		"behaviors": []map[string]any{{"type": "callback", "value": map[string]any{
@@ -235,6 +291,29 @@ func larkWorkspaceSelectElement(sessionID string, workspaces []WorkspaceOption, 
 				"elements": []map[string]any{selector},
 			},
 		},
+	}
+}
+
+func larkDeveloperSelectorRow(selectors ...map[string]any) map[string]any {
+	columns := make([]map[string]any, 0, len(selectors))
+	for _, selector := range selectors {
+		if selector == nil {
+			continue
+		}
+		columns = append(columns, map[string]any{
+			"tag": "column", "width": "auto", "vertical_align": "center",
+			"elements": []map[string]any{selector},
+		})
+	}
+	if len(columns) == 0 {
+		return nil
+	}
+	return map[string]any{
+		"tag":                "column_set",
+		"flex_mode":          "flow",
+		"horizontal_align":   "left",
+		"horizontal_spacing": "8px",
+		"columns":            columns,
 	}
 }
 

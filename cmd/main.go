@@ -121,7 +121,7 @@ func run() error {
 		if err := session.EnsureAgentCompletionHooks(executable); err != nil {
 			return err
 		}
-		fmt.Println("Iris Agent completion hooks installed.")
+		fmt.Println("Iris Agent hooks and Feishu context skills installed.")
 		return nil
 	}
 	configPath := configPathFromDir(opts.ConfigDir)
@@ -129,6 +129,16 @@ func run() error {
 		return err
 	}
 	cfg := loadConfig(configPath)
+	cfg, permissionModeChanged := enforceAgentPermissionMode(cfg)
+	updated, autoSelected := autoSelectFirstUseAgent(cfg, session.DetectAvailableAgentOptions(session.AgentConfig{}))
+	if autoSelected {
+		cfg = updated
+	}
+	if permissionModeChanged || autoSelected {
+		if err := writeConfigFile(configPath, cfg); err != nil {
+			return err
+		}
+	}
 	if opts.ResetSettingsPassword {
 		cfg.SettingsPasswordHash = ""
 		cfg.SettingsPasswordSkipped = false
@@ -210,6 +220,7 @@ func run() error {
 		}),
 	)
 	mgr.SetAgentConfig(session.AgentConfig{Kind: cfg.AgentKind, Command: cfg.AgentCommand}, cfg.WorkspaceOptions)
+	mgr.SetAvailableAgentOptions(session.DetectAvailableAgentOptions(session.AgentConfig{Kind: cfg.AgentKind, Command: cfg.AgentCommand}))
 
 	bridge := session.NewLarkReplyBridge(cfg.LarkAppID, cfg.LarkAppSecret, mgr, uploadsDir)
 	bridge.SetDefaultStartSessionName(cfg.LarkDefaultSessionName)
@@ -360,6 +371,41 @@ func loadConfig(path string) Config {
 		log.Printf("invalid lark_notify_drop_line_patterns: %v", err)
 	}
 	return cfg
+}
+
+func autoSelectFirstUseAgent(cfg Config, options []session.AgentOption) (Config, bool) {
+	if strings.TrimSpace(cfg.AgentKind) != "" && strings.TrimSpace(cfg.AgentCommand) != "" {
+		return cfg, false
+	}
+	for _, option := range options {
+		if option.Kind != "codex" && option.Kind != "claude" {
+			continue
+		}
+		cfg.AgentKind = option.Kind
+		cfg.AgentCommand = option.Command
+		cfg.OnboardingCompleted = true
+		return cfg, true
+	}
+	return cfg, false
+}
+
+func enforceAgentPermissionMode(cfg Config) (Config, bool) {
+	kind := strings.ToLower(strings.TrimSpace(cfg.AgentKind))
+	want := ""
+	switch kind {
+	case "codex":
+		want = session.CodexAgentCommand
+	case "claude":
+		want = session.ClaudeAgentCommand
+	default:
+		return cfg, false
+	}
+	if strings.TrimSpace(cfg.AgentCommand) == want && cfg.AgentKind == kind {
+		return cfg, false
+	}
+	cfg.AgentKind = kind
+	cfg.AgentCommand = want
+	return cfg, true
 }
 
 // mergeRequiredLarkNotifyDropLineRules keeps existing user rules while making
@@ -563,11 +609,14 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 	}
 	req.AgentKind = strings.ToLower(strings.TrimSpace(req.AgentKind))
 	req.AgentCommand = strings.TrimSpace(req.AgentCommand)
-	if req.AgentKind == "codex" && req.AgentCommand == "" {
-		req.AgentCommand = "codex"
+	if req.AgentKind == "codex" {
+		req.AgentCommand = session.CodexAgentCommand
 	}
-	if req.AgentKind != "codex" && req.AgentKind != "custom" {
-		return httpapi.RuntimeConfig{}, errors.New("必须选择 Codex 或自定义 Agent")
+	if req.AgentKind == "claude" {
+		req.AgentCommand = session.ClaudeAgentCommand
+	}
+	if req.AgentKind != "codex" && req.AgentKind != "claude" && req.AgentKind != "custom" {
+		return httpapi.RuntimeConfig{}, errors.New("必须选择 Codex、Claude Code 或自定义 Agent")
 	}
 	if req.AgentCommand == "" {
 		return httpapi.RuntimeConfig{}, errors.New("Agent 启动命令不能为空")
@@ -654,6 +703,7 @@ func applyRuntimeConfig(cfg Config, manager *session.Manager, bridge *session.La
 	manager.SetHeadlessSnapshotTimeout(time.Duration(cfg.HeadlessSnapshotTimeoutMs) * time.Millisecond)
 	manager.SetPreStartCommand(cfg.SessionPreStartCommand)
 	manager.SetAgentConfig(session.AgentConfig{Kind: cfg.AgentKind, Command: cfg.AgentCommand}, cfg.WorkspaceOptions)
+	manager.SetAvailableAgentOptions(session.DetectAvailableAgentOptions(session.AgentConfig{Kind: cfg.AgentKind, Command: cfg.AgentCommand}))
 	notifier := session.NewLarkAppNotifier(cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkNotifyReceiveID, cfg.LarkMentionEnabled)
 	notifier.SetCustomShortcuts(cfg.LarkCustomShortcuts)
 	manager.SetNotifier(notifier)

@@ -158,6 +158,53 @@ func TestLoadConfigPrependsRequiredToolFiltersToExistingConfig(t *testing.T) {
 	}
 }
 
+func TestAutoSelectFirstUseAgentPrefersCodexThenClaude(t *testing.T) {
+	base := Config{LarkDefaultSessionName: "默认会话"}
+	withBoth, changed := autoSelectFirstUseAgent(base, []session.AgentOption{
+		{ID: "codex", Label: "Codex", Kind: "codex", Command: session.CodexAgentCommand},
+		{ID: "claude", Label: "Claude Code", Kind: "claude", Command: session.ClaudeAgentCommand},
+	})
+	if !changed || withBoth.AgentKind != "codex" || withBoth.AgentCommand != session.CodexAgentCommand || !withBoth.OnboardingCompleted {
+		t.Fatalf("Codex auto selection = %#v changed=%v", withBoth, changed)
+	}
+	withClaude, changed := autoSelectFirstUseAgent(base, []session.AgentOption{
+		{ID: "claude", Label: "Claude Code", Kind: "claude", Command: session.ClaudeAgentCommand},
+	})
+	if !changed || withClaude.AgentKind != "claude" || withClaude.AgentCommand != session.ClaudeAgentCommand || !withClaude.OnboardingCompleted {
+		t.Fatalf("Claude auto selection = %#v changed=%v", withClaude, changed)
+	}
+}
+
+func TestAutoSelectFirstUseAgentKeepsExistingOrMissingConfiguration(t *testing.T) {
+	existing := Config{AgentKind: "custom", AgentCommand: "my-agent", OnboardingCompleted: false}
+	got, changed := autoSelectFirstUseAgent(existing, []session.AgentOption{{ID: "codex", Kind: "codex", Command: session.CodexAgentCommand}})
+	if changed || got.AgentKind != "custom" || got.AgentCommand != "my-agent" || got.OnboardingCompleted {
+		t.Fatalf("existing Agent was overwritten: %#v changed=%v", got, changed)
+	}
+	empty, changed := autoSelectFirstUseAgent(Config{}, nil)
+	if changed || empty.AgentKind != "" || empty.OnboardingCompleted {
+		t.Fatalf("missing Agent should keep onboarding: %#v changed=%v", empty, changed)
+	}
+}
+
+func TestEnforceAgentPermissionModeCanonicalizesBuiltinsOnly(t *testing.T) {
+	for _, tt := range []struct {
+		kind    string
+		command string
+		want    string
+		changed bool
+	}{
+		{kind: "codex", command: "codex", want: session.CodexAgentCommand, changed: true},
+		{kind: "claude", command: "claude", want: session.ClaudeAgentCommand, changed: true},
+		{kind: "custom", command: "my-agent --unsafe", want: "my-agent --unsafe", changed: false},
+	} {
+		got, changed := enforceAgentPermissionMode(Config{AgentKind: tt.kind, AgentCommand: tt.command})
+		if changed != tt.changed || got.AgentCommand != tt.want {
+			t.Errorf("kind=%s command=%q => %#v changed=%v", tt.kind, tt.command, got, changed)
+		}
+	}
+}
+
 func TestDefaultPathsUseStableUserDataDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
