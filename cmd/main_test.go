@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/elevenlj/iris/internal/httpapi"
@@ -188,13 +189,13 @@ func TestAutoSelectFirstUseAgentPrefersCodexThenClaude(t *testing.T) {
 		{ID: "codex", Label: "Codex", Kind: "codex", Command: session.CodexAgentCommand},
 		{ID: "claude", Label: "Claude Code", Kind: "claude", Command: session.ClaudeAgentCommand},
 	})
-	if !changed || withBoth.AgentKind != "codex" || withBoth.AgentCommand != session.CodexAgentCommand || !withBoth.OnboardingCompleted {
+	if !changed || withBoth.AgentName != "Codex" || withBoth.AgentKind != "codex" || withBoth.AgentCommand != session.CodexAgentCommand || !withBoth.OnboardingCompleted {
 		t.Fatalf("Codex auto selection = %#v changed=%v", withBoth, changed)
 	}
 	withClaude, changed := autoSelectFirstUseAgent(base, []session.AgentOption{
 		{ID: "claude", Label: "Claude Code", Kind: "claude", Command: session.ClaudeAgentCommand},
 	})
-	if !changed || withClaude.AgentKind != "claude" || withClaude.AgentCommand != session.ClaudeAgentCommand || !withClaude.OnboardingCompleted {
+	if !changed || withClaude.AgentName != "Claude Code" || withClaude.AgentKind != "claude" || withClaude.AgentCommand != session.ClaudeAgentCommand || !withClaude.OnboardingCompleted {
 		t.Fatalf("Claude auto selection = %#v changed=%v", withClaude, changed)
 	}
 }
@@ -431,5 +432,39 @@ func TestAppConfigServiceUpdatesRuntimeConfigAndPersists(t *testing.T) {
 	}
 	if saved.SessionStartPresets["1"].Commands[0] != "codex" || saved.SessionNamePresets["会话 A"].Commands[0] != "pwd" {
 		t.Fatalf("presets were not persisted: start=%#v name=%#v", saved.SessionStartPresets, saved.SessionNamePresets)
+	}
+}
+
+func TestAppConfigServiceRequiresAndPublishesCustomAgentName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.local.json")
+	cfg := defaultConfig()
+	mgr := session.NewManager(nil, nil)
+	svc := &appConfigService{path: path, cfg: &cfg, manager: mgr}
+	req := httpapi.RuntimeConfig{
+		FastWaitingTransitionMs: 1, ConservativeWaitingTransitionMs: 1,
+		LarkAutoRefreshIntervalMs: 1, HeadlessSnapshotTimeoutMs: 1,
+		LarkNotifyMaxLines: 1, LarkNotifyFallbackTailLines: 1,
+		AgentKind: "custom", AgentCommand: "my-agent --yolo",
+	}
+	if _, err := svc.UpdateRuntimeConfig(req); err == nil || !strings.Contains(err.Error(), "名称") {
+		t.Fatalf("missing custom Agent name error = %v", err)
+	}
+	req.AgentName = "方案助手"
+	got, err := svc.UpdateRuntimeConfig(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AgentName != "方案助手" || cfg.AgentName != "方案助手" {
+		t.Fatalf("custom Agent name was not persisted: got=%#v cfg=%#v", got, cfg)
+	}
+	options := mgr.AvailableAgentOptions()
+	found := false
+	for _, option := range options {
+		if option.Kind == "custom" && option.Label == "方案助手" && option.Command == "my-agent --yolo" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("custom Agent was not published to switch options: %#v", options)
 	}
 }

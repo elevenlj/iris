@@ -80,6 +80,7 @@ type Config struct {
 	SessionNamePresets              map[string]session.SessionStartPreset `json:"session_name_presets"`
 	LarkCustomShortcuts             []session.LarkCustomShortcut          `json:"lark_custom_shortcuts"`
 	OnboardingCompleted             bool                                  `json:"onboarding_completed"`
+	AgentName                       string                                `json:"agent_name"`
 	AgentKind                       string                                `json:"agent_kind"`
 	AgentCommand                    string                                `json:"agent_command"`
 	WorkspaceOptions                []session.WorkspaceOption             `json:"workspace_options"`
@@ -186,7 +187,7 @@ func run() error {
 	if sessions, listErr := st.ListSessions(context.Background()); listErr != nil {
 		log.Printf("startup Agent upgrade skipped: cannot list sessions: %v", listErr)
 	} else {
-		configuredAgent := session.AgentConfig{Kind: cfg.AgentKind, Command: cfg.AgentCommand}
+		configuredAgent := session.AgentConfig{Name: cfg.AgentName, Kind: cfg.AgentKind, Command: cfg.AgentCommand}
 		for _, result := range session.UpgradeAgentCLIsOnStartup(context.Background(), sessions, configuredAgent) {
 			if result.Err != nil {
 				log.Printf("startup Agent upgrade failed agent=%s: %v output=%q", result.Kind, result.Err, result.Output)
@@ -221,8 +222,8 @@ func run() error {
 			_ = os.RemoveAll(filepath.Join(uploadsDir, sessionID))
 		}),
 	)
-	mgr.SetAgentConfig(session.AgentConfig{Kind: cfg.AgentKind, Command: cfg.AgentCommand}, cfg.WorkspaceOptions)
-	mgr.SetAvailableAgentOptions(session.DetectAvailableAgentOptions(session.AgentConfig{Kind: cfg.AgentKind, Command: cfg.AgentCommand}))
+	mgr.SetAgentConfig(session.AgentConfig{Name: cfg.AgentName, Kind: cfg.AgentKind, Command: cfg.AgentCommand}, cfg.WorkspaceOptions)
+	mgr.SetAvailableAgentOptions(session.DetectAvailableAgentOptions(session.AgentConfig{Name: cfg.AgentName, Kind: cfg.AgentKind, Command: cfg.AgentCommand}))
 
 	bridge := session.NewLarkReplyBridge(cfg.LarkAppID, cfg.LarkAppSecret, mgr, uploadsDir)
 	bridge.SetDefaultStartSessionName(cfg.LarkDefaultSessionName)
@@ -406,6 +407,16 @@ func loadConfig(path string) Config {
 			}
 		}
 	}
+	switch strings.ToLower(strings.TrimSpace(cfg.AgentKind)) {
+	case "codex":
+		cfg.AgentName = "Codex"
+	case "claude":
+		cfg.AgentName = "Claude Code"
+	case "custom":
+		if strings.TrimSpace(cfg.AgentName) == "" {
+			cfg.AgentName = "自定义 Agent"
+		}
+	}
 	if cfg.SettingsAuthVersion <= 0 {
 		cfg.SettingsAuthVersion = 1
 	}
@@ -429,6 +440,7 @@ func autoSelectFirstUseAgent(cfg Config, options []session.AgentOption) (Config,
 			continue
 		}
 		cfg.AgentKind = option.Kind
+		cfg.AgentName = option.Label
 		cfg.AgentCommand = option.Command
 		cfg.OnboardingCompleted = true
 		return cfg, true
@@ -439,17 +451,21 @@ func autoSelectFirstUseAgent(cfg Config, options []session.AgentOption) (Config,
 func enforceAgentPermissionMode(cfg Config) (Config, bool) {
 	kind := strings.ToLower(strings.TrimSpace(cfg.AgentKind))
 	want := ""
+	wantName := ""
 	switch kind {
 	case "codex":
 		want = session.CodexAgentCommand
+		wantName = "Codex"
 	case "claude":
 		want = session.ClaudeAgentCommand
+		wantName = "Claude Code"
 	default:
 		return cfg, false
 	}
-	if strings.TrimSpace(cfg.AgentCommand) == want && cfg.AgentKind == kind {
+	if strings.TrimSpace(cfg.AgentCommand) == want && cfg.AgentKind == kind && strings.TrimSpace(cfg.AgentName) == wantName {
 		return cfg, false
 	}
+	cfg.AgentName = wantName
 	cfg.AgentKind = kind
 	cfg.AgentCommand = want
 	return cfg, true
@@ -655,11 +671,14 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 		req.SessionNamePresets = map[string]session.SessionStartPreset{}
 	}
 	req.AgentKind = strings.ToLower(strings.TrimSpace(req.AgentKind))
+	req.AgentName = strings.TrimSpace(req.AgentName)
 	req.AgentCommand = strings.TrimSpace(req.AgentCommand)
 	if req.AgentKind == "codex" {
+		req.AgentName = "Codex"
 		req.AgentCommand = session.CodexAgentCommand
 	}
 	if req.AgentKind == "claude" {
+		req.AgentName = "Claude Code"
 		req.AgentCommand = session.ClaudeAgentCommand
 	}
 	if req.AgentKind != "codex" && req.AgentKind != "claude" && req.AgentKind != "custom" {
@@ -667,6 +686,14 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 	}
 	if req.AgentCommand == "" {
 		return httpapi.RuntimeConfig{}, errors.New("Agent 启动命令不能为空")
+	}
+	if req.AgentKind == "custom" {
+		if req.AgentName == "" {
+			return httpapi.RuntimeConfig{}, errors.New("自定义 Agent 名称不能为空")
+		}
+		if len([]rune(req.AgentName)) > 40 {
+			return httpapi.RuntimeConfig{}, errors.New("自定义 Agent 名称不能超过 40 个字符")
+		}
 	}
 	workspaces, err := validateWorkspaceOptions(req.WorkspaceOptions)
 	if err != nil {
@@ -693,6 +720,7 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 	cfg.SessionNamePresets = req.SessionNamePresets
 	cfg.LarkCustomShortcuts = req.LarkCustomShortcuts
 	cfg.OnboardingCompleted = req.OnboardingCompleted
+	cfg.AgentName = req.AgentName
 	cfg.AgentKind = req.AgentKind
 	cfg.AgentCommand = req.AgentCommand
 	cfg.WorkspaceOptions = workspaces
@@ -740,8 +768,8 @@ func applyRuntimeConfig(cfg Config, manager *session.Manager, bridge *session.La
 	manager.SetAutoRefreshInterval(time.Duration(cfg.LarkAutoRefreshIntervalMs) * time.Millisecond)
 	manager.SetHeadlessSnapshotTimeout(time.Duration(cfg.HeadlessSnapshotTimeoutMs) * time.Millisecond)
 	manager.SetPreStartCommand(cfg.SessionPreStartCommand)
-	manager.SetAgentConfig(session.AgentConfig{Kind: cfg.AgentKind, Command: cfg.AgentCommand}, cfg.WorkspaceOptions)
-	manager.SetAvailableAgentOptions(session.DetectAvailableAgentOptions(session.AgentConfig{Kind: cfg.AgentKind, Command: cfg.AgentCommand}))
+	manager.SetAgentConfig(session.AgentConfig{Name: cfg.AgentName, Kind: cfg.AgentKind, Command: cfg.AgentCommand}, cfg.WorkspaceOptions)
+	manager.SetAvailableAgentOptions(session.DetectAvailableAgentOptions(session.AgentConfig{Name: cfg.AgentName, Kind: cfg.AgentKind, Command: cfg.AgentCommand}))
 	notifier := session.NewLarkAppNotifier(cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkNotifyReceiveID, cfg.LarkMentionEnabled)
 	notifier.SetCustomShortcuts(cfg.LarkCustomShortcuts)
 	manager.SetNotifier(notifier)
@@ -799,6 +827,7 @@ func runtimeConfigFromConfig(cfg Config) httpapi.RuntimeConfig {
 		SessionNamePresets:              cfg.SessionNamePresets,
 		LarkCustomShortcuts:             cfg.LarkCustomShortcuts,
 		OnboardingCompleted:             cfg.OnboardingCompleted,
+		AgentName:                       cfg.AgentName,
 		AgentKind:                       cfg.AgentKind,
 		AgentCommand:                    cfg.AgentCommand,
 		WorkspaceOptions:                append([]session.WorkspaceOption(nil), cfg.WorkspaceOptions...),

@@ -153,6 +153,7 @@ func (s *Server) handleSettingsPassword(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		CurrentPassword string `json:"current_password"`
 		NewPassword     string `json:"new_password"`
+		ConfirmPassword string `json:"confirm_password"`
 	}
 	if err := decodeLimitedJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -164,6 +165,10 @@ func (s *Server) handleSettingsPassword(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := validateSettingsPassword(req.NewPassword); err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.NewPassword != req.ConfirmPassword {
+		writeError(w, http.StatusBadRequest, errors.New("两次输入的新密码不一致"))
 		return
 	}
 	hash, err := hashSettingsPassword(req.NewPassword)

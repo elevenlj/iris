@@ -35,6 +35,7 @@ type RuntimeConfig struct {
 	SessionNamePresets              map[string]session.SessionStartPreset `json:"session_name_presets"`
 	LarkCustomShortcuts             []session.LarkCustomShortcut          `json:"lark_custom_shortcuts"`
 	OnboardingCompleted             bool                                  `json:"onboarding_completed"`
+	AgentName                       string                                `json:"agent_name"`
 	AgentKind                       string                                `json:"agent_kind"`
 	AgentCommand                    string                                `json:"agent_command"`
 	WorkspaceOptions                []session.WorkspaceOption             `json:"workspace_options"`

@@ -16,11 +16,11 @@ func (f fakeAgentExecutableFinder) LookPath(name string) (string, error) {
 }
 
 func TestDetectAvailableAgentOptionsPrioritizesCodexThenClaudeAndIncludesCustom(t *testing.T) {
-	got := detectAvailableAgentOptions(AgentConfig{Kind: "custom", Command: "my-agent --full-access"}, fakeAgentExecutableFinder{"codex": true, "claude": true})
+	got := detectAvailableAgentOptions(AgentConfig{Name: "方案助手", Kind: "custom", Command: "my-agent --full-access"}, fakeAgentExecutableFinder{"codex": true, "claude": true})
 	want := []AgentOption{
 		{ID: "codex", Label: "Codex", Kind: "codex", Command: CodexAgentCommand},
 		{ID: "claude", Label: "Claude Code", Kind: "claude", Command: ClaudeAgentCommand},
-		{ID: "custom", Label: "自定义 Agent", Kind: "custom", Command: "my-agent --full-access"},
+		{ID: "custom", Label: "方案助手", Kind: "custom", Command: "my-agent --full-access"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("options = %#v, want %#v", got, want)

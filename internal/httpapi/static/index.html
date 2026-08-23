@@ -56,13 +56,18 @@
           <input id="onboarding-default-session-name" placeholder="默认会话">
         </label>
         <div class="agent-preset-controls onboarding-agent-controls">
-          <select id="onboarding-agent-preset" aria-label="默认 Agent">
-            <option value="">请选择 Agent</option>
-            <option value="codex">Codex</option>
-            <option value="claude">Claude Code</option>
-            <option value="custom">自定义命令</option>
-          </select>
-          <input id="onboarding-agent-custom-command" class="hidden" hidden aria-label="自定义 Agent 命令" placeholder="Agent 启动命令">
+          <label class="agent-field">
+            <span>默认 Agent</span>
+            <select id="onboarding-agent-preset" aria-label="默认 Agent">
+              <option value="codex">Codex</option>
+              <option value="claude">Claude Code</option>
+              <option value="custom">自定义 Agent</option>
+            </select>
+          </label>
+          <div id="onboarding-custom-agent-fields" class="custom-agent-fields hidden" hidden>
+            <label class="agent-field"><span>Agent 名称</span><input id="onboarding-agent-custom-name" maxlength="40" placeholder="例如：OpenCode"></label>
+            <label class="agent-field"><span>启动命令</span><input id="onboarding-agent-custom-command" aria-label="自定义 Agent 启动命令" placeholder="例如：opencode --yolo"></label>
+          </div>
         </div>
         <div id="onboarding-agent-status" class="agent-preset-status" aria-live="polite"></div>
         <div class="onboarding-actions">
@@ -80,23 +85,35 @@
           </div>
         </div>
         <nav class="config-tabs" aria-label="配置分组">
-          <button class="config-tab active" type="button" data-config-target="config-security">安全</button>
-          <button class="config-tab" type="button" data-config-target="config-lark">飞书</button>
+          <button class="config-tab active" type="button" data-config-target="config-lark">飞书</button>
           <button class="config-tab" type="button" data-config-target="config-session">Agent</button>
+          <button class="config-tab" type="button" data-config-target="config-security">安全</button>
           <button class="config-tab" type="button" data-config-target="config-workspaces">工作目录</button>
           <button class="config-tab hidden" hidden type="button" data-config-target="config-notify">等待通知</button>
           <button class="config-tab hidden" hidden type="button" data-config-target="config-startup">启动预设</button>
         </nav>
         <div class="config-sections">
-          <section id="config-security" class="config-section config-panel active">
-            <h2>安全设置</h2>
+          <section id="config-security" class="config-section config-panel">
+            <h2>安全</h2>
+            <p class="config-subtitle">定期更新访问密码，保护飞书凭证、Agent 和工作目录配置。</p>
             <div id="settings-security-warning" class="security-warning hidden" hidden>当前未设置访问密码。任何能访问本页面的人都可以修改飞书凭证和 Agent 命令，建议立即设置密码。</div>
-            <div class="config-grid">
-              <label><span>当前密码</span><input id="settings-current-password" type="password" autocomplete="current-password"></label>
-              <label><span>新密码</span><input id="settings-new-password" type="password" autocomplete="new-password" minlength="8"></label>
+            <div class="security-password-card">
+              <div class="security-password-heading">
+                <strong>修改访问密码</strong>
+                <p>修改后，其他浏览器中的设置登录会立即失效。</p>
+              </div>
+              <div class="security-password-fields">
+                <label class="security-current-password"><span>当前密码</span><input id="settings-current-password" type="password" autocomplete="current-password" maxlength="256"></label>
+                <label><span>新密码</span><input id="settings-new-password" type="password" autocomplete="new-password" minlength="8" maxlength="256" aria-describedby="settings-password-format"></label>
+                <label><span>确认新密码</span><input id="settings-confirm-password" type="password" autocomplete="new-password" minlength="8" maxlength="256" aria-describedby="settings-password-format settings-password-match"></label>
+              </div>
+              <div id="settings-password-format" class="password-format-hint">至少 8 个字符，建议组合使用字母、数字和符号。</div>
+              <div id="settings-password-match" class="password-match-hint" aria-live="polite"></div>
+              <div class="security-password-actions">
+                <button id="settings-password-save" type="button">更新密码</button>
+                <div id="settings-password-status" class="agent-preset-status" aria-live="polite"></div>
+              </div>
             </div>
-            <button id="settings-password-save" type="button">修改设置密码</button>
-            <div id="settings-password-status" class="agent-preset-status" aria-live="polite"></div>
             <div class="environment-check">
               <div>
                 <strong>环境检测</strong>
@@ -112,18 +129,23 @@
               <label><span>默认会话名</span><input id="cfg-lark-default-session-name"></label>
             </div>
             <div class="agent-preset">
-              <div>
+              <div class="agent-preset-heading">
                 <strong>默认 Agent</strong>
-                <p>所有新会话都会自动启动此 Agent。</p>
+                <p>所有新会话都会自动启动当前 Agent，不能留空。</p>
               </div>
               <div class="agent-preset-controls">
-                <select id="cfg-agent-preset" aria-label="默认 Agent">
-                  <option value="">请选择 Agent</option>
-                  <option value="codex">Codex</option>
-                  <option value="claude">Claude Code</option>
-                  <option value="custom">自定义命令</option>
-                </select>
-                <input id="cfg-agent-custom-command" aria-label="自定义 Agent 命令" placeholder="Agent 启动命令">
+                <label class="agent-field">
+                  <span>Agent 类型</span>
+                  <select id="cfg-agent-preset" aria-label="默认 Agent">
+                    <option value="codex">Codex</option>
+                    <option value="claude">Claude Code</option>
+                    <option value="custom">自定义 Agent</option>
+                  </select>
+                </label>
+                <div id="cfg-custom-agent-fields" class="custom-agent-fields hidden" hidden>
+                  <label class="agent-field"><span>Agent 名称</span><input id="cfg-agent-custom-name" maxlength="40" placeholder="例如：OpenCode"></label>
+                  <label class="agent-field"><span>启动命令</span><input id="cfg-agent-custom-command" aria-label="自定义 Agent 启动命令" placeholder="例如：opencode --yolo"></label>
+                </div>
               </div>
               <div id="agent-preset-status" class="agent-preset-status" aria-live="polite"></div>
             </div>
@@ -135,7 +157,7 @@
             <button id="workspace-option-add" type="button">添加目录</button>
             <textarea id="cfg-workspace-options" class="hidden" hidden spellcheck="false"></textarea>
           </section>
-          <section id="config-lark" class="config-section config-panel">
+          <section id="config-lark" class="config-section config-panel active">
             <h2>飞书</h2>
             <div class="lark-register">
               <div>
@@ -356,7 +378,7 @@
               <div><strong>测试飞书配置</strong><span>保存前可发送测试卡片，并检查“获取群组中所有消息（敏感权限）”是否真实生效。</span></div>
               <div><strong>App ID / App Secret</strong><span>飞书应用凭证，用于接收事件、发通知、创建群聊。</span></div>
               <div><strong>开发者 open_id</strong><span>“通知接收 ID”同时用于识别开发者，并作为联系人群聊中的开发者成员。</span></div>
-              <div><strong>Agent</strong><span>首次使用会自动选择本机 Agent，也可以改为 Codex、Claude Code 或自定义命令。</span></div>
+              <div><strong>Agent</strong><span>首次使用会自动选择本机 Agent，也可以改为 Codex、Claude Code 或自定义 Agent。</span></div>
               <div><strong>工作目录</strong><span>默认目录为 ~/Iris_Workspace/会话名称；还可配置其他项目目录供 Codex 开发者卡片切换。</span></div>
               <div><strong>设置密码</strong><span>保护飞书凭证、Agent 命令和目录；可在安全页修改，也可通过本机命令重置。</span></div>
               <div><strong>飞书自定义快捷键</strong><span>配置按钮名称和指令。按钮会显示在系统快捷键下一行，点击后提交该指令。</span></div>

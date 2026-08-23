@@ -192,13 +192,18 @@ const ids = [
   "onboarding-dialog",
   "onboarding-default-session-name",
   "onboarding-agent-preset",
+  "onboarding-agent-custom-name",
   "onboarding-agent-custom-command",
+  "onboarding-custom-agent-fields",
   "onboarding-agent-status",
   "onboarding-config",
   "onboarding-later",
   "settings-security-warning",
   "settings-current-password",
   "settings-new-password",
+  "settings-confirm-password",
+  "settings-password-format",
+  "settings-password-match",
   "settings-password-save",
   "settings-password-status",
   "environment-check-start",
@@ -252,7 +257,9 @@ const ids = [
   "cfg-session-name-presets",
   "cfg-session-start-presets",
   "cfg-agent-preset",
+  "cfg-agent-custom-name",
   "cfg-agent-custom-command",
+  "cfg-custom-agent-fields",
   "cfg-workspace-options",
   "workspace-option-list",
   "workspace-option-add",
@@ -283,13 +290,13 @@ const helpTabs = ["help-start", "help-terminal"].map((targetID, index) => {
   tab.className = index === 0 ? "help-tab active" : "help-tab";
   return tab;
 });
-const configTabs = ["config-security", "config-lark", "config-session", "config-workspaces"].map((targetID, index) => {
+const configTabs = ["config-lark", "config-session", "config-security", "config-workspaces"].map((targetID, index) => {
   const tab = new FakeElement("", "button");
   tab.dataset.configTarget = targetID;
   tab.className = index === 0 ? "config-tab active" : "config-tab";
   return tab;
 });
-const configPanels = ["config-security", "config-lark", "config-session", "config-workspaces"].map((id, index) => {
+const configPanels = ["config-lark", "config-session", "config-security", "config-workspaces"].map((id, index) => {
   const panel = new FakeElement(id, "section");
   panel.className = index === 0 ? "config-panel active" : "config-panel";
   return panel;
@@ -450,6 +457,7 @@ const context = {
         session_name_presets: {},
         session_start_presets: {},
         agent_kind: "codex",
+        agent_name: "Codex",
         agent_command: "codex --dangerously-bypass-approvals-and-sandbox",
         workspace_options: [],
       });
@@ -562,19 +570,37 @@ assert.equal(onboardingConfig.onboarding_completed, true, "onboarding should be 
 assert.equal(onboardingConfig.agent_kind, "codex");
 assert.equal(onboardingConfig.lark_default_session_name, "默认会话");
 await app.openConfigDialog();
-assert.ok(configTabs[0].className.includes("active"), "settings should start from security tab");
+assert.ok(configTabs[0].className.includes("active"), "settings should start from Feishu tab");
 assert.equal(elements["config-prev"].disabled, true, "previous should be disabled on first config tab");
 assert.equal(elements["config-next"].disabled, false, "next should be enabled on first config tab");
 elements["config-next"].onclick();
 assert.ok(configTabs[1].className.includes("active"), "next should move to the next config tab");
 assert.equal(elements["config-prev"].disabled, false, "previous should be enabled after moving forward");
 elements["config-prev"].onclick();
-assert.ok(configTabs[0].className.includes("active"), "previous should move back to session config tab");
+assert.ok(configTabs[0].className.includes("active"), "previous should move back to Feishu config tab");
 elements["config-next"].onclick();
 elements["config-next"].onclick();
 elements["config-next"].onclick();
 assert.ok(configTabs[3].className.includes("active"), "next should stop at the last config tab");
 assert.equal(elements["config-next"].disabled, true, "next should be disabled on last config tab");
+await app.openConfigDialog("config-security");
+elements["settings-current-password"].value = "old-password";
+elements["settings-new-password"].value = "new-password";
+elements["settings-confirm-password"].value = "different-password";
+elements["settings-confirm-password"].oninput();
+assert.match(elements["settings-password-match"].textContent, /不一致/, "password confirmation should show a live mismatch hint");
+await elements["settings-password-save"].onclick();
+assert.equal(fetchCalls.some((call) => call.path === "/api/settings/security/password"), false, "mismatched passwords must not be submitted");
+elements["settings-confirm-password"].value = "new-password";
+elements["settings-confirm-password"].oninput();
+assert.match(elements["settings-password-match"].textContent, /一致/, "matching passwords should show a live success hint");
+await elements["settings-password-save"].onclick();
+const passwordChangeCall = fetchCalls.find((call) => call.path === "/api/settings/security/password");
+assert.deepEqual(JSON.parse(passwordChangeCall.options.body), {
+  current_password: "old-password",
+  new_password: "new-password",
+  confirm_password: "new-password",
+}, "password change should send an explicit confirmation");
 elements["config-dialog"].close();
 await app.maybeShowOnboarding();
 assert.notEqual(elements["onboarding-dialog"].open, true, "completed onboarding should not reopen");
@@ -1315,16 +1341,19 @@ elements["cfg-agent-preset"].value = "claude";
 elements["cfg-agent-preset"].onchange();
 assert.match(elements["agent-preset-status"].textContent, /claude --dangerously-skip-permissions/, "Claude preset should use unattended permission mode");
 elements["cfg-agent-preset"].value = "custom";
+elements["cfg-agent-custom-name"].value = "";
 elements["cfg-agent-custom-command"].value = "";
 elements["cfg-agent-preset"].onchange();
 assert.equal(elements["cfg-agent-preset"].value, "custom", "empty custom preset should remain selected while the user enters a command");
-assert.equal(elements["cfg-agent-custom-command"].hidden, false, "custom command input should remain visible");
+assert.equal(elements["cfg-custom-agent-fields"].hidden, false, "custom Agent fields should remain visible");
+elements["cfg-agent-custom-name"].value = "My Agent";
 elements["cfg-agent-custom-command"].value = "my-agent --run";
 elements["cfg-agent-custom-command"].onchange();
 assert.match(elements["agent-preset-status"].textContent, /my-agent --run/, "custom Agent command should be reflected in status");
 app.state.config = {
   ...app.state.config,
   agent_kind: "codex",
+  agent_name: "Codex",
   agent_command: "codex --dangerously-bypass-approvals-and-sandbox",
 };
 app.openConfigDialog("config-session");
@@ -1354,6 +1383,7 @@ elements["cfg-drop-patterns"].value = JSON.stringify([
 elements["cfg-lark-custom-shortcuts"].value = JSON.stringify([{ label: "状态", command: "git status" }]);
 elements["cfg-lark-default-session-name"].value = "Claude 会话";
 elements["cfg-agent-preset"].value = "custom";
+elements["cfg-agent-custom-name"].value = "Claude 私有助手";
 elements["cfg-agent-custom-command"].value = "claude --dangerously-skip-permissions";
 elements["cfg-agent-preset"].onchange();
 await app.testLarkConfig();
@@ -1392,6 +1422,7 @@ assert.deepEqual(patchedConfig.lark_notify_drop_line_patterns, [
 ]);
 assert.deepEqual(patchedConfig.lark_custom_shortcuts, [{ label: "状态", command: "git status" }]);
 assert.equal(patchedConfig.agent_kind, "custom");
+assert.equal(patchedConfig.agent_name, "Claude 私有助手");
 assert.equal(patchedConfig.agent_command, "claude --dangerously-skip-permissions");
 assert.deepEqual(patchedConfig.session_start_presets, { "1": { commands: ["codex"] } });
 

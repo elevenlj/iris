@@ -58,7 +58,7 @@ func TestSettingsPasswordProtectsConfigAndInvalidatesOldSessions(t *testing.T) {
 	if status := requestStatus(t, clientB, http.MethodPost, server.URL+"/api/settings/security/login", map[string]any{"password": "strong-pass-1"}); status != http.StatusOK {
 		t.Fatalf("login status = %d", status)
 	}
-	if status := requestStatus(t, clientA, http.MethodPost, server.URL+"/api/settings/security/password", map[string]any{"current_password": "strong-pass-1", "new_password": "strong-pass-2"}); status != http.StatusOK {
+	if status := requestStatus(t, clientA, http.MethodPost, server.URL+"/api/settings/security/password", map[string]any{"current_password": "strong-pass-1", "new_password": "strong-pass-2", "confirm_password": "strong-pass-2"}); status != http.StatusOK {
 		t.Fatalf("password update status = %d", status)
 	}
 	if status := requestStatus(t, clientB, http.MethodGet, server.URL+"/api/config", nil); status != http.StatusUnauthorized {
@@ -66,6 +66,27 @@ func TestSettingsPasswordProtectsConfigAndInvalidatesOldSessions(t *testing.T) {
 	}
 	if status := requestStatus(t, clientA, http.MethodGet, server.URL+"/api/config", nil); status != http.StatusOK {
 		t.Fatalf("password-changing session should receive a fresh login, got %d", status)
+	}
+}
+
+func TestSettingsPasswordChangeRequiresConfirmation(t *testing.T) {
+	hash, err := hashSettingsPassword("strong-pass-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &secureTestConfig{runtime: RuntimeConfig{AgentKind: "codex", AgentCommand: "codex"}, security: SettingsSecurity{PasswordHash: hash, AuthVersion: 2}}
+	server := httptest.NewServer(NewServer(nil, t.TempDir(), cfg).Handler())
+	defer server.Close()
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	if status := requestStatus(t, client, http.MethodPost, server.URL+"/api/settings/security/login", map[string]any{"password": "strong-pass-1"}); status != http.StatusOK {
+		t.Fatalf("login status = %d", status)
+	}
+	status := requestStatus(t, client, http.MethodPost, server.URL+"/api/settings/security/password", map[string]any{
+		"current_password": "strong-pass-1", "new_password": "strong-pass-2", "confirm_password": "strong-pass-3",
+	})
+	if status != http.StatusBadRequest || !verifySettingsPassword("strong-pass-1", cfg.security.PasswordHash) {
+		t.Fatalf("mismatched confirmation changed password: status=%d security=%#v", status, cfg.security)
 	}
 }
 

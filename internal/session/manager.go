@@ -132,13 +132,19 @@ func (m *Manager) agentOption(id string) (AgentOption, bool) {
 }
 
 func normalizeAgentConfig(agent AgentConfig) AgentConfig {
+	agent.Name = strings.TrimSpace(agent.Name)
 	agent.Kind = strings.ToLower(strings.TrimSpace(agent.Kind))
 	agent.Command = strings.TrimSpace(agent.Command)
 	if agent.Kind == "codex" {
+		agent.Name = "Codex"
 		agent.Command = CodexAgentCommand
 	}
 	if agent.Kind == "claude" {
+		agent.Name = "Claude Code"
 		agent.Command = ClaudeAgentCommand
+	}
+	if agent.Kind == "custom" && agent.Name == "" {
+		agent.Name = "自定义 Agent"
 	}
 	if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "custom" {
 		return AgentConfig{}

@@ -36,7 +36,7 @@ const STANDARD_TERMINAL_LINE_HEIGHT = 1.2;
 const SNAPSHOT_CONTINUITY_VERSION = 2;
 const DEFAULT_SESSION_NAME = "默认会话";
 const DEFAULT_AGENT_PRESET_CODE = "999999";
-const CONFIG_TAB_IDS = ["config-security", "config-lark", "config-session", "config-workspaces"];
+const CONFIG_TAB_IDS = ["config-lark", "config-session", "config-security", "config-workspaces"];
 const DROP_RULE_KINDS = [
   ["line", "行过滤"],
   ["block_head", "块首行过滤"],
@@ -930,8 +930,14 @@ function renderConfig() {
   $("environment-check-start").disabled = false;
   $("environment-check-start").textContent = "开始检测";
   $("environment-check-result").innerHTML = "";
-  const agentKind = cfg.agent_kind || "";
+  $("settings-current-password").value = "";
+  $("settings-new-password").value = "";
+  $("settings-confirm-password").value = "";
+  $("settings-password-status").textContent = "";
+  renderSettingsPasswordMatch();
+  const agentKind = cfg.agent_kind || "codex";
   $("cfg-agent-preset").value = agentKind;
+  $("cfg-agent-custom-name").value = agentKind === "custom" ? (cfg.agent_name || "自定义 Agent") : "";
   $("cfg-agent-custom-command").value = agentKind === "custom" ? (cfg.agent_command || "") : "";
   renderAgentPresetControls();
   setAgentPresetStatus("所有新会话都会自动启动当前 Agent。");
@@ -1024,7 +1030,7 @@ function moveConfigStep(delta) {
   if (nextIndex !== index) setConfigTab(CONFIG_TAB_IDS[nextIndex]);
 }
 
-async function openConfigDialog(targetID = "config-security") {
+async function openConfigDialog(targetID = "config-lark") {
   if (!state.config) await loadConfig();
   renderConfig();
   setConfigTab(targetID);
@@ -1056,6 +1062,7 @@ async function maybeShowOnboarding() {
   if ($("config-dialog").open || $("help-dialog").open) return;
   $("onboarding-default-session-name").value = state.config.lark_default_session_name || DEFAULT_SESSION_NAME;
   $("onboarding-agent-preset").value = state.config.agent_kind || "codex";
+  $("onboarding-agent-custom-name").value = state.config.agent_kind === "custom" ? (state.config.agent_name || "自定义 Agent") : "";
   $("onboarding-agent-custom-command").value = state.config.agent_kind === "custom" ? (state.config.agent_command || "") : "";
   renderOnboardingAgentControls();
   $("onboarding-dialog").showModal();
@@ -1090,8 +1097,10 @@ function readConfigForm() {
     .map((item) => ({ label: String(item?.label || "").trim(), value: String(item?.value || "").trim(), default: Boolean(item?.default) }))
     .filter((item) => item.label || item.value);
   const agentKind = $("cfg-agent-preset").value;
+  const agentName = agentKind === "custom" ? $("cfg-agent-custom-name").value.trim() : ({ codex: "Codex", claude: "Claude Code" }[agentKind] || "");
   const agentCommand = agentCommandForPreset(agentKind, $("cfg-agent-custom-command").value);
-  if (!agentKind || !agentCommand) throw new Error("必须选择并配置一个 Agent");
+  if (!agentKind || !agentCommand) throw new Error("必须配置一个 Agent");
+  if (!agentName) throw new Error("自定义 Agent 名称不能为空");
   return {
     lark_app_id: $("cfg-lark-app-id").value.trim(),
     lark_app_secret: $("cfg-lark-app-secret").value,
@@ -1115,6 +1124,7 @@ function readConfigForm() {
     session_name_presets: namePresets,
     session_start_presets: startPresets,
     agent_kind: agentKind,
+    agent_name: agentName,
     agent_command: agentCommand,
     workspace_options: workspaces,
   };
@@ -1481,14 +1491,15 @@ function renderDefaultAgentPresetFromStartPreset(startPresets = {}) {
   const commands = Array.isArray(startPresets?.[DEFAULT_AGENT_PRESET_CODE]?.commands) ? startPresets[DEFAULT_AGENT_PRESET_CODE].commands : [];
   const firstCommand = commands.find((command) => String(command || "").trim());
   const matched = presetForAgentCommand(firstCommand || "");
-  $("cfg-agent-preset").value = matched.preset;
+  $("cfg-agent-preset").value = matched.preset || "codex";
+  $("cfg-agent-custom-name").value = matched.preset === "custom" ? "自定义 Agent" : "";
   $("cfg-agent-custom-command").value = matched.customCommand;
 }
 
 function renderAgentPresetControls() {
   const custom = $("cfg-agent-preset").value === "custom";
-  $("cfg-agent-custom-command").hidden = !custom;
-  $("cfg-agent-custom-command").classList.toggle("hidden", !custom);
+  $("cfg-custom-agent-fields").hidden = !custom;
+  $("cfg-custom-agent-fields").classList.toggle("hidden", !custom);
 }
 
 function setAgentPresetStatus(message, ok = null) {
@@ -1499,9 +1510,14 @@ function setAgentPresetStatus(message, ok = null) {
 }
 
 function ensureDefaultAgentPreset() {
+  const custom = $("cfg-agent-preset").value === "custom";
+  if (custom && !$("cfg-agent-custom-name").value.trim()) {
+    setAgentPresetStatus("请填写自定义 Agent 名称。", false);
+    return;
+  }
   const command = agentPresetCommand();
   if (!command) {
-    setAgentPresetStatus("必须选择并配置一个 Agent。", false);
+    setAgentPresetStatus("请填写自定义 Agent 启动命令。", false);
     return;
   }
   setAgentPresetStatus(`新会话将自动启动：${command}`, true);
@@ -1509,8 +1525,8 @@ function ensureDefaultAgentPreset() {
 
 function renderOnboardingAgentControls() {
   const custom = $("onboarding-agent-preset").value === "custom";
-  $("onboarding-agent-custom-command").hidden = !custom;
-  $("onboarding-agent-custom-command").classList.toggle("hidden", !custom);
+  $("onboarding-custom-agent-fields").hidden = !custom;
+  $("onboarding-custom-agent-fields").classList.toggle("hidden", !custom);
 }
 
 function setOnboardingAgentStatus(message, ok = null) {
@@ -1536,16 +1552,19 @@ async function completeOnboarding(options = {}) {
   if (!state.config) await loadConfig();
   const preset = $("onboarding-agent-preset").value;
   const defaultSessionName = $("onboarding-default-session-name").value.trim() || DEFAULT_SESSION_NAME;
+  const customName = $("onboarding-agent-custom-name").value.trim();
   const customCommand = $("onboarding-agent-custom-command").value.trim();
-  if (!preset || (preset === "custom" && !customCommand)) {
-    setOnboardingAgentStatus("请选择 Codex、Claude Code，或填写自定义 Agent 启动命令。", false);
+  if (preset === "custom" && (!customName || !customCommand)) {
+    setOnboardingAgentStatus("请填写自定义 Agent 名称和启动命令。", false);
     return;
   }
   const command = agentCommandForPreset(preset, customCommand);
+  const agentName = preset === "custom" ? customName : ({ codex: "Codex", claude: "Claude Code" }[preset] || "");
   state.config = {
     ...state.config,
     lark_default_session_name: defaultSessionName,
     agent_kind: preset,
+    agent_name: agentName,
     agent_command: command,
     onboarding_completed: true,
   };
@@ -2295,13 +2314,30 @@ $("config-open").onclick = async () => {
 
 $("settings-password-save").onclick = async () => {
   const status = $("settings-password-status");
+  const newPassword = $("settings-new-password").value;
+  const confirmPassword = $("settings-confirm-password").value;
+  if (newPassword.length < 8) {
+    status.textContent = "新密码至少需要 8 个字符。";
+    status.className = "agent-preset-status fail";
+    $("settings-new-password").focus();
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    status.textContent = "两次输入的新密码不一致。";
+    status.className = "agent-preset-status fail";
+    $("settings-confirm-password").focus();
+    return;
+  }
   try {
     await api("/api/settings/security/password", { method: "POST", body: JSON.stringify({
       current_password: $("settings-current-password").value,
-      new_password: $("settings-new-password").value,
+      new_password: newPassword,
+      confirm_password: confirmPassword,
     }) });
     $("settings-current-password").value = "";
     $("settings-new-password").value = "";
+    $("settings-confirm-password").value = "";
+    renderSettingsPasswordMatch();
     await loadSecurityStatus();
     renderSecurityStatus();
     status.textContent = "密码已更新，其他设置登录已失效。";
@@ -2311,6 +2347,23 @@ $("settings-password-save").onclick = async () => {
     status.className = "agent-preset-status fail";
   }
 };
+
+function renderSettingsPasswordMatch() {
+  const hint = $("settings-password-match");
+  const password = $("settings-new-password").value;
+  const confirmation = $("settings-confirm-password").value;
+  hint.className = "password-match-hint";
+  if (!confirmation) {
+    hint.textContent = "";
+    return;
+  }
+  const matches = password === confirmation;
+  hint.textContent = matches ? "两次输入一致。" : "两次输入的新密码不一致。";
+  hint.classList.add(matches ? "ok" : "fail");
+}
+
+$("settings-new-password").oninput = renderSettingsPasswordMatch;
+$("settings-confirm-password").oninput = renderSettingsPasswordMatch;
 
 $("config-cancel").onclick = () => {
   stopLarkRegistrationPolling();
@@ -2354,13 +2407,14 @@ $("lark-copy-permission-json").onclick = () => copyText(larkGroupMessagePermissi
 $("cfg-agent-preset").onchange = () => {
   renderAgentPresetControls();
   setAgentPresetStatus("");
-  if ($("cfg-agent-preset").value === "custom" && !$("cfg-agent-custom-command").value.trim()) {
-    $("cfg-agent-custom-command").focus();
+  if ($("cfg-agent-preset").value === "custom" && !$("cfg-agent-custom-name").value.trim()) {
+    $("cfg-agent-custom-name").focus();
     return;
   }
   ensureDefaultAgentPreset();
 };
 
+$("cfg-agent-custom-name").oninput = ensureDefaultAgentPreset;
 $("cfg-agent-custom-command").onchange = ensureDefaultAgentPreset;
 
 $("preset-save").onclick = saveNamePresetFromForm;
@@ -2403,7 +2457,13 @@ document.querySelectorAll(".config-tab").forEach((tab) => {
 $("onboarding-agent-preset").onchange = () => {
   renderOnboardingAgentControls();
   setOnboardingAgentStatus("");
+  if ($("onboarding-agent-preset").value === "custom" && !$("onboarding-agent-custom-name").value.trim()) {
+    $("onboarding-agent-custom-name").focus();
+  }
 };
+
+$("onboarding-agent-custom-name").oninput = () => setOnboardingAgentStatus("");
+$("onboarding-agent-custom-command").oninput = () => setOnboardingAgentStatus("");
 
 $("onboarding-config").onclick = async () => {
   try {

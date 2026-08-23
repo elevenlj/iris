@@ -45,6 +45,7 @@ type Session struct {
 }
 
 type AgentConfig struct {
+	Name    string `json:"name"`
 	Kind    string `json:"kind"`
 	Command string `json:"command"`
 }

@@ -39,9 +39,14 @@ func detectAvailableAgentOptions(configured AgentConfig, finder agentExecutableF
 		options = append(options, AgentOption{ID: "claude", Label: "Claude Code", Kind: "claude", Command: ClaudeAgentCommand})
 	}
 	configured.Kind = strings.ToLower(strings.TrimSpace(configured.Kind))
+	configured.Name = strings.TrimSpace(configured.Name)
 	configured.Command = strings.TrimSpace(configured.Command)
 	if configured.Kind == "custom" && configured.Command != "" {
-		options = append(options, AgentOption{ID: "custom", Label: "自定义 Agent", Kind: "custom", Command: configured.Command})
+		label := configured.Name
+		if label == "" {
+			label = "自定义 Agent"
+		}
+		options = append(options, AgentOption{ID: "custom", Label: label, Kind: "custom", Command: configured.Command})
 	}
 	return options
 }

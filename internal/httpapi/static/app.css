@@ -842,6 +842,120 @@ dialog::backdrop {
   color: var(--danger);
 }
 
+.agent-preset {
+  max-width: 760px;
+  margin-bottom: 0;
+  padding: 20px;
+  gap: 16px;
+  background: rgba(255, 253, 248, 0.72);
+}
+
+.agent-preset-heading {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.agent-preset-controls {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+.agent-field {
+  display: grid;
+  gap: 7px;
+  font-weight: 650;
+}
+
+.agent-field > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.custom-agent-fields {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.42fr) minmax(240px, 1fr);
+  gap: 12px;
+}
+
+.onboarding-agent-controls {
+  grid-template-columns: 1fr;
+}
+
+.security-password-card {
+  width: min(100%, 760px);
+  margin-top: 18px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 253, 248, 0.72);
+  display: grid;
+  gap: 16px;
+}
+
+.security-password-heading {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.security-password-heading p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.security-password-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.security-password-fields label {
+  display: grid;
+  gap: 7px;
+  font-weight: 650;
+}
+
+.security-current-password {
+  grid-column: 1 / -1;
+}
+
+.password-format-hint,
+.password-match-hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.password-match-hint {
+  min-height: 18px;
+  margin-top: -10px;
+}
+
+.password-match-hint.ok {
+  color: var(--ok);
+}
+
+.password-match-hint.fail {
+  color: var(--danger);
+}
+
+.security-password-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.security-password-actions button {
+  color: white;
+  border-color: transparent;
+  background: var(--accent);
+  font-weight: 700;
+}
+
+.security-password-actions button:hover {
+  background: var(--accent-dark);
+}
+
 .security-warning {
   margin-bottom: 14px;
   padding: 12px 14px;
@@ -1395,9 +1509,36 @@ dialog::backdrop {
     grid-template-columns: 1fr;
   }
 
+  .config-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .config-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .config-tab {
+    flex: 0 0 auto;
+    padding-inline: 12px;
+  }
+
+  .config-dialog .dialog-actions {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .config-dialog .dialog-actions button {
+    width: 100%;
+  }
+
   .lark-register,
   .lark-register-panel,
   .agent-preset-controls,
+  .custom-agent-fields,
+  .security-password-fields,
   .drop-rule-row,
   .name-preset-form,
   .start-preset-form,
@@ -1405,6 +1546,10 @@ dialog::backdrop {
   .preset-command-display-row,
   .preset-item {
     grid-template-columns: 1fr;
+  }
+
+  .security-current-password {
+    grid-column: auto;
   }
 
   .workspace-option-row {
