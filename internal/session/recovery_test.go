@@ -90,6 +90,28 @@ func TestConfiguredCustomClaudeCommandKeepsClaudeRecoveryKind(t *testing.T) {
 	}
 }
 
+func TestConfiguredAidenCommandsUseUnderlyingCompletionKind(t *testing.T) {
+	tests := []struct {
+		command    string
+		wantKind   string
+		wantResume string
+	}{
+		{command: "aiden", wantKind: "aiden", wantResume: "aiden"},
+		{command: "aiden x codex --dangerously-bypass-approvals-and-sandbox", wantKind: "codex", wantResume: "aiden x codex resume --last"},
+	}
+	for _, test := range tests {
+		rt := &RuntimeSession{
+			manager: NewManager(nil, nil),
+			session: Session{ID: "sess-1", Name: "A", RecoveryKey: "rk", LastMode: SessionModeShell, LastCWD: "/tmp"},
+		}
+		rt.ConfigureAgentForRecovery(AgentConfig{Kind: "custom", Command: test.command})
+		s := rt.Snapshot()
+		if s.LastAgentKind != test.wantKind || !strings.Contains(strings.Join(shellFields(s.LastAgentResumeCommand), " "), test.wantResume) {
+			t.Errorf("command %q recovery state = %#v", test.command, s)
+		}
+	}
+}
+
 func TestRecoveryBaseDirIsAbsolute(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -284,6 +306,15 @@ func TestPinClaudeResumeCommand(t *testing.T) {
 				t.Fatalf("pinClaudeResumeCommand(%q) = %q, %v", test.command, got, ok)
 			}
 		})
+	}
+}
+
+func TestPinCodexResumeCommandSupportsAidenWrapper(t *testing.T) {
+	sessionID := "019f5153-6e7f-7742-9f61-3ffe1530d61c"
+	got, ok := pinCodexResumeCommand("aiden x codex resume --last --dangerously-bypass-approvals-and-sandbox", sessionID)
+	args := shellFields(got)
+	if !ok || !containsAdjacentArgs(args, "resume", sessionID) || strings.Join(args[:3], " ") != "aiden x codex" || slicesContain(args, "--last") {
+		t.Fatalf("pinCodexResumeCommand() = %q, %v", got, ok)
 	}
 }
 

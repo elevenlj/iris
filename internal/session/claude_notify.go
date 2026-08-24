@@ -33,10 +33,30 @@ func EnsureAgentCompletionHooks(executable string) error {
 	if err := EnsureClaudeStopHook(executable); err != nil {
 		errs = append(errs, fmt.Errorf("Claude Stop hook: %w", err))
 	}
+	if err := EnsureAidenStopHook(executable); err != nil {
+		errs = append(errs, fmt.Errorf("Aiden Stop hook: %w", err))
+	}
 	if err := EnsureAgentContextSkills(); err != nil {
 		errs = append(errs, fmt.Errorf("Agent Feishu context skills: %w", err))
 	}
 	return errors.Join(errs...)
+}
+
+// EnsureAidenStopHook adds the same completion callback to native Aiden,
+// whose Stop-hook payload is compatible with Claude Code's payload.
+func EnsureAidenStopHook(executable string) error {
+	home := strings.TrimSpace(userHomeDir())
+	if home == "" || home == "." {
+		return errors.New("cannot resolve default Aiden config directory")
+	}
+	executable = strings.TrimSpace(executable)
+	if executable == "" {
+		return errors.New("cannot resolve Iris executable")
+	}
+	if absolute, err := filepath.Abs(executable); err == nil {
+		executable = absolute
+	}
+	return ensureClaudeStopHookConfig(filepath.Join(home, ".aiden", "settings.json"), executable)
 }
 
 // EnsureClaudeStopHook adds one Iris-managed Stop hook while preserving all
@@ -186,8 +206,8 @@ func numericJSONValue(value any) int {
 	}
 }
 
-// RunClaudeStopHook reads Claude Code's official Stop-hook JSON from stdin
-// and forwards the final assistant response to the authenticated Iris session.
+// RunClaudeStopHook reads the Claude-compatible Stop-hook JSON used by Claude
+// Code and Aiden, then forwards the final response to the Iris session.
 func RunClaudeStopHook(reader io.Reader) error {
 	if reader == nil {
 		return errors.New("missing Claude Stop hook input")

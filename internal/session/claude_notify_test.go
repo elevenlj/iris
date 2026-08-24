@@ -14,6 +14,7 @@ import (
 func TestEnsureClaudeStopHookPreservesSettingsAndIsIdempotent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	claudeDir := filepath.Join(home, ".claude")
 	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -95,6 +96,21 @@ func TestEnsureClaudeStopHookUsesCustomConfigDir(t *testing.T) {
 	}
 }
 
+func TestEnsureAidenStopHookInstallsCompatibleStopHook(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := EnsureAidenStopHook("/opt/iris"); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(home, ".aiden", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), claudeStopModeFlag) {
+		t.Fatalf("managed Aiden Stop hook missing: %s", content)
+	}
+}
+
 func TestRunClaudeStopHookPostsOfficialPayload(t *testing.T) {
 	payload := `{"session_id":"019f5153-6e7f-7742-9f61-3ffe1530d61c","hook_event_name":"Stop","last_assistant_message":"Claude 本轮最终回复","stop_hook_active":false}`
 	called := false
@@ -154,6 +170,27 @@ func TestCompleteAgentTurnSupportsClaudeAndPinsResume(t *testing.T) {
 	resumeArgs := shellFields(got.LastAgentResumeCommand)
 	if !containsAdjacentArgs(resumeArgs, "--resume", claudeSessionID) || slicesContain(resumeArgs, "--continue") {
 		t.Fatalf("Claude resume command = %q", got.LastAgentResumeCommand)
+	}
+}
+
+func TestCompleteAgentTurnSupportsNativeAiden(t *testing.T) {
+	manager := NewManager(nil, nil)
+	rt := &RuntimeSession{
+		manager: manager,
+		session: Session{
+			ID:                     "sess-aiden",
+			Status:                 StatusRunning,
+			Live:                   true,
+			RecoveryKey:            "hook-token",
+			LastMode:               SessionModeAgent,
+			LastAgentKind:          "aiden",
+			LastAgentResumeCommand: "aiden",
+		},
+	}
+	manager.sessions[rt.session.ID] = rt
+	got, accepted, err := manager.CompleteAgentTurn(context.Background(), rt.session.ID, "hook-token", "aiden-session", "完成")
+	if err != nil || !accepted || got.Status != StatusWaiting || !rt.agentTurnHookVerified {
+		t.Fatalf("Aiden completion accepted=%v err=%v state=%#v", accepted, err, got)
 	}
 }
 

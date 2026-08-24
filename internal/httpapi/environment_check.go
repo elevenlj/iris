@@ -223,9 +223,11 @@ func checkAgentCompletionHook(cfg RuntimeConfig) *EnvironmentCheckStep {
 	case "codex":
 		path = filepath.Join(home, ".codex", "config.toml")
 		marker = "--codex-notify"
-	case "claude":
+	case "claude", "aiden":
 		configDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
-		if configDir == "" {
+		if kind == "aiden" {
+			configDir = filepath.Join(home, ".aiden")
+		} else if configDir == "" {
 			configDir = filepath.Join(home, ".claude")
 		}
 		path = filepath.Join(configDir, "settings.json")
@@ -249,6 +251,18 @@ func environmentAgentKind(cfg RuntimeConfig) string {
 		return "codex"
 	case "claude", "claude-code":
 		return "claude"
+	case "aiden":
+		fields := strings.Fields(strings.ToLower(cfg.AgentCommand))
+		for index := range fields {
+			if strings.TrimSuffix(filepath.Base(fields[index]), ".exe") != "aiden" {
+				continue
+			}
+			if index+2 < len(fields) && fields[index+1] == "x" && fields[index+2] == "codex" {
+				return "codex"
+			}
+			return "aiden"
+		}
+		return "aiden"
 	default:
 		return ""
 	}

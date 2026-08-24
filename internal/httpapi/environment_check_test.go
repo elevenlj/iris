@@ -96,3 +96,19 @@ func TestFirstEnvironmentCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestEnvironmentAgentKindRecognizesAidenModes(t *testing.T) {
+	tests := []struct {
+		command string
+		want    string
+	}{
+		{command: "aiden", want: "aiden"},
+		{command: "aiden x codex --dangerously-bypass-approvals-and-sandbox", want: "codex"},
+		{command: "/usr/local/bin/aiden x codex", want: "codex"},
+	}
+	for _, test := range tests {
+		if got := environmentAgentKind(RuntimeConfig{AgentKind: "custom", AgentCommand: test.command}); got != test.want {
+			t.Errorf("environmentAgentKind(%q) = %q, want %q", test.command, got, test.want)
+		}
+	}
+}

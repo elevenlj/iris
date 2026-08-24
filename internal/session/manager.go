@@ -3313,7 +3313,7 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSes
 		return s, false, nil
 	}
 	agentKind := strings.TrimSpace(rt.session.LastAgentKind)
-	if strings.TrimSpace(rt.session.LastMode) != SessionModeAgent || (agentKind != "codex" && agentKind != "claude") {
+	if strings.TrimSpace(rt.session.LastMode) != SessionModeAgent || (agentKind != "codex" && agentKind != "claude" && agentKind != "aiden") {
 		s := rt.session
 		rt.mu.Unlock()
 		return s, false, nil

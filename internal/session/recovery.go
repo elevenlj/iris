@@ -355,7 +355,12 @@ func agentLaunchInfo(argv []string) (agentInfo, bool) {
 		return codexAgentInfo(argv[0], args)
 	case "claude", "claude-code":
 		return claudeAgentInfo(argv[0], args)
-	case "gemini", "opencode", "aiden":
+	case "aiden":
+		if len(args) >= 2 && args[0] == "x" && args[1] == "codex" {
+			return codexAgentInfoWithPrefix([]string{argv[0], "x", "codex"}, args[2:])
+		}
+		return genericAgentInfo(cmd, argv[0], args)
+	case "gemini", "opencode":
 		return genericAgentInfo(cmd, argv[0], args)
 	default:
 		return agentInfo{}, false
@@ -363,6 +368,10 @@ func agentLaunchInfo(argv []string) (agentInfo, bool) {
 }
 
 func codexAgentInfo(command string, args []string) (agentInfo, bool) {
+	return codexAgentInfoWithPrefix([]string{command}, args)
+}
+
+func codexAgentInfoWithPrefix(command []string, args []string) (agentInfo, bool) {
 	if hasAnyArg(args, "--version", "-V", "--help", "-h") {
 		return agentInfo{}, false
 	}
@@ -371,10 +380,10 @@ func codexAgentInfo(command string, args []string) (agentInfo, bool) {
 	case "exec", "review", "login", "logout", "mcp", "plugin", "mcp-server", "app-server", "remote-control", "app", "completion", "update", "sandbox", "debug", "apply", "cloud", "exec-server", "features", "help":
 		return agentInfo{}, false
 	case "resume", "fork":
-		return agentInfo{Kind: "codex", ResumeCommand: joinShellCommand(append([]string{command}, args...))}, true
+		return agentInfo{Kind: "codex", ResumeCommand: joinShellCommand(append(append([]string(nil), command...), args...))}, true
 	default:
 		flags := preserveCLIFlags(args)
-		resume := append([]string{command, "resume", "--last"}, flags...)
+		resume := append(append(append([]string(nil), command...), "resume", "--last"), flags...)
 		return agentInfo{Kind: "codex", ResumeCommand: joinShellCommand(resume)}, true
 	}
 }
@@ -676,7 +685,11 @@ func pinCodexResumeCommand(command, threadID string) (string, bool) {
 	for envEnd < len(argv) && isShellEnvAssignment(argv[envEnd]) {
 		envEnd++
 	}
-	if envEnd >= len(argv) || shellCommandBase(argv[envEnd]) != "codex" {
+	if envEnd >= len(argv) {
+		return command, false
+	}
+	base := shellCommandBase(argv[envEnd])
+	if base != "codex" && (base != "aiden" || envEnd+2 >= len(argv) || argv[envEnd+1] != "x" || argv[envEnd+2] != "codex") {
 		return command, false
 	}
 	replaced := false
