@@ -221,13 +221,13 @@ func TestLarkNotificationCardPlacesDeveloperSelectorsInAdaptiveRow(t *testing.T)
 			continue
 		}
 		columns, ok := element["columns"].([]any)
-		if !ok || len(columns) != 2 {
+		if !ok || len(columns) != 4 {
 			continue
 		}
 		encoded, _ := json.Marshal(element)
 		if strings.Contains(string(encoded), `"name":"iris_agent"`) && strings.Contains(string(encoded), `"name":"iris_workspace"`) {
 			found = true
-			if strings.Count(string(encoded), `"width":"auto"`) < 4 {
+			if strings.Count(string(encoded), `"tag":"column_set"`) != 1 || strings.Count(string(encoded), `"width":"auto"`) < 4 {
 				t.Fatalf("selector row should use content-sized columns and controls: %s", encoded)
 			}
 		}

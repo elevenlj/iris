@@ -295,15 +295,13 @@ func larkWorkspaceSelectElement(sessionID string, workspaces []WorkspaceOption, 
 }
 
 func larkDeveloperSelectorRow(selectors ...map[string]any) map[string]any {
-	columns := make([]map[string]any, 0, len(selectors))
+	columns := make([]map[string]any, 0, len(selectors)*2)
 	for _, selector := range selectors {
 		if selector == nil {
 			continue
 		}
-		columns = append(columns, map[string]any{
-			"tag": "column", "width": "auto", "vertical_align": "center",
-			"elements": []map[string]any{selector},
-		})
+		selectorColumns, _ := selector["columns"].([]map[string]any)
+		columns = append(columns, selectorColumns...)
 	}
 	if len(columns) == 0 {
 		return nil
