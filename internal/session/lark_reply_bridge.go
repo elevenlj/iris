@@ -1411,12 +1411,15 @@ func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionI
 	if structuredInputNumericOnlyRE.MatchString(strings.TrimSpace(parts[0])) {
 		return false
 	}
+	starting := rt.discardingStartupNotifications()
 	rt.SetNotificationMentionOpenID(mentionOpenID)
-	if !rt.discardingStartupNotifications() {
+	if !starting {
 		rt.MarkStructuredInputActivity(parts[0])
 	}
 	b.enqueuePipeline(sessionID, parts, mentionOpenID)
-	rt.NotifyInputRunning()
+	if !starting {
+		rt.NotifyInputRunning()
+	}
 	log.Printf("lark reply bridge queued input session=%s parts=%d reason=runtime_running", sessionID, len(parts))
 	return true
 }

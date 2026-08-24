@@ -1687,11 +1687,15 @@ func TestLarkReplyBridgeQueuesFollowupWhileRuntimeRunningDuringStartupWindow(t *
 
 func TestLarkReplyBridgeQueuedRecoveryInputKeepsStartupTUISuppressed(t *testing.T) {
 	launcher := &recordingLauncher{}
-	manager := NewManager(nil, launcher)
+	notifier := &recordingNotifier{messageID: "task-card"}
+	manager := NewManager(nil, launcher, WithNotifier(notifier))
 	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
 	sess, err := manager.CreateSession(context.Background(), "Recovered")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, ok, err := manager.UpdateNotifyOnWaiting(context.Background(), sess.ID, true); err != nil || !ok {
+		t.Fatalf("enable notifications ok=%v err=%v", ok, err)
 	}
 	rt, _ := manager.GetRuntime(sess.ID)
 	rt.mu.Lock()
@@ -1709,6 +1713,18 @@ func TestLarkReplyBridgeQueuedRecoveryInputKeepsStartupTUISuppressed(t *testing.
 	}
 	if strings.Contains(launcher.terminals[0].writes(), "queued question") {
 		t.Fatal("queued input must not be written before startup settles")
+	}
+	if notes := notifier.notes(); len(notes) != 0 {
+		t.Fatalf("queued startup input must not create a premature running card: %#v", notes)
+	}
+
+	bridge.OnNotificationSent(sess.ID)
+	if !lastSubmittedWrite(launcher.terminals[0].writeParts(), "queued question") {
+		t.Fatal("queued input should be submitted after startup settles")
+	}
+	notes := waitForNotifierNotes(t, notifier, 1)
+	if len(notes) != 1 || !notes[0].Running || notes[0].Content != RunningNotificationPlaceholder {
+		t.Fatalf("submitted task should create exactly one running card: %#v", notes)
 	}
 }
 

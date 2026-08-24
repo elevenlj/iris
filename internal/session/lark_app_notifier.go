@@ -539,19 +539,22 @@ func larkTerminalPlainTextWithMerge(content string, allowWrappedLineMerge bool) 
 
 func larkShortcutActionElements(sessionID string, updateNo int, mentionModeEnabled bool, developerModeEnabled bool) []map[string]any {
 	columns := []map[string]any{larkRefreshButtonColumn(sessionID, updateNo), larkDeveloperModeButtonColumn(sessionID, updateNo, developerModeEnabled)}
+	elements := []map[string]any{}
 	if developerModeEnabled {
 		columns = append(columns,
 			larkMentionModeButtonColumn(sessionID, updateNo, mentionModeEnabled),
 			larkRestartAgentButtonColumn(sessionID),
+			larkDeleteSessionButtonColumn(sessionID),
+		)
+		elements = append(elements, larkFlowShortcutActionElement(columns...))
+		elements = append(elements, larkFlowShortcutActionElement(
 			larkShortcutButtonColumn("Ctrl-C", "default", sessionID, "ctrl_c"),
 			larkShortcutButtonColumn("Esc", "default", sessionID, "esc"),
 			larkShortcutButtonColumn("Enter", "default", sessionID, "enter"),
-			larkDeleteSessionButtonColumn(sessionID),
-		)
+		))
+		return elements
 	}
-	return []map[string]any{
-		larkFlowShortcutActionElement(columns...),
-	}
+	return []map[string]any{larkFlowShortcutActionElement(columns...)}
 }
 
 func larkRestartAgentButtonColumn(sessionID string) map[string]any {

@@ -2278,10 +2278,10 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 	}
 	if !(strings.Index(content, `"content":"刷新"`) < strings.Index(content, `"content":"Ctrl-C"`) &&
 		strings.Index(content, `"content":"艾特模式：关"`) < strings.Index(content, `"content":"Ctrl-C"`) &&
+		strings.Index(content, `"content":"删除会话"`) < strings.Index(content, `"content":"Ctrl-C"`) &&
 		strings.Index(content, `"content":"Ctrl-C"`) < strings.Index(content, `"content":"Esc"`) &&
 		strings.Index(content, `"content":"Esc"`) < strings.Index(content, `"content":"Enter"`) &&
-		strings.Index(content, `"content":"Enter"`) < strings.Index(content, `"content":"删除会话"`) &&
-		strings.Index(content, `"content":"删除会话"`) < strings.Index(content, `"iris_action":"custom_shortcut"`)) {
+		strings.Index(content, `"content":"Enter"`) < strings.Index(content, `"iris_action":"custom_shortcut"`)) {
 		t.Fatalf("refresh button should be first and custom shortcuts below system shortcuts, got %s", content)
 	}
 	if !strings.Contains(content, "状态") || !strings.Contains(content, `"iris_action":"custom_shortcut"`) || !strings.Contains(content, "git status") {
@@ -2300,12 +2300,20 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 	if len(systemRows) != 1 {
 		t.Fatalf("system shortcut buttons should use one flowing row, got %#v", systemRows)
 	}
-	wantSystemColumns := []int{8}
+	wantSystemColumns := []int{5}
 	for i, row := range systemRows {
 		columns, _ := row["columns"].([]any)
 		if row["flex_mode"] != "flow" || len(columns) != wantSystemColumns[i] {
 			t.Fatalf("system shortcut row %d should use responsive columns, got %#v", i, row)
 		}
+	}
+	shortcutRows := findLarkActionRows(card, "shortcut")
+	if len(shortcutRows) != 1 {
+		t.Fatalf("terminal shortcuts should use their own row, got %#v", shortcutRows)
+	}
+	shortcutColumns, _ := shortcutRows[0]["columns"].([]any)
+	if shortcutRows[0]["flex_mode"] != "flow" || len(shortcutColumns) != 3 {
+		t.Fatalf("terminal shortcut row should contain Ctrl-C, Esc and Enter, got %#v", shortcutRows[0])
 	}
 	if strings.Count(content, `"type":"primary"`) != 1 || strings.Count(content, `"type":"default"`) < 7 {
 		t.Fatalf("only refresh should be primary while secondary actions stay neutral, got %s", content)
