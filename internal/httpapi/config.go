@@ -38,6 +38,7 @@ type RuntimeConfig struct {
 	AgentName                       string                                `json:"agent_name"`
 	AgentKind                       string                                `json:"agent_kind"`
 	AgentCommand                    string                                `json:"agent_command"`
+	DefaultWorkspaceDir             string                                `json:"default_workspace_dir"`
 	WorkspaceOptions                []session.WorkspaceOption             `json:"workspace_options"`
 }
 

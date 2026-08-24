@@ -83,6 +83,7 @@ type Config struct {
 	AgentName                       string                                `json:"agent_name"`
 	AgentKind                       string                                `json:"agent_kind"`
 	AgentCommand                    string                                `json:"agent_command"`
+	DefaultWorkspaceDir             string                                `json:"default_workspace_dir"`
 	WorkspaceOptions                []session.WorkspaceOption             `json:"workspace_options"`
 	SettingsPasswordHash            string                                `json:"settings_password_hash,omitempty"`
 	SettingsPasswordSkipped         bool                                  `json:"settings_password_skipped,omitempty"`
@@ -222,6 +223,7 @@ func run() error {
 			_ = os.RemoveAll(filepath.Join(uploadsDir, sessionID))
 		}),
 	)
+	mgr.SetDefaultWorkspaceDir(cfg.DefaultWorkspaceDir)
 	mgr.SetAgentConfig(session.AgentConfig{Name: cfg.AgentName, Kind: cfg.AgentKind, Command: cfg.AgentCommand}, cfg.WorkspaceOptions)
 	mgr.SetAvailableAgentOptions(session.DetectAvailableAgentOptions(session.AgentConfig{Name: cfg.AgentName, Kind: cfg.AgentKind, Command: cfg.AgentCommand}))
 
@@ -419,6 +421,12 @@ func loadConfig(path string) Config {
 	}
 	if cfg.SettingsAuthVersion <= 0 {
 		cfg.SettingsAuthVersion = 1
+	}
+	if dir, err := validateDefaultWorkspaceDir(cfg.DefaultWorkspaceDir); err != nil {
+		log.Printf("invalid default_workspace_dir: %v", err)
+		cfg.DefaultWorkspaceDir = ""
+	} else {
+		cfg.DefaultWorkspaceDir = dir
 	}
 	cfg.LarkNotifyDropLineRules = mergeRequiredLarkNotifyDropLineRules(cfg.LarkNotifyDropLineRules)
 	cfg.LarkSessionChatPrefix = normalizeLarkSessionChatPrefix(cfg.LarkSessionChatPrefix)
@@ -699,6 +707,10 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 	if err != nil {
 		return httpapi.RuntimeConfig{}, err
 	}
+	defaultWorkspaceDir, err := validateDefaultWorkspaceDir(req.DefaultWorkspaceDir)
+	if err != nil {
+		return httpapi.RuntimeConfig{}, err
+	}
 	cfg.LarkAppID = req.LarkAppID
 	cfg.LarkAppSecret = req.LarkAppSecret
 	cfg.LarkNotifyReceiveID = req.LarkNotifyReceiveID
@@ -723,6 +735,7 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 	cfg.AgentName = req.AgentName
 	cfg.AgentKind = req.AgentKind
 	cfg.AgentCommand = req.AgentCommand
+	cfg.DefaultWorkspaceDir = defaultWorkspaceDir
 	cfg.WorkspaceOptions = workspaces
 	reconnectLark := oldCfg.LarkAppID != cfg.LarkAppID || oldCfg.LarkAppSecret != cfg.LarkAppSecret
 	if err := applyRuntimeConfig(cfg, s.manager, s.bridge, reconnectLark); err != nil {
@@ -763,11 +776,27 @@ func validateWorkspaceOptions(options []session.WorkspaceOption) ([]session.Work
 	return out, nil
 }
 
+func validateDefaultWorkspaceDir(dir string) (string, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(dir) {
+		return "", errors.New("默认目录必须使用绝对路径")
+	}
+	dir = filepath.Clean(dir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("默认目录无法创建：%s", dir)
+	}
+	return dir, nil
+}
+
 func applyRuntimeConfig(cfg Config, manager *session.Manager, bridge *session.LarkReplyBridge, reconnectLark bool) error {
 	manager.SetWaitingTransitionDelays(time.Duration(cfg.FastWaitingTransitionMs)*time.Millisecond, time.Duration(cfg.ConservativeWaitingTransitionMs)*time.Millisecond)
 	manager.SetAutoRefreshInterval(time.Duration(cfg.LarkAutoRefreshIntervalMs) * time.Millisecond)
 	manager.SetHeadlessSnapshotTimeout(time.Duration(cfg.HeadlessSnapshotTimeoutMs) * time.Millisecond)
 	manager.SetPreStartCommand(cfg.SessionPreStartCommand)
+	manager.SetDefaultWorkspaceDir(cfg.DefaultWorkspaceDir)
 	manager.SetAgentConfig(session.AgentConfig{Name: cfg.AgentName, Kind: cfg.AgentKind, Command: cfg.AgentCommand}, cfg.WorkspaceOptions)
 	manager.SetAvailableAgentOptions(session.DetectAvailableAgentOptions(session.AgentConfig{Name: cfg.AgentName, Kind: cfg.AgentKind, Command: cfg.AgentCommand}))
 	notifier := session.NewLarkAppNotifier(cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkNotifyReceiveID, cfg.LarkMentionEnabled)
@@ -830,6 +859,7 @@ func runtimeConfigFromConfig(cfg Config) httpapi.RuntimeConfig {
 		AgentName:                       cfg.AgentName,
 		AgentKind:                       cfg.AgentKind,
 		AgentCommand:                    cfg.AgentCommand,
+		DefaultWorkspaceDir:             cfg.DefaultWorkspaceDir,
 		WorkspaceOptions:                append([]session.WorkspaceOption(nil), cfg.WorkspaceOptions...),
 	}
 }

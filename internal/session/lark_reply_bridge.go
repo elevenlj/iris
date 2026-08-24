@@ -1835,7 +1835,7 @@ func (b *LarkReplyBridge) runDefaultWorkspacePreset(sess Session) error {
 	if !ok {
 		return fmt.Errorf("runtime not found")
 	}
-	workspaceDir := defaultSessionWorkspaceShellPath(sess.Name)
+	workspaceDir := b.manager.defaultSessionWorkspaceShellPath()
 	preset := SessionStartPreset{Commands: []string{
 		"mkdir -p " + workspaceDir,
 		"cd " + workspaceDir,

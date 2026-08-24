@@ -364,6 +364,7 @@ func TestAppConfigServiceUpdatesRuntimeConfigAndPersists(t *testing.T) {
 	}
 	mgr := session.NewManager(nil, nil)
 	svc := &appConfigService{path: path, cfg: &cfg, manager: mgr}
+	defaultWorkspaceDir := filepath.Join(t.TempDir(), "nested", "workspace")
 
 	got, err := svc.UpdateRuntimeConfig(httpapi.RuntimeConfig{
 		LarkAppID:                       "app",
@@ -390,6 +391,7 @@ func TestAppConfigServiceUpdatesRuntimeConfigAndPersists(t *testing.T) {
 		SessionNamePresets:     map[string]session.SessionStartPreset{"会话 A": {Commands: []string{"pwd"}}},
 		AgentKind:              "codex",
 		AgentCommand:           "codex --dangerously-bypass-approvals-and-sandbox",
+		DefaultWorkspaceDir:    defaultWorkspaceDir,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -432,6 +434,12 @@ func TestAppConfigServiceUpdatesRuntimeConfigAndPersists(t *testing.T) {
 	}
 	if saved.SessionStartPresets["1"].Commands[0] != "codex" || saved.SessionNamePresets["会话 A"].Commands[0] != "pwd" {
 		t.Fatalf("presets were not persisted: start=%#v name=%#v", saved.SessionStartPresets, saved.SessionNamePresets)
+	}
+	if saved.DefaultWorkspaceDir != defaultWorkspaceDir || got.DefaultWorkspaceDir != defaultWorkspaceDir {
+		t.Fatalf("default workspace was not persisted: saved=%q got=%q", saved.DefaultWorkspaceDir, got.DefaultWorkspaceDir)
+	}
+	if info, statErr := os.Stat(defaultWorkspaceDir); statErr != nil || !info.IsDir() {
+		t.Fatalf("default workspace was not created: %v", statErr)
 	}
 }
 

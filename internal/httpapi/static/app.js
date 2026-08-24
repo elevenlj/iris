@@ -968,6 +968,7 @@ function renderConfig() {
   $("cfg-lark-custom-shortcuts").value = JSON.stringify(cfg.lark_custom_shortcuts || [], null, 2);
   $("cfg-session-name-presets").value = JSON.stringify(cfg.session_name_presets || {}, null, 2);
   $("cfg-session-start-presets").value = JSON.stringify(cfg.session_start_presets || {}, null, 2);
+  $("cfg-default-workspace-dir").value = cfg.default_workspace_dir || "";
   $("cfg-workspace-options").value = JSON.stringify(cfg.workspace_options || [], null, 2);
   renderDropRules();
   renderCustomShortcuts();
@@ -1119,6 +1120,7 @@ function readConfigForm() {
     agent_kind: agentKind,
     agent_name: agentName,
     agent_command: agentCommand,
+    default_workspace_dir: $("cfg-default-workspace-dir").value.trim(),
     workspace_options: workspaces,
   };
 }

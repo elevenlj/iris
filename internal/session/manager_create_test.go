@@ -24,10 +24,10 @@ func TestCreateSessionRunsPreStartCommand(t *testing.T) {
 }
 
 func TestCreateSessionAlwaysStartsConfiguredAgentInDefaultWorkspace(t *testing.T) {
-	workspaceRoot := t.TempDir()
-	t.Setenv("IRIS_WORKSPACE_DIR", workspaceRoot)
+	workspace := filepath.Join(t.TempDir(), "my workspace")
 	launcher := &recordingLauncher{}
 	manager := NewManager(nil, launcher)
+	manager.SetDefaultWorkspaceDir(workspace)
 	customWorkspace := t.TempDir()
 	manager.SetAgentConfig(AgentConfig{Kind: "codex", Command: "codex --dangerously-bypass-approvals-and-sandbox"}, []WorkspaceOption{
 		{Label: "主项目", Value: customWorkspace, Default: true},
@@ -38,7 +38,6 @@ func TestCreateSessionAlwaysStartsConfiguredAgentInDefaultWorkspace(t *testing.T
 		t.Fatal(err)
 	}
 	writes := launcher.terminals[0].writes()
-	workspace := filepath.Join(workspaceRoot, defaultWorkspaceDirName)
 	if !strings.Contains(writes, "mkdir -p "+shellQuote(workspace)+"\r") || !strings.Contains(writes, "cd "+shellQuote(workspace)+"\r") || !strings.Contains(writes, "codex --dangerously-bypass-approvals-and-sandbox\r") {
 		t.Fatalf("configured workspace and Agent were not started: %q", writes)
 	}

@@ -1290,6 +1290,7 @@ dialog::backdrop {
 }
 
 .config-grid input,
+.config-wide input,
 .config-wide textarea {
   color: var(--ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

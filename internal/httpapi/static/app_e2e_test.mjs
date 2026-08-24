@@ -264,6 +264,7 @@ const ids = [
   "cfg-agent-custom-name",
   "cfg-agent-custom-command",
   "cfg-custom-agent-fields",
+  "cfg-default-workspace-dir",
   "cfg-workspace-options",
   "workspace-option-list",
   "workspace-option-add",

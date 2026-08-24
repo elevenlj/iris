@@ -89,6 +89,7 @@ type Manager struct {
 	onNotificationSent       func(string)
 	onSessionEnded           func(string)
 	defaultAgent             AgentConfig
+	defaultWorkspaceDir      string
 	agentOptions             []AgentOption
 	workspaceOptions         []WorkspaceOption
 	larkConversationProvider LarkConversationProvider
@@ -100,6 +101,12 @@ func (m *Manager) SetAgentConfig(agent AgentConfig, workspaces []WorkspaceOption
 	defer m.mu.Unlock()
 	m.defaultAgent = normalizeAgentConfig(agent)
 	m.workspaceOptions = normalizeWorkspaceOptions(workspaces)
+}
+
+func (m *Manager) SetDefaultWorkspaceDir(dir string) {
+	m.mu.Lock()
+	m.defaultWorkspaceDir = strings.TrimSpace(dir)
+	m.mu.Unlock()
 }
 
 func (m *Manager) AgentConfig() (AgentConfig, []WorkspaceOption) {
@@ -410,7 +417,7 @@ func (m *Manager) CreateSession(ctx context.Context, name string) (Session, erro
 	if name == "" {
 		return Session{}, errors.New("session name is required")
 	}
-	workspaceDir := defaultSessionWorkspaceDir(name)
+	workspaceDir := m.defaultSessionWorkspaceDir()
 	now := time.Now().UTC()
 	id, err := m.nextSessionID(ctx)
 	if err != nil {
@@ -459,7 +466,7 @@ func (m *Manager) CreateSession(ctx context.Context, name string) (Session, erro
 	rt.runRecoveryEnvironmentSetup()
 	rt.runPreStartCommand()
 	if agent := m.defaultAgentSnapshot(); agent.Command != "" {
-		workspaceShellPath := defaultSessionWorkspaceShellPath(name)
+		workspaceShellPath := m.defaultSessionWorkspaceShellPath()
 		rt.SuppressStartupNotifications()
 		_, _ = rt.terminal.Write([]byte("mkdir -p " + workspaceShellPath + "\r"))
 		rt.RecordShellCommandForRecovery("cd " + shellQuote(workspaceDir))
@@ -518,19 +525,39 @@ func irisWorkspaceRootDir() string {
 	return filepath.Join(".", "Iris_Workspace")
 }
 
-func defaultSessionWorkspaceDir(_ string) string {
+func builtInDefaultWorkspaceDir() string {
 	return filepath.Join(irisWorkspaceRootDir(), defaultWorkspaceDirName)
 }
 
-func defaultSessionWorkspaceShellPath(_ string) string {
+func builtInDefaultWorkspaceShellPath() string {
 	if strings.TrimSpace(os.Getenv("IRIS_WORKSPACE_DIR")) != "" {
 		return shellQuote(filepath.Join(irisWorkspaceRootDir(), defaultWorkspaceDirName))
 	}
 	return "${HOME}/" + shellQuote("Iris_Workspace/"+defaultWorkspaceDirName)
 }
 
-func (m *Manager) WorkspaceOptionsForSession(sess Session) []WorkspaceOption {
-	defaultDir := defaultSessionWorkspaceDir(sess.Name)
+func (m *Manager) defaultSessionWorkspaceDir() string {
+	m.mu.RLock()
+	dir := strings.TrimSpace(m.defaultWorkspaceDir)
+	m.mu.RUnlock()
+	if dir != "" {
+		return dir
+	}
+	return builtInDefaultWorkspaceDir()
+}
+
+func (m *Manager) defaultSessionWorkspaceShellPath() string {
+	m.mu.RLock()
+	dir := strings.TrimSpace(m.defaultWorkspaceDir)
+	m.mu.RUnlock()
+	if dir != "" {
+		return shellQuote(dir)
+	}
+	return builtInDefaultWorkspaceShellPath()
+}
+
+func (m *Manager) WorkspaceOptionsForSession(_ Session) []WorkspaceOption {
+	defaultDir := m.defaultSessionWorkspaceDir()
 	out := []WorkspaceOption{{Label: "默认目录", Value: defaultDir, Default: true}}
 	_, configured := m.AgentConfig()
 	for _, workspace := range configured {
