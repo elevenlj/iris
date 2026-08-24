@@ -2176,18 +2176,30 @@ func TestLarkReplyBridgeCardToggleMentionModePatchesCard(t *testing.T) {
 
 func TestLarkReplyBridgeDeveloperModeToggleIsOwnerOnly(t *testing.T) {
 	launcher := &recordingLauncher{}
-	manager := NewManager(nil, launcher)
+	notifier := &recordingNotifier{messageID: "bot-card"}
+	manager := NewManager(nil, launcher, WithNotifier(notifier))
 	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
 	bridge.SetDeveloperOpenID("ou-owner")
 	sess, err := manager.CreateSession(context.Background(), "Iris")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, ok, err := manager.UpdateNotifyOnWaiting(context.Background(), sess.ID, true); err != nil || !ok {
+		t.Fatalf("enable notifications ok=%v err=%v", ok, err)
+	}
+	rt, _ := manager.GetRuntime(sess.ID)
+	rt.mu.Lock()
+	rt.lastNotifiedMessageID = "bot-card"
+	rt.lastNotifiedContent = "来自 notify 的最终回复"
+	rt.session.Status = StatusWaiting
+	rt.mu.Unlock()
+	rt.SetVisibleSnapshot("Codex TUI fallback content")
 	action := &callback.CallBackAction{Value: map[string]interface{}{
 		"iris_action": "toggle_developer_mode",
 		"session_id":  sess.ID,
+		"update_no":   1,
 	}}
-	resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-guest")
+	resp, err := bridge.handleCardAction(context.Background(), action, "bot-card", "", "ou-guest")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2197,7 +2209,7 @@ func TestLarkReplyBridgeDeveloperModeToggleIsOwnerOnly(t *testing.T) {
 	if manager.sessions[sess.ID].Snapshot().DeveloperModeEnabled {
 		t.Fatal("guest must not enable developer mode")
 	}
-	resp, err = bridge.handleCardAction(context.Background(), action, "", "", "ou-owner")
+	resp, err = bridge.handleCardAction(context.Background(), action, "bot-card", "", "ou-owner")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2206,6 +2218,10 @@ func TestLarkReplyBridgeDeveloperModeToggleIsOwnerOnly(t *testing.T) {
 	}
 	if !manager.sessions[sess.ID].Snapshot().DeveloperModeEnabled {
 		t.Fatal("owner should enable developer mode")
+	}
+	notes := waitForNotifierNotes(t, notifier, 1)
+	if len(notes) != 1 || notes[0].Content != "来自 notify 的最终回复" || !notes[0].DeveloperModeEnabled {
+		t.Fatalf("developer toggle should preserve notify content while patching controls, got %#v", notes)
 	}
 }
 

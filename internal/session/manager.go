@@ -2751,18 +2751,25 @@ func (rt *RuntimeSession) NotifyInputRunningOnMessage(messageID string) {
 }
 
 func (rt *RuntimeSession) RefreshNotificationMessage(messageID string, preserveUpdateNo ...int) error {
-	if err := rt.refreshNotificationMessage(messageID, true, preserveUpdateNo...); err != nil {
+	if err := rt.refreshNotificationMessage(messageID, true, false, preserveUpdateNo...); err != nil {
 		return err
 	}
 	rt.scheduleAutoRefreshOnce(messageID)
 	return nil
 }
 
-func (rt *RuntimeSession) AutoRefreshNotificationMessage(messageID string, preserveUpdateNo ...int) error {
-	return rt.refreshNotificationMessage(messageID, false, preserveUpdateNo...)
+func (rt *RuntimeSession) RefreshNotificationControls(messageID string, preserveUpdateNo ...int) error {
+	rt.mu.Lock()
+	preserveContent := strings.TrimSpace(rt.lastNotifiedContent) != ""
+	rt.mu.Unlock()
+	return rt.refreshNotificationMessage(messageID, true, preserveContent, preserveUpdateNo...)
 }
 
-func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressUpdateTip bool, preserveUpdateNo ...int) error {
+func (rt *RuntimeSession) AutoRefreshNotificationMessage(messageID string, preserveUpdateNo ...int) error {
+	return rt.refreshNotificationMessage(messageID, false, false, preserveUpdateNo...)
+}
+
+func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressUpdateTip, preserveContent bool, preserveUpdateNo ...int) error {
 	if rt == nil || rt.manager == nil || rt.manager.notifier == nil || !rt.manager.notifier.Available() {
 		return errors.New("lark notifier is not configured")
 	}
@@ -2781,11 +2788,22 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 		return errors.New("notification message is frozen")
 	}
 	rt.mu.Unlock()
-	content, fresh := rt.currentRoundContentWithFreshSnapshot(800 * time.Millisecond)
+	content := ""
+	fresh := true
+	if preserveContent {
+		rt.mu.Lock()
+		content = rt.lastNotifiedContent
+		rt.mu.Unlock()
+		if strings.TrimSpace(content) == "" {
+			return errors.New("notification content is not available")
+		}
+	} else {
+		content, fresh = rt.currentRoundContentWithFreshSnapshot(800 * time.Millisecond)
+	}
 	rt.mu.Lock()
 	runningAtRefresh := rt.session.Status == StatusRunning
 	rt.mu.Unlock()
-	if suppressUpdateTip || runningAtRefresh {
+	if !preserveContent && (suppressUpdateTip || runningAtRefresh) {
 		rt.mu.Lock()
 		manualContent := pickManualRefreshNotifyContentWithWindowAnchorPolicy(rt.visibleSnapshot, rt.previousNotifySnapshotLocked(), rt.roundReply, rt.lastInputText, rt.notificationWindowInputText, rt.notifyTextAnchorPolicyLocked())
 		manualContent = rt.cleanLarkNotifyContentForAgentLocked(manualContent)
@@ -2799,7 +2817,7 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 	stale := rt.visibleSnapshotStaleForCurrentRoundLocked()
 	hasVisibleSnapshot := strings.TrimSpace(rt.visibleSnapshot) != ""
 	rt.mu.Unlock()
-	if !fresh && stale {
+	if !preserveContent && !fresh && stale {
 		if !hasVisibleSnapshot {
 			return errors.New("current visible snapshot is stale and empty")
 		}
@@ -2808,9 +2826,10 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 		// turn that into a blank card: force the bounded visible-tail fallback.
 		content = ""
 	}
-	hasSnapshotContent := content != ""
+	hasSnapshotContent := !preserveContent && content != ""
+	hasContent := content != ""
 	usedTailFallback := false
-	if !hasSnapshotContent {
+	if !hasContent {
 		rt.mu.Lock()
 		fallbackContent := pickLarkNotifyFallbackTailContent(rt.visibleSnapshot)
 		if suppressUpdateTip {
@@ -2821,11 +2840,12 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 		rt.mu.Unlock()
 		if fallbackContent != "" {
 			content = fallbackContent
+			hasContent = true
 			hasSnapshotContent = true
 			usedTailFallback = true
 		}
 	}
-	if !hasSnapshotContent {
+	if !hasContent {
 		content = EmptyNotificationPlaceholder
 	}
 	rt.mu.Lock()
@@ -2874,7 +2894,9 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 	rt.notificationRunning = n.Running
 	rt.mu.Unlock()
 	source := "auto_refresh"
-	if suppressUpdateTip {
+	if preserveContent {
+		source = "controls_refresh"
+	} else if suppressUpdateTip {
 		source = "manual_refresh"
 	}
 	log.Printf("lark card write queued source=%s action=patch session=%s message=%s running=%v placeholder=%v update_no=%d content_len=%d", source, n.SessionID, n.MessageID, n.Running, n.Content == RunningNotificationPlaceholder, n.UpdateNo, len(n.Content))

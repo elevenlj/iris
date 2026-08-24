@@ -434,7 +434,7 @@ func (b *LarkReplyBridge) handleCardToggleDeveloperMode(ctx context.Context, val
 	}
 	updateNo, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value["update_no"])))
 	go func() {
-		if err := rt.RefreshNotificationMessage(openMessageID, updateNo); err != nil {
+		if err := rt.RefreshNotificationControls(openMessageID, updateNo); err != nil {
 			log.Printf("lark card developer mode patch failed session=%s: %v", sessionID, err)
 		}
 	}()
@@ -607,7 +607,7 @@ func (b *LarkReplyBridge) handleCardToggleAutoRefresh(ctx context.Context, value
 		log.Printf("lark card auto refresh enabled session=%s message=%s", sessionID, openMessageID)
 	} else {
 		go func() {
-			if err := rt.RefreshNotificationMessage(openMessageID, updateNo); err != nil {
+			if err := rt.RefreshNotificationControls(openMessageID, updateNo); err != nil {
 				log.Printf("lark card auto refresh toggle patch failed session=%s message=%s enabled=%v: %v", sessionID, openMessageID, enabled, err)
 				return
 			}
@@ -634,7 +634,7 @@ func (b *LarkReplyBridge) handleCardToggleAutoSummary(ctx context.Context, value
 		return nil, err
 	}
 	go func() {
-		if err := rt.RefreshNotificationMessage(openMessageID, updateNo); err != nil {
+		if err := rt.RefreshNotificationControls(openMessageID, updateNo); err != nil {
 			log.Printf("lark card auto summary toggle patch failed session=%s message=%s enabled=%v: %v", sessionID, openMessageID, enabled, err)
 			return
 		}
@@ -663,7 +663,7 @@ func (b *LarkReplyBridge) handleCardToggleMentionMode(ctx context.Context, value
 	}
 	updateNo, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value["update_no"])))
 	go func() {
-		if err := rt.RefreshNotificationMessage(openMessageID, updateNo); err != nil {
+		if err := rt.RefreshNotificationControls(openMessageID, updateNo); err != nil {
 			log.Printf("lark card mention mode toggle patch failed session=%s message=%s enabled=%v: %v", sessionID, openMessageID, updated.LarkMentionModeEnabled, err)
 			return
 		}
