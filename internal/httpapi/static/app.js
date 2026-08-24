@@ -1451,40 +1451,6 @@ function renderEnvironmentCheckResult(result) {
   }
 }
 
-function copyTextWithSelection(text) {
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.readOnly = true;
-  textarea.style.cssText = "position:fixed;left:-9999px;top:0";
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  textarea.setSelectionRange?.(0, text.length);
-  let copied = false;
-  try {
-    copied = document.execCommand("copy");
-  } catch {
-  } finally {
-    textarea.remove();
-  }
-  return copied;
-}
-
-async function copyText(text, okMessage) {
-  if (copyTextWithSelection(text)) {
-    $("lark-permission-status").textContent = okMessage;
-    return;
-  }
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      $("lark-permission-status").textContent = okMessage;
-      return;
-    }
-  } catch {}
-  $("lark-permission-status").textContent = `复制失败，请手动复制：${text}`;
-}
-
 function agentPresetCommand() {
   return agentCommandForPreset($("cfg-agent-preset").value, $("cfg-agent-custom-command").value);
 }
@@ -2419,10 +2385,6 @@ $("environment-check-start").onclick = () => checkEnvironment().catch((err) => {
 });
 
 $("cfg-lark-app-id").oninput = renderLarkPermissionGuide;
-
-$("lark-copy-contact-scope").onclick = () => copyText("contact:user.base:readonly", "已复制 Scope：contact:user.base:readonly");
-
-$("lark-copy-group-scope").onclick = () => copyText("im:message.group_msg", "已复制 Scope：im:message.group_msg");
 
 $("cfg-agent-preset").onchange = () => {
   renderAgentPresetControls();

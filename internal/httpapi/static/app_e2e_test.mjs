@@ -236,8 +236,6 @@ const ids = [
   "lark-register-link",
   "lark-register-qr",
   "lark-app-console-link",
-  "lark-copy-contact-scope",
-  "lark-copy-group-scope",
   "lark-permission-status",
   "lark-test-start",
   "lark-test-result",
@@ -411,11 +409,6 @@ const context = {
       if (selector === ".config-panel") return configPanels;
       return [];
     },
-    execCommand(command) {
-      if (command !== "copy") return false;
-      context.copiedText = this.body.children.at(-1)?.value || "";
-      return true;
-    },
     addEventListener() {},
   },
   window: {
@@ -430,16 +423,7 @@ const context = {
       },
     },
   },
-  navigator: {
-    clipboard: {
-      async writeText(text) {
-        context.clipboardWriteCount++;
-        context.copiedText = text;
-      },
-    },
-  },
-  copiedText: "",
-  clipboardWriteCount: 0,
+  navigator: {},
   fetch: async (path, options = {}) => {
     fetchCalls.push({ path, options });
     if (path === "/api/sessions" && !options.method) {
@@ -1178,18 +1162,6 @@ assert.equal(elements["lark-register-code"].textContent, "USER-1");
 assert.equal(elements["lark-register-link"].href, "https://open.feishu.cn/page/cli?user_code=USER-1");
 assert.ok(elements["lark-register-qr"].src.includes("/api/lark-app-registration/qr?text="));
 assert.equal(elements["lark-app-console-link"].href, "https://open.feishu.cn/app/app-id/auth");
-elements["lark-copy-contact-scope"].onclick();
-await Promise.resolve();
-assert.equal(context.copiedText, "contact:user.base:readonly");
-assert.equal(context.clipboardWriteCount, 0, "HTTP-compatible selection copy should run synchronously before Clipboard API");
-elements["lark-copy-group-scope"].onclick();
-await Promise.resolve();
-assert.equal(context.copiedText, "im:message.group_msg");
-context.navigator.clipboard.writeText = async () => { throw new Error("clipboard denied"); };
-await elements["lark-copy-contact-scope"].onclick();
-assert.equal(context.copiedText, "contact:user.base:readonly");
-assert.equal(elements["lark-permission-status"].textContent, "已复制 Scope：contact:user.base:readonly");
-
 elements["composer-input"].value = "line one";
 let prevented = false;
 elements["composer-input"].onkeydown({
