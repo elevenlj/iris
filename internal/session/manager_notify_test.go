@@ -2267,7 +2267,7 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 	if strings.Contains(content, "自动刷新") || strings.Contains(content, "停自动") || strings.Contains(content, `"iris_action":"toggle_auto_refresh"`) {
 		t.Fatalf("card content should not include auto refresh button, got %s", content)
 	}
-	if !strings.Contains(content, "艾特模式") || !strings.Contains(content, `"iris_action":"toggle_mention_mode"`) {
+	if !strings.Contains(content, `"content":"艾特模式：关"`) || !strings.Contains(content, `"iris_action":"toggle_mention_mode"`) {
 		t.Fatalf("card content should include mention mode button, got %s", content)
 	}
 	if !strings.Contains(content, "删除会话") || !strings.Contains(content, `"iris_action":"delete_session"`) || !strings.Contains(content, `"type":"danger"`) {
@@ -2277,7 +2277,7 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 		t.Fatalf("delete button should include confirmation dialog, got %s", content)
 	}
 	if !(strings.Index(content, `"content":"刷新"`) < strings.Index(content, `"content":"Ctrl-C"`) &&
-		strings.Index(content, `"content":"艾特模式"`) < strings.Index(content, `"content":"Ctrl-C"`) &&
+		strings.Index(content, `"content":"艾特模式：关"`) < strings.Index(content, `"content":"Ctrl-C"`) &&
 		strings.Index(content, `"content":"Ctrl-C"`) < strings.Index(content, `"content":"Esc"`) &&
 		strings.Index(content, `"content":"Esc"`) < strings.Index(content, `"content":"Enter"`) &&
 		strings.Index(content, `"content":"Enter"`) < strings.Index(content, `"content":"删除会话"`) &&
@@ -2287,7 +2287,7 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 	if !strings.Contains(content, "状态") || !strings.Contains(content, `"iris_action":"custom_shortcut"`) || !strings.Contains(content, "git status") {
 		t.Fatalf("card content should include custom shortcut row, got %s", content)
 	}
-	for _, label := range []string{"刷新", "关闭开发者模式", "艾特模式", "删除会话", "Ctrl-C", "Esc", "Enter"} {
+	for _, label := range []string{"刷新", "开发者模式：开", "艾特模式：关", "删除会话", "Ctrl-C", "Esc", "Enter"} {
 		if !strings.Contains(content, `"content":"`+label+`"`) {
 			t.Fatalf("card content should include system shortcut %s, got %s", label, content)
 		}
@@ -2350,8 +2350,8 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(mentionModeEnabled, "停艾特") || strings.Contains(mentionModeEnabled, "艾特模式：开") {
-		t.Fatalf("enabled mention mode card should show the close button without duplicate status text, got %s", mentionModeEnabled)
+	if !strings.Contains(mentionModeEnabled, `"content":"艾特模式：开"`) || strings.Contains(mentionModeEnabled, "停艾特") {
+		t.Fatalf("enabled mention mode card should show its current state, got %s", mentionModeEnabled)
 	}
 }
 

@@ -568,9 +568,9 @@ func larkRestartAgentButtonColumn(sessionID string) map[string]any {
 }
 
 func larkDeveloperModeButtonColumn(sessionID string, updateNo int, enabled bool) map[string]any {
-	label := "开启开发者模式"
+	label := "开发者模式：关"
 	if enabled {
-		label = "关闭开发者模式"
+		label = "开发者模式：开"
 	}
 	return map[string]any{
 		"tag": "column", "width": "auto", "vertical_spacing": "8px",
@@ -603,9 +603,9 @@ func larkShortcutActionElementWithFlexMode(flexMode string, columns ...map[strin
 }
 
 func larkMentionModeButtonColumn(sessionID string, updateNo int, enabled bool) map[string]any {
-	label := "艾特模式"
+	label := "艾特模式：关"
 	if enabled {
-		label = "停艾特"
+		label = "艾特模式：开"
 	}
 	return map[string]any{
 		"tag":              "column",

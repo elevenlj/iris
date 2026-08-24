@@ -142,7 +142,7 @@ func TestLarkNotificationCardDeveloperModeControlsTechnicalActions(t *testing.T)
 			t.Fatalf("non-developer card should hide %q: %s", absent, content)
 		}
 	}
-	for _, present := range []string{"刷新", "开启开发者模式"} {
+	for _, present := range []string{"刷新", "开发者模式：关"} {
 		if !strings.Contains(content, present) {
 			t.Fatalf("non-developer card should show %q: %s", present, content)
 		}
@@ -152,7 +152,7 @@ func TestLarkNotificationCardDeveloperModeControlsTechnicalActions(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, present := range []string{"目录：/tmp/project", "Ctrl-C", "重启 Agent", "删除会话", "艾特模式", "workspace_select", "关闭开发者模式"} {
+	for _, present := range []string{"目录：/tmp/project", "Ctrl-C", "重启 Agent", "删除会话", "艾特模式：关", "workspace_select", "开发者模式：开"} {
 		if !strings.Contains(content, present) {
 			t.Fatalf("developer card should show %q: %s", present, content)
 		}
