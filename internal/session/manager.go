@@ -3596,6 +3596,8 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 	if requestFreshSnapshot && !hasHookAssistantMessage {
 		rt.RequestFreshSnapshot(defaultNotifySnapshotTimeout)
 	}
+	rt.notificationPatchMu.Lock()
+	defer rt.notificationPatchMu.Unlock()
 	rt.mu.Lock()
 	if rt.session.Status != StatusWaiting || !rt.session.Live || !rt.session.NotifyOnWaiting || rt.notifyVersion != version {
 		rt.mu.Unlock()
@@ -3688,13 +3690,11 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 	}
 	log.Printf("lark card write queued source=waiting action=%s session=%s message=%s running=%v placeholder=%v update_no=%d version=%d hash=%s snapshot_source=%s content_len=%d content_lines=%d preview=%q",
 		action, n.SessionID, n.MessageID, n.Running, n.Content == RunningNotificationPlaceholder, n.UpdateNo, version, shortNotifyHash(contentHash), n.SnapshotSource, len(n.Content), countLogLines(n.Content), previewLogText(n.Content, 160))
-	rt.notificationPatchMu.Lock()
 	rt.mu.Lock()
 	if rt.session.Status != StatusWaiting || !rt.session.Live || !rt.session.NotifyOnWaiting || rt.notifyVersion != version {
 		currentVersion := rt.notifyVersion
 		currentStatus := rt.session.Status
 		rt.mu.Unlock()
-		rt.notificationPatchMu.Unlock()
 		log.Printf("waiting notification send skipped session=%s version=%d current_version=%d status=%s reason=stale_before_send",
 			n.SessionID, version, currentVersion, currentStatus)
 		return
@@ -3702,7 +3702,6 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 	if rt.notificationPatchVersion != n.NotificationVersion {
 		currentPatchVersion := rt.notificationPatchVersion
 		rt.mu.Unlock()
-		rt.notificationPatchMu.Unlock()
 		log.Printf("waiting notification send skipped session=%s version=%d current_patch_version=%d note_patch_version=%d reason=stale_patch",
 			n.SessionID, version, currentPatchVersion, n.NotificationVersion)
 		return
@@ -3710,7 +3709,6 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 	claimHookCompletionTip := rt.applyHookCompletionTipPolicyLocked(&n)
 	rt.mu.Unlock()
 	result, err := rt.notifyWaitingWithRetry(n)
-	rt.notificationPatchMu.Unlock()
 	if err != nil {
 		log.Printf("waiting notification send failed session=%s version=%d hash=%s: %v", n.SessionID, version, shortNotifyHash(contentHash), err)
 		return

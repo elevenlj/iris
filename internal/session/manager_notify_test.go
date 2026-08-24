@@ -876,6 +876,47 @@ func TestNotifyPreservesCreatedMessageIDWhenSameRoundAdvancesDuringSend(t *testi
 	}
 }
 
+func TestConcurrentSameRoundNotificationsCreateThenUpdateOneCard(t *testing.T) {
+	notifier := newBlockingRefreshNotifier("msg-1")
+	m := NewManager(nil, nil, WithNotifier(notifier), WithWaitingTransitionDelays(time.Hour, time.Hour), WithNotificationUpdateCoalesce(0))
+	rt := &RuntimeSession{
+		manager: m,
+		session: Session{ID: "sess-1", Name: "A", Status: StatusWaiting, Live: true, NotifyOnWaiting: true},
+	}
+	setTrustedLegacyRoundFixture(rt, ">", "hello\r", "> hello\npartial")
+	rt.mu.Lock()
+	rt.session.Status = StatusWaiting
+	firstVersion := rt.notifyVersion
+	rt.mu.Unlock()
+
+	firstDone := make(chan struct{})
+	go func() {
+		rt.notifyIfStillWaiting(firstVersion)
+		close(firstDone)
+	}()
+	<-notifier.notifyStarted
+
+	rt.HandleOutput([]byte("more output"))
+	rt.SetVisibleSnapshot("> hello\npartial\ncomplete")
+	rt.mu.Lock()
+	rt.session.Status = StatusWaiting
+	secondVersion := rt.notifyVersion
+	rt.mu.Unlock()
+	secondDone := make(chan struct{})
+	go func() {
+		rt.notifyIfStillWaiting(secondVersion)
+		close(secondDone)
+	}()
+
+	close(notifier.releaseNotify)
+	<-firstDone
+	<-secondDone
+	notes := notifier.notes()
+	if len(notes) != 2 || notes[0].MessageID != "" || notes[1].MessageID != "msg-1" {
+		t.Fatalf("same-round notifications should create then update one card, got %#v", notes)
+	}
+}
+
 func TestNotifyIfStillWaitingIncrementsExistingUpdateNumber(t *testing.T) {
 	notifier := &recordingNotifier{messageID: "msg-1"}
 	m := NewManager(nil, nil, WithNotifier(notifier), WithNotificationUpdateCoalesce(0))
