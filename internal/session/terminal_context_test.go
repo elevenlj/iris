@@ -177,7 +177,10 @@ func TestLarkWorkspaceSelectorUsesCompactLayout(t *testing.T) {
 		t.Fatalf("workspace column should use compact width: %#v", columns[0])
 	}
 	selectorElements := columns[0]["elements"].([]map[string]any)
-	selector := selectorElements[0]
+	if len(selectorElements) != 2 || selectorElements[0]["text"].(map[string]any)["content"] != "工作目录" {
+		t.Fatalf("workspace label and selector = %#v", selectorElements)
+	}
+	selector := selectorElements[1]
 	if selector["tag"] != "select_static" || selector["width"] != nil || selector["initial_option"] != "/tmp/iris" {
 		t.Fatalf("workspace selector = %#v", selector)
 	}
@@ -220,7 +223,8 @@ func TestLarkNotificationCardPlacesDeveloperSelectorsInAdaptiveRow(t *testing.T)
 		encoded, _ := json.Marshal(element)
 		if strings.Contains(string(encoded), `"name":"iris_agent"`) && strings.Contains(string(encoded), `"name":"iris_workspace"`) {
 			found = true
-			if strings.Count(string(encoded), `"tag":"column_set"`) != 1 || strings.Count(string(encoded), `"width":"auto"`) != 2 {
+			if strings.Count(string(encoded), `"tag":"column_set"`) != 1 || strings.Count(string(encoded), `"width":"auto"`) != 2 ||
+				!strings.Contains(string(encoded), `"content":"Agent"`) || !strings.Contains(string(encoded), `"content":"工作目录"`) {
 				t.Fatalf("selector row should use content-sized columns and controls: %s", encoded)
 			}
 		}

@@ -2357,7 +2357,7 @@ func TestLarkNotificationCardContentListsOnlyAvailableAgentOptions(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{`"content":"Codex"`, `"content":"Claude Code"`, `"iris_action":"agent_select"`, `"initial_option":"claude"`} {
+	for _, expected := range []string{`"content":"Agent"`, `"content":"Codex"`, `"content":"Claude Code"`, `"iris_action":"agent_select"`, `"initial_option":"claude"`} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("Agent selector missing %s: %s", expected, content)
 		}

@@ -227,8 +227,11 @@ func larkAgentSelectElement(sessionID string, agents []AgentOption, currentKind 
 		"flex_mode":        "none",
 		"horizontal_align": "left",
 		"columns": []map[string]any{{
-			"tag": "column", "width": "auto", "vertical_align": "center",
-			"elements": []map[string]any{selector},
+			"tag": "column", "width": "auto", "vertical_align": "center", "vertical_spacing": "4px",
+			"elements": []map[string]any{
+				{"tag": "div", "text": map[string]any{"tag": "plain_text", "content": "Agent"}},
+				selector,
+			},
 		}},
 	}
 }
@@ -268,8 +271,11 @@ func larkWorkspaceSelectElement(sessionID string, workspaces []WorkspaceOption, 
 		"flex_mode":        "none",
 		"horizontal_align": "left",
 		"columns": []map[string]any{{
-			"tag": "column", "width": "auto", "vertical_align": "center",
-			"elements": []map[string]any{selector},
+			"tag": "column", "width": "auto", "vertical_align": "center", "vertical_spacing": "4px",
+			"elements": []map[string]any{
+				{"tag": "div", "text": map[string]any{"tag": "plain_text", "content": "工作目录"}},
+				selector,
+			},
 		}},
 	}
 }
