@@ -53,6 +53,7 @@ const urls = [
 ];
 const vendorDir = path.resolve(__dirname, "..", "vendor");
 const outPath = path.join(vendorDir, targetPlatform === "windows" ? "iris.exe" : "iris");
+const bundledPath = path.join(vendorDir, assetName);
 
 async function download(downloadUrl, redirects = 0) {
   if (redirects > 5) {
@@ -151,6 +152,21 @@ async function installAgentHooks() {
 }
 
 async function main() {
+  if (fs.existsSync(bundledPath)) {
+    console.log(`[iris] installing bundled ${assetName}`);
+    await fs.promises.copyFile(bundledPath, outPath);
+    if (targetPlatform !== "windows") {
+      await fs.promises.chmod(outPath, 0o755);
+    }
+    try {
+      await installAgentHooks();
+      console.log("[iris] installed Agent hooks and Feishu context skills");
+    } catch (hookErr) {
+      console.warn(`[iris] Agent integration setup deferred until first launch: ${hookErr.message}`);
+    }
+    return;
+  }
+
   const failures = [];
 
   for (const url of urls) {

@@ -72,6 +72,10 @@ jobs:
         working-directory: npm
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: npm/vendor
+          merge-multiple: true
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -80,6 +84,7 @@ jobs:
         run: |
           PACKAGE_VERSION="v$(node -p "require('./package.json').version")"
           test "$PACKAGE_VERSION" = "${GITHUB_REF_NAME}"
+          test "$(find vendor -type f | wc -l)" -eq 5
       - run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
