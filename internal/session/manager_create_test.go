@@ -24,6 +24,7 @@ func TestCreateSessionRunsPreStartCommand(t *testing.T) {
 }
 
 func TestCreateSessionAlwaysStartsConfiguredAgentInDefaultWorkspace(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	workspaceRoot := t.TempDir()
 	t.Setenv("IRIS_WORKSPACE_DIR", workspaceRoot)
 	launcher := &recordingLauncher{}

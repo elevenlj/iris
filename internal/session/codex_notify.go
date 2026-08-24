@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,6 +24,8 @@ const (
 	codexNotifyForwardFlag                 = "--forward-base64"
 	legacyEasyTerminalCodexStopHookCommand = `if [ -z "${EASY_TERMINAL_HOOK_URL:-}" ] || [ -z "${EASY_TERMINAL_SESSION_ID:-}" ] || [ -z "${EASY_TERMINAL_HOOK_TOKEN:-}" ]; then exit 0; fi; /usr/bin/curl --silent --max-time 2 -o /dev/null -X POST "${EASY_TERMINAL_HOOK_URL}/api/sessions/${EASY_TERMINAL_SESSION_ID}/hook/turn-ended" -H "X-Easy-Terminal-Hook-Token: ${EASY_TERMINAL_HOOK_TOKEN}" -H 'Content-Type: application/json' --data-binary @- >/dev/null 2>&1 || true`
 )
+
+var codexConfigMu sync.Mutex
 
 // IsCodexNotifyInvocation reports whether the executable was launched by the
 // Codex notify command rather than as the Iris server.
@@ -34,6 +37,8 @@ func IsCodexNotifyInvocation(args []string) bool {
 // existing notification command as a downstream recipient, and removes only
 // the legacy Stop hook previously managed by Iris.
 func EnsureCodexNotify(executable string) error {
+	codexConfigMu.Lock()
+	defer codexConfigMu.Unlock()
 	home := defaultCodexHome()
 	if home == "" {
 		return errors.New("cannot resolve default Codex home")
@@ -49,6 +54,78 @@ func EnsureCodexNotify(executable string) error {
 		return err
 	}
 	return removeLegacyCodexStopHook(filepath.Join(home, "hooks.json"))
+}
+
+func ensureCodexProjectTrusted(projectDir string) error {
+	projectDir = strings.TrimSpace(projectDir)
+	if projectDir == "" {
+		return nil
+	}
+	abs, err := filepath.Abs(projectDir)
+	if err != nil {
+		return err
+	}
+	home := defaultCodexHome()
+	if home == "" {
+		return errors.New("cannot resolve default Codex home")
+	}
+	quoted, err := json.Marshal(filepath.Clean(abs))
+	if err != nil {
+		return err
+	}
+	header := []byte("[projects." + string(quoted) + "]")
+	trusted := []byte(`trust_level = "trusted"`)
+	untrusted := []byte(`trust_level = "untrusted"`)
+
+	codexConfigMu.Lock()
+	defer codexConfigMu.Unlock()
+	path := filepath.Join(home, "config.toml")
+	mode := os.FileMode(0o600)
+	content, err := os.ReadFile(path)
+	if err == nil {
+		if info, statErr := os.Stat(path); statErr == nil {
+			mode = info.Mode().Perm()
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	if start := bytes.Index(content, header); start >= 0 {
+		end := len(content)
+		if next := bytes.Index(content[start+len(header):], []byte("\n[")); next >= 0 {
+			end = start + len(header) + next
+		}
+		section := content[start:end]
+		if bytes.Contains(section, trusted) {
+			return nil
+		}
+		if offset := bytes.Index(section, untrusted); offset >= 0 {
+			valueStart := start + offset
+			updated := append([]byte(nil), content[:valueStart]...)
+			updated = append(updated, trusted...)
+			updated = append(updated, content[valueStart+len(untrusted):]...)
+			return writeFileAtomically(path, updated, mode)
+		}
+		insert := start + len(header)
+		updated := append([]byte(nil), content[:insert]...)
+		updated = append(updated, '\n')
+		updated = append(updated, trusted...)
+		updated = append(updated, content[insert:]...)
+		return writeFileAtomically(path, updated, mode)
+	}
+
+	updated := append([]byte(nil), content...)
+	if len(updated) > 0 && updated[len(updated)-1] != '\n' {
+		updated = append(updated, '\n')
+	}
+	if len(updated) > 0 {
+		updated = append(updated, '\n')
+	}
+	updated = append(updated, header...)
+	updated = append(updated, '\n')
+	updated = append(updated, trusted...)
+	updated = append(updated, '\n')
+	return writeFileAtomically(path, updated, mode)
 }
 
 func ensureCodexNotifyConfig(path, executable string) error {

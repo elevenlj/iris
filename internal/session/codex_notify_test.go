@@ -68,6 +68,32 @@ func TestEnsureCodexNotifyCreatesConfigAndUpdatesExecutable(t *testing.T) {
 	}
 }
 
+func TestEnsureCodexProjectTrustedIsIdempotent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("notify = [\"iris\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(home, "Iris Workspace", "测试")
+	if err := ensureCodexProjectTrusted(project); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureCodexProjectTrusted(project); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(content), "[projects.\""+project+"\"]") != 1 || !strings.Contains(string(content), `trust_level = "trusted"`) || !strings.Contains(string(content), `notify = ["iris"]`) {
+		t.Fatalf("unexpected config: %s", content)
+	}
+}
+
 func TestRunCodexNotifyPostsOfficialPayload(t *testing.T) {
 	payload := `{"type":"agent-turn-complete","thread-id":"thread-1","turn-id":"turn-2","last-assistant-message":"本轮最终回复"}`
 	called := false

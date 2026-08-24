@@ -458,6 +458,11 @@ func (m *Manager) CreateSession(ctx context.Context, name string) (Session, erro
 	rt.runRecoveryEnvironmentSetup()
 	rt.runPreStartCommand()
 	if agent := m.defaultAgentSnapshot(); agent.Command != "" {
+		if strings.EqualFold(agent.Kind, "codex") {
+			if err := ensureCodexProjectTrusted(workspaceDir); err != nil {
+				log.Printf("codex workspace trust skipped session=%s cwd=%q: %v", sess.ID, workspaceDir, err)
+			}
+		}
 		workspaceShellPath := defaultSessionWorkspaceShellPath(name)
 		rt.SuppressStartupNotifications()
 		_, _ = rt.terminal.Write([]byte("mkdir -p " + workspaceShellPath + "\r"))
@@ -822,6 +827,9 @@ func (m *Manager) SwitchWorkspace(ctx context.Context, id, path string) (Session
 	}
 	input := "/cd " + path
 	if strings.EqualFold(sess.LastAgentKind, "codex") {
+		if err := ensureCodexProjectTrusted(path); err != nil {
+			return Session{}, true, fmt.Errorf("无法写入 Codex 目录信任配置: %w", err)
+		}
 		if err := SubmitStructuredInputWithMention(rt, input, rt.NotificationMentionOpenID()); err != nil {
 			return Session{}, true, err
 		}
@@ -1399,6 +1407,14 @@ func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, comm
 		rt.mu.Unlock()
 		return errors.New("当前会话没有可用的 Agent 启动命令")
 	}
+	if strings.EqualFold(agentKind, "codex") {
+		if err := ensureCodexProjectTrusted(rt.Snapshot().LastCWD); err != nil {
+			rt.mu.Lock()
+			rt.agentRestartPending = false
+			rt.mu.Unlock()
+			return fmt.Errorf("无法写入 Codex 目录信任配置: %w", err)
+		}
+	}
 	rt.MarkAgentExitActivity()
 	go func() {
 		if err := terminateAgentForegroundProcess(terminal); err != nil {
@@ -1594,6 +1610,11 @@ func (rt *RuntimeSession) runRecoveryCommand() {
 	}
 	if strings.TrimSpace(sess.LastMode) != SessionModeAgent || strings.TrimSpace(sess.LastAgentResumeCommand) == "" {
 		return
+	}
+	if strings.EqualFold(sess.LastAgentKind, "codex") {
+		if err := ensureCodexProjectTrusted(sess.LastCWD); err != nil {
+			log.Printf("codex workspace trust skipped session=%s cwd=%q: %v", sess.ID, sess.LastCWD, err)
+		}
 	}
 	command := strings.TrimSpace(sess.LastAgentResumeCommand)
 	if strings.TrimSpace(sess.LastAgentKind) == "codex" && codexHomeIsLegacy(sess.LastAgentHome) {

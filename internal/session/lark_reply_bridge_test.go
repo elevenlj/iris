@@ -302,6 +302,7 @@ func TestLarkReplyBridgeBotAddedCreatesBoundMentionModeAgentSession(t *testing.T
 }
 
 func TestLarkReplyBridgeDirectContactCreatesAndReusesAssistantGroup(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	resetLarkRegistryForTest()
 	store := newMemoryStore()
 	launcher := &recordingLauncher{}
@@ -2147,6 +2148,7 @@ func TestLarkReplyBridgeDeveloperModeToggleIsOwnerOnly(t *testing.T) {
 }
 
 func TestLarkReplyBridgeWorkspaceSelectionRequiresDeveloperModeAndUsesConfiguredPath(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	launcher := &recordingLauncher{}
 	manager := NewManager(nil, launcher)
 	workspace := t.TempDir()
@@ -2232,6 +2234,7 @@ func TestLarkReplyBridgeRestartAgentRequiresDeveloperModeAndReusesStartCommand(t
 }
 
 func TestLarkReplyBridgeAgentSelectSwitchesToAvailableYoloCommand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	launcher := &recordingLauncher{}
 	manager := NewManager(nil, launcher)
 	manager.SetAgentConfig(AgentConfig{Kind: "codex", Command: CodexAgentCommand}, nil)
