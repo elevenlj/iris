@@ -9,6 +9,7 @@ class FakeElement {
     this.children = [];
     this.value = "";
     this.checked = false;
+    this.readOnly = false;
     this.textContent = "";
     this.className = "";
     this.title = "";
@@ -146,6 +147,10 @@ class FakeElement {
 
   select() {
     this.selected = true;
+  }
+
+  setSelectionRange(start, end) {
+    this.selectionRange = [start, end];
   }
 
   clear() {
@@ -428,11 +433,13 @@ const context = {
   navigator: {
     clipboard: {
       async writeText(text) {
+        context.clipboardWriteCount++;
         context.copiedText = text;
       },
     },
   },
   copiedText: "",
+  clipboardWriteCount: 0,
   fetch: async (path, options = {}) => {
     fetchCalls.push({ path, options });
     if (path === "/api/sessions" && !options.method) {
@@ -1174,6 +1181,7 @@ assert.equal(elements["lark-app-console-link"].href, "https://open.feishu.cn/app
 elements["lark-copy-contact-scope"].onclick();
 await Promise.resolve();
 assert.equal(context.copiedText, "contact:user.base:readonly");
+assert.equal(context.clipboardWriteCount, 0, "HTTP-compatible selection copy should run synchronously before Clipboard API");
 elements["lark-copy-group-scope"].onclick();
 await Promise.resolve();
 assert.equal(context.copiedText, "im:message.group_msg");

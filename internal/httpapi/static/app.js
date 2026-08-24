@@ -1451,19 +1451,15 @@ function renderEnvironmentCheckResult(result) {
   }
 }
 
-async function copyText(text, okMessage) {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      $("lark-permission-status").textContent = okMessage;
-      return;
-    }
-  } catch {}
+function copyTextWithSelection(text) {
   const textarea = document.createElement("textarea");
   textarea.value = text;
-  textarea.style.cssText = "position:fixed;opacity:0";
+  textarea.readOnly = true;
+  textarea.style.cssText = "position:fixed;left:-9999px;top:0";
   document.body.appendChild(textarea);
+  textarea.focus();
   textarea.select();
+  textarea.setSelectionRange?.(0, text.length);
   let copied = false;
   try {
     copied = document.execCommand("copy");
@@ -1471,7 +1467,22 @@ async function copyText(text, okMessage) {
   } finally {
     textarea.remove();
   }
-  $("lark-permission-status").textContent = copied ? okMessage : `复制失败，请手动复制：${text}`;
+  return copied;
+}
+
+async function copyText(text, okMessage) {
+  if (copyTextWithSelection(text)) {
+    $("lark-permission-status").textContent = okMessage;
+    return;
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      $("lark-permission-status").textContent = okMessage;
+      return;
+    }
+  } catch {}
+  $("lark-permission-status").textContent = `复制失败，请手动复制：${text}`;
 }
 
 function agentPresetCommand() {
