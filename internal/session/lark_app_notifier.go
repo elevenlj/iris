@@ -212,7 +212,7 @@ func larkAgentSelectElement(sessionID string, agents []AgentOption, currentKind 
 		}
 	}
 	selector := map[string]any{
-		"tag": "select_static", "name": "iris_agent", "width": "auto",
+		"tag": "select_static", "name": "iris_agent",
 		"placeholder": map[string]any{"tag": "plain_text", "content": "切换 Agent"},
 		"options":     options,
 		"behaviors": []map[string]any{{"type": "callback", "value": map[string]any{
@@ -263,7 +263,7 @@ func larkWorkspaceSelectElement(sessionID string, workspaces []WorkspaceOption, 
 		}
 	}
 	selector := map[string]any{
-		"tag": "select_static", "name": "iris_workspace", "width": "auto",
+		"tag": "select_static", "name": "iris_workspace",
 		"placeholder": map[string]any{"tag": "plain_text", "content": "切换工作目录"},
 		"options":     options,
 		"behaviors": []map[string]any{{"type": "callback", "value": map[string]any{

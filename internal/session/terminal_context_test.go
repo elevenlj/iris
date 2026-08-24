@@ -185,7 +185,7 @@ func TestLarkWorkspaceSelectorUsesCompactLabeledLayout(t *testing.T) {
 	}
 	selectorElements := columns[1]["elements"].([]map[string]any)
 	selector := selectorElements[0]
-	if selector["tag"] != "select_static" || selector["width"] != "auto" || selector["initial_option"] != "/tmp/iris" {
+	if selector["tag"] != "select_static" || selector["width"] != nil || selector["initial_option"] != "/tmp/iris" {
 		t.Fatalf("workspace selector = %#v", selector)
 	}
 }
@@ -227,7 +227,7 @@ func TestLarkNotificationCardPlacesDeveloperSelectorsInAdaptiveRow(t *testing.T)
 		encoded, _ := json.Marshal(element)
 		if strings.Contains(string(encoded), `"name":"iris_agent"`) && strings.Contains(string(encoded), `"name":"iris_workspace"`) {
 			found = true
-			if strings.Count(string(encoded), `"tag":"column_set"`) != 1 || strings.Count(string(encoded), `"width":"auto"`) < 4 {
+			if strings.Count(string(encoded), `"tag":"column_set"`) != 1 || strings.Count(string(encoded), `"width":"auto"`) != 4 {
 				t.Fatalf("selector row should use content-sized columns and controls: %s", encoded)
 			}
 		}
