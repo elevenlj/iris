@@ -1096,7 +1096,9 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 				}
 			}
 			b.enqueuePipeline(s.ID, parts[1:], routeCtx.SenderOpenID)
-			b.notifyInputRunning(s.ID)
+			if rt, found := b.manager.GetRuntime(s.ID); found && !rt.discardingStartupNotifications() {
+				rt.NotifyInputRunning()
+			}
 		}
 		return s.ID, err
 	}

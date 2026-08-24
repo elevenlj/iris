@@ -1591,6 +1591,26 @@ func TestLarkReplyBridgeFollowupCreatesRunningCard(t *testing.T) {
 	}
 }
 
+func TestLarkReplyBridgeStartWithConfiguredAgentDoesNotCreateTaskRunningCard(t *testing.T) {
+	resetLarkRegistryForTest()
+	launcher := &recordingLauncher{}
+	notifier := &recordingNotifier{messageID: "bot-running"}
+	manager := NewManager(nil, launcher, WithNotifier(notifier))
+	manager.SetAgentConfig(AgentConfig{Kind: "codex", Command: CodexAgentCommand}, nil)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+
+	if err := bridge.HandleP2MessageReceive(context.Background(), p2Message("m-start-agent", "", "", "text", `{"text":"开始 Agent会话"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if notes := notifier.notes(); len(notes) != 0 {
+		t.Fatalf("session creation without a task must not create a running card: %#v", notes)
+	}
+	rt, ok := manager.GetRuntime("sess-1")
+	if !ok || !rt.discardingStartupNotifications() {
+		t.Fatal("configured Agent startup should still discard its TUI notification")
+	}
+}
+
 func TestLarkReplyBridgeQueuesFollowupWhileRuntimeRunningDuringStartupWindow(t *testing.T) {
 	resetLarkRegistryForTest()
 	launcher := &recordingLauncher{}
