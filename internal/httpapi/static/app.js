@@ -1450,12 +1450,26 @@ function renderEnvironmentCheckResult(result) {
 }
 
 async function copyText(text, okMessage) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    $("lark-permission-status").textContent = okMessage;
-    return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      $("lark-permission-status").textContent = okMessage;
+      return;
+    }
+  } catch {}
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.cssText = "position:fixed;opacity:0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+  } finally {
+    textarea.remove();
   }
-  $("lark-permission-status").textContent = text;
+  $("lark-permission-status").textContent = copied ? okMessage : `复制失败，请手动复制：${text}`;
 }
 
 function agentPresetCommand() {

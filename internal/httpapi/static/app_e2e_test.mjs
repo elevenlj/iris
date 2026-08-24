@@ -14,6 +14,7 @@ class FakeElement {
     this.title = "";
     this.type = "";
     this.dataset = {};
+    this.style = {};
     this.onclick = null;
     this.onchange = null;
     this.oninput = null;
@@ -141,6 +142,10 @@ class FakeElement {
 
   focus() {
     this.focused = true;
+  }
+
+  select() {
+    this.selected = true;
   }
 
   clear() {
@@ -385,6 +390,7 @@ const context = {
   FitAddon: { FitAddon: class { fit() {} } },
   location: { protocol: "http:", host: "localhost:8080" },
   document: {
+    body: new FakeElement("body", "body"),
     getElementById(id) {
       return elements[id];
     },
@@ -398,6 +404,11 @@ const context = {
       if (selector === ".config-tab") return configTabs;
       if (selector === ".config-panel") return configPanels;
       return [];
+    },
+    execCommand(command) {
+      if (command !== "copy") return false;
+      context.copiedText = this.body.children.at(-1)?.value || "";
+      return true;
     },
     addEventListener() {},
   },
@@ -1165,6 +1176,10 @@ assert.equal(context.copiedText, "contact:user.base:readonly");
 elements["lark-copy-group-scope"].onclick();
 await Promise.resolve();
 assert.equal(context.copiedText, "im:message.group_msg");
+context.navigator.clipboard.writeText = async () => { throw new Error("clipboard denied"); };
+await elements["lark-copy-contact-scope"].onclick();
+assert.equal(context.copiedText, "contact:user.base:readonly");
+assert.equal(elements["lark-permission-status"].textContent, "已复制 Scope：contact:user.base:readonly");
 
 elements["composer-input"].value = "line one";
 let prevented = false;
