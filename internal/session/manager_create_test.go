@@ -24,7 +24,6 @@ func TestCreateSessionRunsPreStartCommand(t *testing.T) {
 }
 
 func TestCreateSessionAlwaysStartsConfiguredAgentInDefaultWorkspace(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
 	workspaceRoot := t.TempDir()
 	t.Setenv("IRIS_WORKSPACE_DIR", workspaceRoot)
 	launcher := &recordingLauncher{}
@@ -39,7 +38,7 @@ func TestCreateSessionAlwaysStartsConfiguredAgentInDefaultWorkspace(t *testing.T
 		t.Fatal(err)
 	}
 	writes := launcher.terminals[0].writes()
-	workspace := filepath.Join(workspaceRoot, "Iris")
+	workspace := filepath.Join(workspaceRoot, defaultWorkspaceDirName)
 	if !strings.Contains(writes, "mkdir -p "+shellQuote(workspace)+"\r") || !strings.Contains(writes, "cd "+shellQuote(workspace)+"\r") || !strings.Contains(writes, "codex --dangerously-bypass-approvals-and-sandbox\r") {
 		t.Fatalf("configured workspace and Agent were not started: %q", writes)
 	}
@@ -67,7 +66,7 @@ func TestCreateSessionSkipsEmptyPreStartCommand(t *testing.T) {
 	}
 }
 
-func TestWorkspaceOptionsForSessionAlwaysStartsWithDedicatedDefault(t *testing.T) {
+func TestWorkspaceOptionsForSessionAlwaysStartsWithSharedDefault(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	t.Setenv("IRIS_WORKSPACE_DIR", workspaceRoot)
 	customWorkspace := t.TempDir()
@@ -80,7 +79,7 @@ func TestWorkspaceOptionsForSessionAlwaysStartsWithDedicatedDefault(t *testing.T
 	if len(options) != 2 {
 		t.Fatalf("workspace options = %#v", options)
 	}
-	wantDefault := filepath.Join(workspaceRoot, "方案 讨论")
+	wantDefault := filepath.Join(workspaceRoot, defaultWorkspaceDirName)
 	if options[0].Label != "默认目录" || options[0].Value != wantDefault || !options[0].Default {
 		t.Fatalf("default workspace option = %#v, want %q", options[0], wantDefault)
 	}
