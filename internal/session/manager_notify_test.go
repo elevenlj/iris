@@ -2049,12 +2049,14 @@ func TestLarkNotificationCardContentKeepsSessionTitleWithoutStatusNoise(t *testi
 }
 
 func TestLarkNotificationCardContentMentionsRoundSender(t *testing.T) {
-	content, err := larkNotificationCardContent(WaitingNotification{
+	note := WaitingNotification{
 		SessionID:     "sess-1",
 		Name:          "A",
 		Content:       "done",
+		ChatID:        "oc_group",
 		MentionOpenID: "ou_asker",
-	}, "ou_owner", true)
+	}
+	content, err := larkNotificationCardContent(note, "ou_owner", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2063,6 +2065,17 @@ func TestLarkNotificationCardContentMentionsRoundSender(t *testing.T) {
 	}
 	if strings.Contains(content, `ou_owner`) {
 		t.Fatalf("card content should not mention fallback receiver when asker is known, got %s", content)
+	}
+	tip, err := larkUpdateTipCardContent(1, larkNotificationMentionID(note, "ou_owner"), true)
+	if err != nil || !strings.Contains(tip, `\u003cat id=ou_asker\u003e\u003c/at\u003e`) || strings.Contains(tip, `ou_owner`) {
+		t.Fatalf("completion tip should mention the same asker as the card, got %s err=%v", tip, err)
+	}
+}
+
+func TestLarkGroupNotificationDoesNotFallBackToDeveloperMention(t *testing.T) {
+	note := WaitingNotification{ChatID: "oc_group"}
+	if got := larkNotificationMentionID(note, "ou_developer"); got != "" {
+		t.Fatalf("group notification without an asker must not mention the developer, got %q", got)
 	}
 }
 
@@ -3747,6 +3760,40 @@ func TestStartupPresetNotificationSuppressionSkipsExternalNotifyAndHook(t *testi
 	rt.mu.Unlock()
 	if mode != startupNotifyNormal {
 		t.Fatal("real input should clear startup notification suppression")
+	}
+}
+
+func TestStartupDiscardSkipsTerminalCardAndSignalsReady(t *testing.T) {
+	notifier := &recordingNotifier{}
+	m := NewManager(nil, nil, WithNotifier(notifier))
+	ready := make(chan string, 1)
+	m.SetNotificationSentHook(func(sessionID string) { ready <- sessionID })
+	rt := &RuntimeSession{
+		manager:           m,
+		session:           Session{ID: "sess-1", Name: "A", Status: StatusRunning, Live: true, NotifyOnWaiting: true},
+		startupNotifyMode: startupNotifyDiscard,
+	}
+
+	rt.HandleOutput([]byte("OpenAI Codex\nmodel: gpt-5.6\ndirectory: /tmp/project\n"))
+	rt.mu.Lock()
+	version := rt.stateVersion
+	rt.stopNotifyStableTimerLocked()
+	rt.mu.Unlock()
+	rt.notifyAfterStable(version)
+
+	if got := notifier.count(); got != 0 {
+		t.Fatalf("startup TUI must not be sent, got %d cards", got)
+	}
+	select {
+	case sessionID := <-ready:
+		if sessionID != "sess-1" {
+			t.Fatalf("ready session = %q", sessionID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("discarded startup output should release queued input")
+	}
+	if rt.discardingStartupNotifications() {
+		t.Fatal("startup discard mode should end after the terminal becomes stable")
 	}
 }
 

@@ -366,6 +366,9 @@ func TestRecoverRuntimeRestoresAgentCommand(t *testing.T) {
 	if !strings.Contains(writes, "cd '/tmp/project'\r") || !strings.Contains(writes, "codex resume --last --dangerously-bypass-approvals-and-sandbox\r") {
 		t.Fatalf("recovery writes = %q", writes)
 	}
+	if !rt.discardingStartupNotifications() {
+		t.Fatal("recovered Agent should discard its startup TUI notification")
+	}
 }
 
 func TestRecoveryEnvironmentExportsAgentTurnHookCredentials(t *testing.T) {

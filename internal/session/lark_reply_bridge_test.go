@@ -1665,6 +1665,33 @@ func TestLarkReplyBridgeQueuesFollowupWhileRuntimeRunningDuringStartupWindow(t *
 	}
 }
 
+func TestLarkReplyBridgeQueuedRecoveryInputKeepsStartupTUISuppressed(t *testing.T) {
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	sess, err := manager.CreateSession(context.Background(), "Recovered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := manager.GetRuntime(sess.ID)
+	rt.mu.Lock()
+	rt.session.Status = StatusRunning
+	rt.session.LastMode = SessionModeAgent
+	rt.inputQueueUntil = time.Now().Add(time.Minute)
+	rt.startupNotifyMode = startupNotifyDiscard
+	rt.mu.Unlock()
+
+	if !bridge.enqueueInputIfRuntimeBusy(rt, sess.ID, []string{"queued question"}, "ou_user") {
+		t.Fatal("recovery input should be queued while the Agent starts")
+	}
+	if !rt.discardingStartupNotifications() {
+		t.Fatal("queuing input must not expose the startup TUI")
+	}
+	if strings.Contains(launcher.terminals[0].writes(), "queued question") {
+		t.Fatal("queued input must not be written before startup settles")
+	}
+}
+
 func TestLarkReplyBridgeOverlappingFollowupFreezesRunningCardEndToEnd(t *testing.T) {
 	resetLarkRegistryForTest()
 	previousDelay := structuredInputEnterDelay

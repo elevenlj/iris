@@ -150,7 +150,7 @@ func TestLoadConfigUsesCurrentDefaultsWhenFieldsMissing(t *testing.T) {
 	t.Setenv("LARK_NOTIFY_MERGE_WRAPPED_LINES", "")
 
 	cfg := loadConfig(filepath.Join(t.TempDir(), "config.local.json"))
-	if cfg.FastWaitingTransitionMs != 500 || cfg.ConservativeWaitingTransitionMs != 500 || cfg.LarkAutoRefreshIntervalMs != 5000 || cfg.HeadlessSnapshotTimeoutMs != 10000 || cfg.LarkNotifyMaxLines != 200 || cfg.LarkNotifyFallbackTailLines != 100 {
+	if cfg.FastWaitingTransitionMs != 5000 || cfg.ConservativeWaitingTransitionMs != 5000 || cfg.LarkAutoRefreshIntervalMs != 5000 || cfg.HeadlessSnapshotTimeoutMs != 10000 || cfg.LarkNotifyMaxLines != 200 || cfg.LarkNotifyFallbackTailLines != 100 {
 		t.Fatalf("numeric defaults = %d,%d,%d,%d,%d,%d", cfg.FastWaitingTransitionMs, cfg.ConservativeWaitingTransitionMs, cfg.LarkAutoRefreshIntervalMs, cfg.HeadlessSnapshotTimeoutMs, cfg.LarkNotifyMaxLines, cfg.LarkNotifyFallbackTailLines)
 	}
 	if cfg.LarkDefaultSessionName != "默认会话" || cfg.LarkSessionChatPrefix != "Iris ·" {
@@ -161,6 +161,24 @@ func TestLoadConfigUsesCurrentDefaultsWhenFieldsMissing(t *testing.T) {
 	}
 	if !cfg.LarkNotifyMergeWrappedLines {
 		t.Fatalf("merge wrapped lines should default to true")
+	}
+}
+
+func TestMigrateWaitingTransitionDefaults(t *testing.T) {
+	migrated, changed := migrateWaitingTransitionDefaults(Config{
+		FastWaitingTransitionMs:         500,
+		ConservativeWaitingTransitionMs: 500,
+	})
+	if !changed || migrated.FastWaitingTransitionMs != 5000 || migrated.ConservativeWaitingTransitionMs != 5000 {
+		t.Fatalf("old defaults were not migrated: changed=%v config=%#v", changed, migrated)
+	}
+
+	custom, changed := migrateWaitingTransitionDefaults(Config{
+		FastWaitingTransitionMs:         450,
+		ConservativeWaitingTransitionMs: 900,
+	})
+	if changed || custom.FastWaitingTransitionMs != 450 || custom.ConservativeWaitingTransitionMs != 900 {
+		t.Fatalf("custom delays must be preserved: changed=%v config=%#v", changed, custom)
 	}
 }
 

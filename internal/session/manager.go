@@ -22,8 +22,8 @@ import (
 const (
 	maxOutputBytes                       = 512 * 1024
 	maxRoundBytes                        = 64 * 1024
-	defaultFastWaitingTransition         = 500 * time.Millisecond
-	defaultConservativeWaitingTransition = 500 * time.Millisecond
+	defaultFastWaitingTransition         = 5 * time.Second
+	defaultConservativeWaitingTransition = 5 * time.Second
 	defaultAutoRefreshInterval           = 5 * time.Second
 	defaultNotificationUpdateCoalesce    = 0
 	defaultNotifyRetryDelay              = time.Second
@@ -49,6 +49,7 @@ const (
 	startupNotifySuppress
 	startupNotifySettling
 	startupNotifyFinal
+	startupNotifyDiscard
 )
 
 type Store interface {
@@ -442,15 +443,21 @@ func (m *Manager) CreateSession(ctx context.Context, name string) (Session, erro
 		sess.ExitCode = &code
 		return sess, err
 	}
+	agent := m.defaultAgentSnapshot()
+	startupMode := startupNotifyNormal
+	if agent.Command != "" {
+		startupMode = startupNotifyDiscard
+	}
 	rt := &RuntimeSession{
-		manager:         m,
-		session:         sess,
-		terminal:        handle.Terminal(),
-		process:         handle.Process(),
-		subscribers:     make(map[chan RuntimeEvent]runtimeSubscriber),
-		terminalCols:    defaultTerminalCols,
-		terminalRows:    defaultTerminalRows,
-		inputQueueUntil: now.Add(defaultStartupInputQueueWindow),
+		manager:           m,
+		session:           sess,
+		terminal:          handle.Terminal(),
+		process:           handle.Process(),
+		subscribers:       make(map[chan RuntimeEvent]runtimeSubscriber),
+		terminalCols:      defaultTerminalCols,
+		terminalRows:      defaultTerminalRows,
+		inputQueueUntil:   now.Add(defaultStartupInputQueueWindow),
+		startupNotifyMode: startupMode,
 	}
 	if m.store != nil {
 		if err := m.store.CreateSession(ctx, sess); err != nil {
@@ -465,15 +472,13 @@ func (m *Manager) CreateSession(ctx context.Context, name string) (Session, erro
 	go rt.waitForExit()
 	rt.runRecoveryEnvironmentSetup()
 	rt.runPreStartCommand()
-	if agent := m.defaultAgentSnapshot(); agent.Command != "" {
+	if agent.Command != "" {
 		workspaceShellPath := m.defaultSessionWorkspaceShellPath()
-		rt.SuppressStartupNotifications()
 		_, _ = rt.terminal.Write([]byte("mkdir -p " + workspaceShellPath + "\r"))
 		rt.RecordShellCommandForRecovery("cd " + shellQuote(workspaceDir))
 		_, _ = rt.terminal.Write([]byte("cd " + workspaceShellPath + "\r"))
 		rt.ConfigureAgentForRecovery(agent)
 		_, _ = rt.terminal.Write([]byte(agent.Command + "\r"))
-		rt.FinishStartupNotifications()
 		sess = rt.Snapshot()
 	}
 	sess.NotificationsAvailable = m.notifier != nil && m.notifier.Available()
@@ -675,17 +680,23 @@ func (m *Manager) RecoverRuntime(ctx context.Context, id string) (*RuntimeSessio
 	sess.Status = StatusRunning
 	sess.ExitCode = nil
 	sess.UpdatedAt = now
-	rt := &RuntimeSession{
-		manager:      m,
-		session:      sess,
-		terminal:     handle.Terminal(),
-		process:      handle.Process(),
-		subscribers:  make(map[chan RuntimeEvent]runtimeSubscriber),
-		terminalCols: defaultTerminalCols,
-		terminalRows: defaultTerminalRows,
-		nextSeq:      time.Now().UnixNano(),
+	resumingAgent := strings.TrimSpace(sess.LastMode) == SessionModeAgent && strings.TrimSpace(sess.LastAgentResumeCommand) != ""
+	startupMode := startupNotifyNormal
+	if resumingAgent {
+		startupMode = startupNotifyDiscard
 	}
-	if strings.TrimSpace(sess.LastMode) == SessionModeAgent && strings.TrimSpace(sess.LastAgentResumeCommand) != "" {
+	rt := &RuntimeSession{
+		manager:           m,
+		session:           sess,
+		terminal:          handle.Terminal(),
+		process:           handle.Process(),
+		subscribers:       make(map[chan RuntimeEvent]runtimeSubscriber),
+		terminalCols:      defaultTerminalCols,
+		terminalRows:      defaultTerminalRows,
+		nextSeq:           time.Now().UnixNano(),
+		startupNotifyMode: startupMode,
+	}
+	if resumingAgent {
 		rt.inputQueueUntil = time.Now().Add(defaultStartupInputQueueWindow)
 	}
 	m.mu.Lock()
@@ -1538,6 +1549,15 @@ func (rt *RuntimeSession) SuppressStartupNotifications() {
 	rt.mu.Lock()
 	rt.startupNotifyMode = startupNotifySuppress
 	rt.mu.Unlock()
+}
+
+func (rt *RuntimeSession) discardingStartupNotifications() bool {
+	if rt == nil {
+		return false
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.startupNotifyMode == startupNotifyDiscard
 }
 
 func (rt *RuntimeSession) FinishStartupNotifications() {
@@ -3615,7 +3635,19 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 		time.Sleep(100 * time.Millisecond)
 	}
 	rt.mu.Lock()
-	if rt.session.Status != StatusWaiting || !rt.session.Live || !rt.session.NotifyOnWaiting || rt.notifyVersion != version || rt.manager.notifier == nil || !rt.manager.notifier.Available() {
+	if rt.session.Status != StatusWaiting || !rt.session.Live || rt.notifyVersion != version {
+		rt.mu.Unlock()
+		return
+	}
+	if rt.startupNotifyMode == startupNotifyDiscard {
+		rt.startupNotifyMode = startupNotifyNormal
+		sessionID := rt.session.ID
+		rt.mu.Unlock()
+		log.Printf("startup terminal output discarded session=%s version=%d", sessionID, version)
+		rt.manager.notificationSent(sessionID)
+		return
+	}
+	if !rt.session.NotifyOnWaiting || rt.manager.notifier == nil || !rt.manager.notifier.Available() {
 		rt.mu.Unlock()
 		return
 	}

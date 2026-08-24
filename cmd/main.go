@@ -33,8 +33,8 @@ const (
 	defaultLarkSessionChatPrefix           = "Iris · "
 	defaultLarkIgnoreMessagePrefix         = "/i"
 	defaultLarkAutoSummaryPrompt           = session.DefaultLarkAutoSummaryPrompt
-	defaultFastWaitingTransitionMs         = 500
-	defaultConservativeWaitingTransitionMs = 500
+	defaultFastWaitingTransitionMs         = 5000
+	defaultConservativeWaitingTransitionMs = 5000
 	defaultLarkAutoRefreshIntervalMs       = 5000
 	defaultHeadlessSnapshotTimeoutMs       = 10000
 	defaultLarkNotifyMaxLines              = 200
@@ -133,12 +133,13 @@ func run() error {
 		return err
 	}
 	cfg := loadConfig(configPath)
+	cfg, waitingTransitionChanged := migrateWaitingTransitionDefaults(cfg)
 	cfg, permissionModeChanged := enforceAgentPermissionMode(cfg)
 	updated, autoSelected := autoSelectFirstUseAgent(cfg, session.DetectAvailableAgentOptions(session.AgentConfig{}))
 	if autoSelected {
 		cfg = updated
 	}
-	if permissionModeChanged || autoSelected {
+	if waitingTransitionChanged || permissionModeChanged || autoSelected {
 		if err := writeConfigFile(configPath, cfg); err != nil {
 			return err
 		}
@@ -285,6 +286,15 @@ func run() error {
 		}
 		return nil
 	}
+}
+
+func migrateWaitingTransitionDefaults(cfg Config) (Config, bool) {
+	if cfg.FastWaitingTransitionMs != 500 || cfg.ConservativeWaitingTransitionMs != 500 {
+		return cfg, false
+	}
+	cfg.FastWaitingTransitionMs = defaultFastWaitingTransitionMs
+	cfg.ConservativeWaitingTransitionMs = defaultConservativeWaitingTransitionMs
+	return cfg, true
 }
 
 func listenerPort(addr net.Addr, fallback string) string {

@@ -1410,7 +1410,9 @@ func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionI
 		return false
 	}
 	rt.SetNotificationMentionOpenID(mentionOpenID)
-	rt.MarkStructuredInputActivity(parts[0])
+	if !rt.discardingStartupNotifications() {
+		rt.MarkStructuredInputActivity(parts[0])
+	}
 	b.enqueuePipeline(sessionID, parts, mentionOpenID)
 	rt.NotifyInputRunning()
 	log.Printf("lark reply bridge queued input session=%s parts=%d reason=runtime_running", sessionID, len(parts))

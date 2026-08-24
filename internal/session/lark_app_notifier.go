@@ -315,6 +315,9 @@ func larkNotificationMentionID(note WaitingNotification, receiveID string) strin
 	if id := strings.TrimSpace(note.MentionOpenID); id != "" {
 		return id
 	}
+	if strings.TrimSpace(note.ChatID) != "" {
+		return ""
+	}
 	return strings.TrimSpace(receiveID)
 }
 
