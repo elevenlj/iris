@@ -127,11 +127,11 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "/":
+		if strings.TrimSpace(security.PasswordHash) == "" {
+			http.Redirect(w, r, settingsAuthPageURL("/setup-password", r.URL.RequestURI()), http.StatusSeeOther)
+			return
+		}
 		if r.URL.Query().Get("settings") == "1" {
-			if strings.TrimSpace(security.PasswordHash) == "" {
-				http.Redirect(w, r, settingsAuthPageURL("/setup-password", r.URL.RequestURI()), http.StatusSeeOther)
-				return
-			}
 			if !s.settingsAuthenticated(r, security) {
 				http.Redirect(w, r, settingsAuthPageURL("/login", r.URL.RequestURI()), http.StatusSeeOther)
 				return

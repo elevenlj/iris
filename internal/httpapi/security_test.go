@@ -178,13 +178,13 @@ func TestSettingsPageRoutesToStandaloneSetupAndLogin(t *testing.T) {
 	defer server.Close()
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
-	resp, err := client.Get(server.URL + "/?settings=1")
+	resp, err := client.Get(server.URL + "/")
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(resp.Header.Get("Location"), "/setup-password?") {
-		t.Fatalf("first settings visit = %d %q", resp.StatusCode, resp.Header.Get("Location"))
+		t.Fatalf("first visit = %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 
 	hash, err := hashSettingsPassword("strong-pass-1")

@@ -22,7 +22,7 @@ func (httpTestLarkProvider) LarkChatMessages(context.Context, string, int) ([]se
 }
 
 func TestEmbeddedStaticAssetsDisableStaleBrowserCaching(t *testing.T) {
-	server := NewServer(nil, "")
+	server := NewServer(nil, "", &secureTestConfig{security: SettingsSecurity{PasswordHash: "configured"}})
 
 	for _, path := range []string{"/", "/app.js", "/app.css"} {
 		t.Run(path, func(t *testing.T) {
