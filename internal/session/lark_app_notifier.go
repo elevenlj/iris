@@ -223,23 +223,13 @@ func larkAgentSelectElement(sessionID string, agents []AgentOption, currentKind 
 		selector["initial_option"] = initial
 	}
 	return map[string]any{
-		"tag":                "column_set",
-		"flex_mode":          "none",
-		"horizontal_align":   "left",
-		"horizontal_spacing": "8px",
-		"columns": []map[string]any{
-			{
-				"tag": "column", "width": "auto", "vertical_align": "center",
-				"elements": []map[string]any{{
-					"tag":  "div",
-					"text": map[string]any{"tag": "plain_text", "content": "Agent"},
-				}},
-			},
-			{
-				"tag": "column", "width": "auto", "vertical_align": "center",
-				"elements": []map[string]any{selector},
-			},
-		},
+		"tag":              "column_set",
+		"flex_mode":        "none",
+		"horizontal_align": "left",
+		"columns": []map[string]any{{
+			"tag": "column", "width": "auto", "vertical_align": "center",
+			"elements": []map[string]any{selector},
+		}},
 	}
 }
 
@@ -274,28 +264,18 @@ func larkWorkspaceSelectElement(sessionID string, workspaces []WorkspaceOption, 
 		selector["initial_option"] = initial
 	}
 	return map[string]any{
-		"tag":                "column_set",
-		"flex_mode":          "none",
-		"horizontal_align":   "left",
-		"horizontal_spacing": "8px",
-		"columns": []map[string]any{
-			{
-				"tag": "column", "width": "auto", "vertical_align": "center",
-				"elements": []map[string]any{{
-					"tag":  "div",
-					"text": map[string]any{"tag": "plain_text", "content": "目录"},
-				}},
-			},
-			{
-				"tag": "column", "width": "auto", "vertical_align": "center",
-				"elements": []map[string]any{selector},
-			},
-		},
+		"tag":              "column_set",
+		"flex_mode":        "none",
+		"horizontal_align": "left",
+		"columns": []map[string]any{{
+			"tag": "column", "width": "auto", "vertical_align": "center",
+			"elements": []map[string]any{selector},
+		}},
 	}
 }
 
 func larkDeveloperSelectorRow(selectors ...map[string]any) map[string]any {
-	columns := make([]map[string]any, 0, len(selectors)*2)
+	columns := make([]map[string]any, 0, len(selectors))
 	for _, selector := range selectors {
 		if selector == nil {
 			continue

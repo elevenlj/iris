@@ -162,7 +162,7 @@ func TestLarkNotificationCardDeveloperModeControlsTechnicalActions(t *testing.T)
 	}
 }
 
-func TestLarkWorkspaceSelectorUsesCompactLabeledLayout(t *testing.T) {
+func TestLarkWorkspaceSelectorUsesCompactLayout(t *testing.T) {
 	element := larkWorkspaceSelectElement("sess-1", []WorkspaceOption{{
 		Label: "Iris", Value: "/tmp/iris", Default: true,
 	}}, &TerminalAgentContext{Directory: "/tmp/iris"})
@@ -170,20 +170,13 @@ func TestLarkWorkspaceSelectorUsesCompactLabeledLayout(t *testing.T) {
 		t.Fatalf("workspace selector layout = %#v", element)
 	}
 	columns, ok := element["columns"].([]map[string]any)
-	if !ok || len(columns) != 2 {
+	if !ok || len(columns) != 1 {
 		t.Fatalf("workspace selector columns = %#v", element["columns"])
 	}
-	for _, column := range columns {
-		if column["width"] != "auto" {
-			t.Fatalf("workspace column should use compact width: %#v", column)
-		}
+	if columns[0]["width"] != "auto" {
+		t.Fatalf("workspace column should use compact width: %#v", columns[0])
 	}
-	labelElements := columns[0]["elements"].([]map[string]any)
-	labelText := labelElements[0]["text"].(map[string]any)
-	if labelText["content"] != "目录" {
-		t.Fatalf("workspace label = %#v", labelText["content"])
-	}
-	selectorElements := columns[1]["elements"].([]map[string]any)
+	selectorElements := columns[0]["elements"].([]map[string]any)
 	selector := selectorElements[0]
 	if selector["tag"] != "select_static" || selector["width"] != nil || selector["initial_option"] != "/tmp/iris" {
 		t.Fatalf("workspace selector = %#v", selector)
@@ -221,13 +214,13 @@ func TestLarkNotificationCardPlacesDeveloperSelectorsInAdaptiveRow(t *testing.T)
 			continue
 		}
 		columns, ok := element["columns"].([]any)
-		if !ok || len(columns) != 4 {
+		if !ok || len(columns) != 2 {
 			continue
 		}
 		encoded, _ := json.Marshal(element)
 		if strings.Contains(string(encoded), `"name":"iris_agent"`) && strings.Contains(string(encoded), `"name":"iris_workspace"`) {
 			found = true
-			if strings.Count(string(encoded), `"tag":"column_set"`) != 1 || strings.Count(string(encoded), `"width":"auto"`) != 4 {
+			if strings.Count(string(encoded), `"tag":"column_set"`) != 1 || strings.Count(string(encoded), `"width":"auto"`) != 2 {
 				t.Fatalf("selector row should use content-sized columns and controls: %s", encoded)
 			}
 		}
