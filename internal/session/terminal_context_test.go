@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -183,6 +184,20 @@ func TestLarkWorkspaceSelectorUsesCompactLayout(t *testing.T) {
 	selector := selectorElements[1]
 	if selector["tag"] != "select_static" || selector["width"] != nil || selector["initial_option"] != "/tmp/iris" {
 		t.Fatalf("workspace selector = %#v", selector)
+	}
+}
+
+func TestLarkWorkspaceSelectorMatchesTildeDirectory(t *testing.T) {
+	home := userHomeDir()
+	selected := filepath.Join(home, "Desktop", "develop", "go", "voip_intelligent_ivr")
+	element := larkWorkspaceSelectElement("sess-1", []WorkspaceOption{
+		{Label: "默认目录", Value: filepath.Join(home, "Desktop", "develop", "go", "default"), Default: true},
+		{Label: "voip双工", Value: selected},
+	}, &TerminalAgentContext{Directory: "~/Desktop/develop/go/voip_intelligent_ivr"})
+	columns := element["columns"].([]map[string]any)
+	selector := columns[0]["elements"].([]map[string]any)[1]
+	if selector["initial_option"] != selected {
+		t.Fatalf("workspace selector should match tilde and absolute paths, got %#v", selector)
 	}
 }
 

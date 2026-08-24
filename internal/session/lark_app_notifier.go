@@ -246,12 +246,17 @@ func larkWorkspaceSelectElement(sessionID string, workspaces []WorkspaceOption, 
 	if context != nil {
 		current = strings.TrimSpace(context.Directory)
 	}
+	currentPath, currentPathOK := "", false
+	if current != "" {
+		currentPath, currentPathOK = resolveShellCWD("", "", current)
+	}
 	for _, workspace := range workspaces {
 		options = append(options, map[string]any{
 			"text":  map[string]any{"tag": "plain_text", "content": workspace.Label},
 			"value": workspace.Value,
 		})
-		if workspace.Value == current || (initial == "" && workspace.Default) {
+		workspacePath, workspacePathOK := resolveShellCWD("", "", workspace.Value)
+		if (currentPathOK && workspacePathOK && workspacePath == currentPath) || (initial == "" && workspace.Default) {
 			initial = workspace.Value
 		}
 	}
