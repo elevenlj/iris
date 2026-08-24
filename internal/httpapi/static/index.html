@@ -162,7 +162,7 @@
             <div class="lark-register">
               <div>
                 <strong>扫码创建飞书应用</strong>
-                <p>无需公网和服务器。点击后用飞书扫码确认，本地会自动取回 App ID、App Secret 和 open_id，并配置基础消息、发消息和卡片回调能力。群里不 @ 机器人也能响应，需要在飞书后台额外开通“获取群组中所有消息（敏感权限）”。</p>
+                <p>无需公网和服务器。点击后用飞书扫码确认，本地会自动取回 App ID、App Secret 和 open_id，并配置基础消息、发消息和卡片回调能力。用户姓名和群内免 @ 响应所需的应用身份权限，需要在飞书后台手动开通。</p>
               </div>
               <button id="lark-register-start" type="button">扫码配置</button>
             </div>
@@ -174,7 +174,7 @@
                 <div class="lark-register-status" id="lark-register-status">等待扫码确认...</div>
                 <div class="lark-register-code">用户码：<strong id="lark-register-code"></strong></div>
                 <a id="lark-register-link" target="_blank" rel="noreferrer">打不开二维码时，点击这里打开确认页面</a>
-                <p>扫码成功后会自动填入下方配置。确认后点击“保存”。敏感权限不会保证由扫码自动开通，请保存后点击“测试飞书配置”确认。</p>
+                <p>扫码成功后会自动填入下方配置。确认后点击“保存”，再按下方说明手动开通应用身份权限并发布应用版本。</p>
               </div>
             </div>
             <div class="config-grid">
@@ -188,17 +188,17 @@
             <label class="config-wide hidden" hidden><span>自动总结 Prompt</span><textarea id="cfg-lark-auto-summary-prompt" rows="4" spellcheck="false"></textarea></label>
             <div class="lark-permission-guide">
               <div>
-                <strong>企业级权限</strong>
-                <p>会话群里不 @ 机器人也能响应，需要当前应用开通“获取群组中所有消息（敏感权限）”。扫码会申请基础能力，但这个企业级权限需要到飞书后台补开。</p>
+                <strong>需手动开通的权限</strong>
+                <p>扫码不会保证以下应用身份权限自动生效。请在飞书后台的权限管理中手动开通：用户基本信息用于显示姓名和生成会话名称；群所有消息用于群内无需 @ 机器人也能响应。</p>
               </div>
               <div class="permission-grid">
+                <div><span>权限名称</span><code>获取用户基本信息</code></div>
+                <div><span>Scope</span><span class="scope-copy-row"><code>contact:user.base:readonly</code><button id="lark-copy-contact-scope" class="scope-copy" type="button" aria-label="复制用户基本信息 Scope" title="复制 Scope">⧉</button></span></div>
                 <div><span>权限名称</span><code>获取群组中所有消息（敏感权限）</code></div>
-                <div><span>Scope</span><code id="lark-group-scope">im:message.group_msg</code></div>
+                <div><span>Scope</span><span class="scope-copy-row"><code>im:message.group_msg</code><button id="lark-copy-group-scope" class="scope-copy" type="button" aria-label="复制群消息 Scope" title="复制 Scope">⧉</button></span></div>
               </div>
               <div class="permission-actions">
                 <a id="lark-app-console-link" target="_blank" rel="noreferrer">打开当前应用后台</a>
-                <button id="lark-copy-scope" type="button">复制 Scope</button>
-                <button id="lark-copy-permission-json" type="button">复制权限 JSON</button>
               </div>
               <div id="lark-permission-status" class="permission-status"></div>
             </div>

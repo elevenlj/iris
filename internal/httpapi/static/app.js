@@ -982,13 +982,6 @@ function renderConfig() {
   $("config-error").textContent = "";
 }
 
-function larkGroupMessagePermissionJSON() {
-  return JSON.stringify({
-    scopes: ["im:message.group_msg"],
-    events: ["im.message.receive_v1"],
-  }, null, 2);
-}
-
 function larkAppConsoleURL(appID) {
   const id = String(appID || "").trim();
   if (!id) return "https://open.feishu.cn/app";
@@ -999,7 +992,7 @@ function renderLarkPermissionGuide() {
   const appID = $("cfg-lark-app-id").value.trim();
   $("lark-app-console-link").href = larkAppConsoleURL(appID);
   $("lark-permission-status").textContent = appID
-    ? "打开后台后进入权限管理，搜索并开通 im:message.group_msg，然后发布应用版本。"
+    ? "打开后台后进入权限管理，开通以上两个应用身份权限，然后发布应用版本。"
     : "先扫码或填写 App ID，再打开应用后台。";
 }
 
@@ -2400,9 +2393,9 @@ $("environment-check-start").onclick = () => checkEnvironment().catch((err) => {
 
 $("cfg-lark-app-id").oninput = renderLarkPermissionGuide;
 
-$("lark-copy-scope").onclick = () => copyText("im:message.group_msg", "已复制 Scope：im:message.group_msg");
+$("lark-copy-contact-scope").onclick = () => copyText("contact:user.base:readonly", "已复制 Scope：contact:user.base:readonly");
 
-$("lark-copy-permission-json").onclick = () => copyText(larkGroupMessagePermissionJSON(), "已复制权限 JSON");
+$("lark-copy-group-scope").onclick = () => copyText("im:message.group_msg", "已复制 Scope：im:message.group_msg");
 
 $("cfg-agent-preset").onchange = () => {
   renderAgentPresetControls();

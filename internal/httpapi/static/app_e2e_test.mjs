@@ -226,10 +226,9 @@ const ids = [
   "lark-register-link",
   "lark-register-qr",
   "lark-app-console-link",
-  "lark-copy-scope",
-  "lark-copy-permission-json",
+  "lark-copy-contact-scope",
+  "lark-copy-group-scope",
   "lark-permission-status",
-  "lark-group-scope",
   "lark-test-start",
   "lark-test-result",
   "cfg-fast-waiting",
@@ -1160,12 +1159,12 @@ assert.equal(elements["lark-register-code"].textContent, "USER-1");
 assert.equal(elements["lark-register-link"].href, "https://open.feishu.cn/page/cli?user_code=USER-1");
 assert.ok(elements["lark-register-qr"].src.includes("/api/lark-app-registration/qr?text="));
 assert.equal(elements["lark-app-console-link"].href, "https://open.feishu.cn/app/app-id/auth");
-elements["lark-copy-scope"].onclick();
+elements["lark-copy-contact-scope"].onclick();
+await Promise.resolve();
+assert.equal(context.copiedText, "contact:user.base:readonly");
+elements["lark-copy-group-scope"].onclick();
 await Promise.resolve();
 assert.equal(context.copiedText, "im:message.group_msg");
-elements["lark-copy-permission-json"].onclick();
-await Promise.resolve();
-assert.ok(context.copiedText.includes("im:message.group_msg"));
 
 elements["composer-input"].value = "line one";
 let prevented = false;
