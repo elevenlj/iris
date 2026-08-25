@@ -2307,6 +2307,48 @@ func TestLarkReplyBridgeWorkspaceSelectionRequiresDeveloperModeAndUsesConfigured
 	}
 }
 
+func TestLarkReplyBridgeWorkspaceSelectionSupportsCustomAidenCodex(t *testing.T) {
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	workspace := t.TempDir()
+	manager.SetAgentConfig(AgentConfig{Kind: "custom", Name: "Aiden Codex", Command: "aiden x codex"}, []WorkspaceOption{{Label: "项目", Value: workspace}})
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	sess, err := manager.CreateSession(context.Background(), "Iris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := manager.sessions[sess.ID]
+	rt.mu.Lock()
+	rt.session.LastAgentKind = "custom"
+	rt.session.LastAgentStartCommand = "aiden x codex"
+	rt.session.DeveloperModeEnabled = true
+	rt.mu.Unlock()
+
+	note := rt.decorateWaitingNotification(WaitingNotification{SessionID: sess.ID, Name: sess.Name, Content: "处理中"})
+	content, err := larkNotificationCardContent(note, "ou-owner", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, `"iris_action":"workspace_select"`) {
+		t.Fatalf("custom aiden x codex card should show workspace selector: %s", content)
+	}
+
+	action := &callback.CallBackAction{Option: workspace, Value: map[string]interface{}{
+		"iris_action": "workspace_select",
+		"session_id":  sess.ID,
+	}}
+	resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || !strings.Contains(resp.Toast.Content, "已切换目录") {
+		t.Fatalf("custom aiden x codex should switch workspace: %#v", resp)
+	}
+	if writes := launcher.terminals[0].writes(); !strings.Contains(writes, "/cd "+workspace+"\r") {
+		t.Fatalf("custom aiden x codex workspace command was not submitted: %q", writes)
+	}
+}
+
 func TestLarkReplyBridgeRestartAgentRequiresDeveloperModeAndReusesStartCommand(t *testing.T) {
 	launcher := &recordingLauncher{}
 	manager := NewManager(nil, launcher)

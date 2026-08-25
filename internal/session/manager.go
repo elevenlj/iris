@@ -575,6 +575,19 @@ func (m *Manager) WorkspaceOptionsForSession(_ Session) []WorkspaceOption {
 	return out
 }
 
+// sessionSupportsWorkspaceSwitch reports whether the session runs Codex directly or through a compatible wrapper.
+func sessionSupportsWorkspaceSwitch(sess Session) bool {
+	if strings.EqualFold(strings.TrimSpace(sess.LastAgentKind), "codex") {
+		return true
+	}
+	argv := shellFields(sess.LastAgentStartCommand)
+	for len(argv) > 0 && isShellEnvAssignment(argv[0]) {
+		argv = argv[1:]
+	}
+	info, ok := agentLaunchInfo(argv)
+	return ok && info.Kind == "codex"
+}
+
 func (m *Manager) sessionRecoveryDir(sess Session) string {
 	if strings.TrimSpace(m.recoveryBaseDir) == "" || strings.TrimSpace(sess.RecoveryKey) == "" {
 		return ""
@@ -860,7 +873,7 @@ func (m *Manager) SwitchWorkspace(ctx context.Context, id, path string) (Session
 		return Session{}, true, errors.New("目录不存在或不可访问")
 	}
 	input := "/cd " + path
-	if strings.EqualFold(sess.LastAgentKind, "codex") {
+	if sessionSupportsWorkspaceSwitch(sess) {
 		if err := SubmitStructuredInputWithMention(rt, input, rt.NotificationMentionOpenID()); err != nil {
 			return Session{}, true, err
 		}
@@ -4059,7 +4072,9 @@ func (rt *RuntimeSession) decorateWaitingNotification(note WaitingNotification) 
 	sess := rt.Snapshot()
 	note.DeveloperModeEnabled = sess.DeveloperModeEnabled
 	note.AgentKind = sess.LastAgentKind
-	note.WorkspaceOptions = rt.manager.WorkspaceOptionsForSession(sess)
+	if sessionSupportsWorkspaceSwitch(sess) {
+		note.WorkspaceOptions = rt.manager.WorkspaceOptionsForSession(sess)
+	}
 	note.AgentOptions = rt.manager.AvailableAgentOptions()
 	return note
 }

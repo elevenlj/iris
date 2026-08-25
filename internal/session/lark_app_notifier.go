@@ -165,7 +165,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		if agentElement := larkAgentSelectElement(note.SessionID, note.AgentOptions, note.AgentKind); agentElement != nil {
 			developerSelectors = append(developerSelectors, agentElement)
 		}
-		if strings.EqualFold(note.AgentKind, "codex") {
+		if len(note.WorkspaceOptions) > 0 {
 			if workspaceElement := larkWorkspaceSelectElement(note.SessionID, note.WorkspaceOptions, note.AgentContext); workspaceElement != nil {
 				developerSelectors = append(developerSelectors, workspaceElement)
 			}
