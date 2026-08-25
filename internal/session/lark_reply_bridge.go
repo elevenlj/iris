@@ -100,6 +100,17 @@ type larkBotIdentity struct {
 	UnionID string
 }
 
+type larkFreshTokenCache struct{}
+
+func (larkFreshTokenCache) Get(context.Context, string) (string, error) { return "", nil }
+func (larkFreshTokenCache) Set(context.Context, string, string, time.Duration) error {
+	return nil
+}
+
+func newLarkReplyAPIClient(appID, appSecret string, options ...lark.ClientOptionFunc) *lark.Client {
+	return lark.NewClient(appID, appSecret, append(options, lark.WithTokenCache(larkFreshTokenCache{}))...)
+}
+
 func NewLarkReplyBridge(appID, appSecret string, manager *Manager, uploadsDir string) *LarkReplyBridge {
 	b := &LarkReplyBridge{
 		appID: appID, appSecret: appSecret, manager: manager, uploadsDir: uploadsDir,
@@ -113,7 +124,7 @@ func NewLarkReplyBridge(appID, appSecret string, manager *Manager, uploadsDir st
 		manager.SetLarkConversationProvider(b)
 	}
 	if appID != "" && appSecret != "" {
-		b.apiClient = lark.NewClient(appID, appSecret, lark.WithEnableTokenCache(false))
+		b.apiClient = newLarkReplyAPIClient(appID, appSecret)
 	}
 	b.replyText = b.replyTextToMessage
 	b.downloadFile = b.downloadLarkAttachment
@@ -285,7 +296,7 @@ func (b *LarkReplyBridge) SetAppCredentials(appID, appSecret string) {
 	b.appID = strings.TrimSpace(appID)
 	b.appSecret = appSecret
 	if b.appID != "" && b.appSecret != "" {
-		b.apiClient = lark.NewClient(b.appID, b.appSecret, lark.WithEnableTokenCache(false))
+		b.apiClient = newLarkReplyAPIClient(b.appID, b.appSecret)
 	} else {
 		b.apiClient = nil
 	}

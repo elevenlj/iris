@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,9 +12,39 @@ import (
 	"testing"
 	"time"
 
+	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
+
+type larkReplyTokenHTTPClient struct {
+	tokenRequests int
+	authorization string
+}
+
+func (c *larkReplyTokenHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	body := `{"code":0,"msg":"success","data":{}}`
+	if strings.Contains(req.URL.Path, "tenant_access_token") {
+		c.tokenRequests++
+		body = `{"code":0,"msg":"success","tenant_access_token":"fresh-token","expire":7200}`
+	} else {
+		c.authorization = req.Header.Get("Authorization")
+	}
+	header := make(http.Header)
+	header.Set("Content-Type", "application/json; charset=utf-8")
+	return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader(body))}, nil
+}
+
+func TestLarkReplyAPIClientFetchesAndAttachesTenantToken(t *testing.T) {
+	httpClient := &larkReplyTokenHTTPClient{}
+	bridge := &LarkReplyBridge{apiClient: newLarkReplyAPIClient("app", "secret", lark.WithHttpClient(httpClient))}
+	if err := bridge.addLarkMessageReaction(context.Background(), "message", "THINKING"); err != nil {
+		t.Fatal(err)
+	}
+	if httpClient.tokenRequests != 1 || httpClient.authorization != "Bearer fresh-token" {
+		t.Fatalf("token requests = %d, authorization = %q", httpClient.tokenRequests, httpClient.authorization)
+	}
+}
 
 func TestExtractLarkMessageText(t *testing.T) {
 	tests := []struct {
