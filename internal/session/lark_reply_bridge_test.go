@@ -138,7 +138,7 @@ func TestResolveReferencedIncomingSupportsRichCardStickerAndLimits(t *testing.T)
 	bridge := NewLarkReplyBridge("app", "secret", nil, t.TempDir())
 	messages := []larkReferencedMessage{
 		{MessageID: "post-1", MessageType: "post", Content: `{"content":[[{"tag":"text","text":"方案说明"},{"tag":"img","image_key":"img-1"},{"tag":"file","file_key":"file-1","file_name":"方案.pdf"}]]}`},
-		{MessageID: "card-1", MessageType: "interactive", Content: `{"header":{"title":{"tag":"plain_text","content":"审批结果"}},"body":{"elements":[{"tag":"div","text":{"tag":"plain_text","content":"已通过"}}]}}`},
+		{MessageID: "card-1", MessageType: "interactive", Content: `{"header":{"title":{"tag":"plain_text","content":"审批结果"}},"body":{"elements":[{"tag":"div","text":{"tag":"plain_text","content":"已通过"}},{"tag":"img","image_key":"card-decoration"}]}}`},
 		{MessageID: "sticker-1", MessageType: "sticker", Content: `{"file_key":"sticker-1"}`},
 	}
 	bridge.fetchReferencedMessages = func(context.Context, string) ([]larkReferencedMessage, error) {
@@ -154,11 +154,22 @@ func TestResolveReferencedIncomingSupportsRichCardStickerAndLimits(t *testing.T)
 	if !strings.Contains(got.Referenced.Items[1].Text, "审批结果") || !strings.Contains(got.Referenced.Items[1].Text, "已通过") {
 		t.Fatalf("card visible text = %q", got.Referenced.Items[1].Text)
 	}
+	if got.Referenced.Items[1].Attachments != 0 {
+		t.Fatalf("card decorations must not be attachments: %#v", got.Referenced.Items[1])
+	}
 	if got.Referenced.Items[2].Text != "表情消息（飞书不提供表情资源下载）" || got.Referenced.Items[2].Attachments != 0 {
 		t.Fatalf("sticker reference = %#v", got.Referenced.Items[2])
 	}
 	if len(got.Attachments) != 2 || got.Attachments[0].SourceMessageID != "post-1" || !got.Attachments[0].Optional {
 		t.Fatalf("referenced attachments = %#v", got.Attachments)
+	}
+
+	bridge.fetchReferencedMessages = func(context.Context, string) ([]larkReferencedMessage, error) {
+		return []larkReferencedMessage{{MessageID: "card-2", MessageType: "interactive", Content: `{"text":"请升级至最新版本客户端，以查看内容","image_key":"card-decoration"}`}}, nil
+	}
+	placeholder := bridge.resolveReferencedIncoming(context.Background(), larkRouteContext{ParentID: "parent"}, larkIncomingMessage{})
+	if placeholder.Referenced.Items[0].Text != "互动卡片（飞书未返回卡片正文）" || len(placeholder.Attachments) != 0 {
+		t.Fatalf("card placeholder = %#v, attachments = %#v", placeholder.Referenced.Items[0], placeholder.Attachments)
 	}
 
 	bridge.fetchReferencedMessages = func(context.Context, string) ([]larkReferencedMessage, error) {

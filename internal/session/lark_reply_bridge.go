@@ -113,7 +113,7 @@ func NewLarkReplyBridge(appID, appSecret string, manager *Manager, uploadsDir st
 		manager.SetLarkConversationProvider(b)
 	}
 	if appID != "" && appSecret != "" {
-		b.apiClient = lark.NewClient(appID, appSecret)
+		b.apiClient = lark.NewClient(appID, appSecret, lark.WithEnableTokenCache(false))
 	}
 	b.replyText = b.replyTextToMessage
 	b.downloadFile = b.downloadLarkAttachment
@@ -285,7 +285,7 @@ func (b *LarkReplyBridge) SetAppCredentials(appID, appSecret string) {
 	b.appID = strings.TrimSpace(appID)
 	b.appSecret = appSecret
 	if b.appID != "" && b.appSecret != "" {
-		b.apiClient = lark.NewClient(b.appID, b.appSecret)
+		b.apiClient = lark.NewClient(b.appID, b.appSecret, lark.WithEnableTokenCache(false))
 	} else {
 		b.apiClient = nil
 	}
@@ -2878,6 +2878,9 @@ func (b *LarkReplyBridge) resolveReferencedIncoming(ctx context.Context, routeCt
 		if item.Text == "" {
 			item.Text = larkReferencedVisibleText(message.Content)
 		}
+		if item.MessageType == "interactive" && item.Text == "请升级至最新版本客户端，以查看内容" {
+			item.Text = ""
+		}
 		if item.Text == "" {
 			item.Text = larkReferencedMessageFallbackText(item.MessageType)
 		}
@@ -2890,7 +2893,7 @@ func (b *LarkReplyBridge) resolveReferencedIncoming(ctx context.Context, routeCt
 		remainingText -= len(itemRunes)
 		contextData.TextRunes += len(itemRunes)
 
-		if item.MessageType != "sticker" && remainingAttachments > 0 {
+		if item.MessageType != "sticker" && item.MessageType != "interactive" && remainingAttachments > 0 {
 			for _, ref := range parsed.Attachments {
 				if remainingAttachments == 0 {
 					contextData.Truncated = true
@@ -2906,7 +2909,7 @@ func (b *LarkReplyBridge) resolveReferencedIncoming(ctx context.Context, routeCt
 				contextData.Attachment++
 				remainingAttachments--
 			}
-		} else if item.MessageType != "sticker" && len(parsed.Attachments) > 0 {
+		} else if item.MessageType != "sticker" && item.MessageType != "interactive" && len(parsed.Attachments) > 0 {
 			contextData.Truncated = true
 		}
 		contextData.Items = append(contextData.Items, item)
@@ -2974,7 +2977,7 @@ func larkReferencedMessageFallbackText(messageType string) string {
 	case "sticker":
 		return "表情消息（飞书不提供表情资源下载）"
 	case "interactive":
-		return "互动卡片（未提取到可见文字）"
+		return "互动卡片（飞书未返回卡片正文）"
 	case "share_chat":
 		return "分享了一个群聊"
 	case "share_user":
