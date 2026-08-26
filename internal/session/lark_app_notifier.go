@@ -162,7 +162,11 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 			elements = append(elements, contextElement)
 		}
 		developerSelectors := make([]map[string]any, 0, 2)
-		if agentElement := larkAgentSelectElement(note.SessionID, note.AgentOptions, note.AgentKind); agentElement != nil {
+		currentAgentID := strings.TrimSpace(note.AgentID)
+		if currentAgentID == "" {
+			currentAgentID = strings.TrimSpace(note.AgentKind)
+		}
+		if agentElement := larkAgentSelectElement(note.SessionID, note.AgentOptions, currentAgentID); agentElement != nil {
 			developerSelectors = append(developerSelectors, agentElement)
 		}
 		if len(note.WorkspaceOptions) > 0 {
@@ -194,20 +198,20 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 	return string(b), err
 }
 
-func larkAgentSelectElement(sessionID string, agents []AgentOption, currentKind string) map[string]any {
+func larkAgentSelectElement(sessionID string, agents []AgentOption, currentID string) map[string]any {
 	agents = normalizeAgentOptions(agents)
 	if len(agents) < 2 {
 		return nil
 	}
 	options := make([]map[string]any, 0, len(agents))
 	initial := ""
-	currentKind = strings.ToLower(strings.TrimSpace(currentKind))
+	currentID = strings.ToLower(strings.TrimSpace(currentID))
 	for _, agent := range agents {
 		options = append(options, map[string]any{
 			"text":  map[string]any{"tag": "plain_text", "content": agent.Label},
 			"value": agent.ID,
 		})
-		if initial == "" && agent.Kind == currentKind {
+		if initial == "" && agent.ID == currentID {
 			initial = agent.ID
 		}
 	}

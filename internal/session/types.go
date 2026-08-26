@@ -37,6 +37,7 @@ type Session struct {
 	LastMode               string    `json:"last_mode,omitempty"`
 	LastCWD                string    `json:"last_cwd,omitempty"`
 	LastPrevCWD            string    `json:"last_prev_cwd,omitempty"`
+	LastAgentID            string    `json:"last_agent_id,omitempty"`
 	LastAgentKind          string    `json:"last_agent_kind,omitempty"`
 	LastAgentStartCommand  string    `json:"last_agent_start_command,omitempty"`
 	LastAgentResumeCommand string    `json:"last_agent_resume_command,omitempty"`
@@ -45,6 +46,7 @@ type Session struct {
 }
 
 type AgentConfig struct {
+	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Kind    string `json:"kind"`
 	Command string `json:"command"`
@@ -89,6 +91,7 @@ type WaitingNotification struct {
 	DeveloperModeEnabled bool
 	WorkspaceOptions     []WorkspaceOption
 	AgentOptions         []AgentOption
+	AgentID              string
 	AgentKind            string
 	SuppressUpdateTip    bool
 	NotificationVersion  int64

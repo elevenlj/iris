@@ -1,6 +1,7 @@
 package session
 
 import (
+	"path/filepath"
 	"strings"
 	"unicode"
 )
@@ -163,13 +164,44 @@ func cloneTerminalAgentContext(context *TerminalAgentContext) *TerminalAgentCont
 
 func (rt *RuntimeSession) notificationAgentContextLocked() *TerminalAgentContext {
 	if strings.TrimSpace(rt.visibleSnapshot) == "" {
-		return cloneTerminalAgentContext(rt.lastTerminalAgentContext)
+		return rt.applyPendingAgentDirectoryLocked(cloneTerminalAgentContext(rt.lastTerminalAgentContext))
 	}
 	context := DetectCodexTerminalAgentContext(rt.visibleSnapshot)
 	if context == nil {
+		if strings.TrimSpace(rt.pendingAgentDirectory) != "" {
+			return rt.applyPendingAgentDirectoryLocked(cloneTerminalAgentContext(rt.lastTerminalAgentContext))
+		}
 		rt.lastTerminalAgentContext = nil
 		return nil
 	}
+	context = rt.applyPendingAgentDirectoryLocked(context)
 	rt.lastTerminalAgentContext = cloneTerminalAgentContext(context)
 	return cloneTerminalAgentContext(context)
+}
+
+func (rt *RuntimeSession) applyPendingAgentDirectoryLocked(context *TerminalAgentContext) *TerminalAgentContext {
+	pending := strings.TrimSpace(rt.pendingAgentDirectory)
+	if context == nil || pending == "" {
+		return context
+	}
+	current, currentOK := resolveShellCWD("", "", context.Directory)
+	wanted, wantedOK := resolveShellCWD("", "", pending)
+	if currentOK && wantedOK && current == wanted {
+		rt.pendingAgentDirectory = ""
+		return context
+	}
+	context.Directory = compactTerminalDirectory(pending)
+	return context
+}
+
+func compactTerminalDirectory(path string) string {
+	path = strings.TrimSpace(path)
+	home := strings.TrimSpace(userHomeDir())
+	if path == home {
+		return "~"
+	}
+	if home != "" && strings.HasPrefix(path, home+string(filepath.Separator)) {
+		return "~" + strings.TrimPrefix(path, home)
+	}
+	return path
 }

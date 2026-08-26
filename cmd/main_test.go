@@ -230,21 +230,13 @@ func TestAutoSelectFirstUseAgentKeepsExistingOrMissingConfiguration(t *testing.T
 	}
 }
 
-func TestEnforceAgentPermissionModeCanonicalizesBuiltinsOnly(t *testing.T) {
-	for _, tt := range []struct {
-		kind    string
-		command string
-		want    string
-		changed bool
-	}{
-		{kind: "codex", command: "codex", want: session.CodexAgentCommand, changed: true},
-		{kind: "claude", command: "claude", want: session.ClaudeAgentCommand, changed: true},
-		{kind: "custom", command: "my-agent --unsafe", want: "my-agent --unsafe", changed: false},
-	} {
-		got, changed := enforceAgentPermissionMode(Config{AgentKind: tt.kind, AgentCommand: tt.command})
-		if changed != tt.changed || got.AgentCommand != tt.want {
-			t.Errorf("kind=%s command=%q => %#v changed=%v", tt.kind, tt.command, got, changed)
-		}
+func TestMigrateAgentDefinitionsPreservesEditableBuiltinCommand(t *testing.T) {
+	cfg, changed := migrateAgentDefinitions(Config{AgentKind: "codex", AgentCommand: "codex --profile work"})
+	if !changed || cfg.DefaultAgentID != "codex" || cfg.AgentCommand != "codex --profile work" {
+		t.Fatalf("migrated config = %#v changed=%v", cfg, changed)
+	}
+	if got := agentConfigByID(cfg.Agents, "codex").Command; got != "codex --profile work" {
+		t.Fatalf("Codex command = %q", got)
 	}
 }
 

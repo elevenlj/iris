@@ -115,6 +115,37 @@ func TestRestartAgentCancelsRelaunchWhenExitCannotBeConfirmed(t *testing.T) {
 	}
 }
 
+func TestRestartAgentResumesExactAidenCodexSession(t *testing.T) {
+	terminal := newControlledForegroundTerminal()
+	threadID := "019f5153-6e7f-7742-9f61-3ffe1530d61c"
+	startCommand := "aiden x codex --dangerously-bypass-approvals-and-sandbox"
+	resumeCommand := "aiden x codex resume " + threadID + " --dangerously-bypass-approvals-and-sandbox"
+	rt := &RuntimeSession{
+		terminal: terminal,
+		session: Session{
+			ID:                     "sess-aiden-restart",
+			Live:                   true,
+			LastMode:               SessionModeAgent,
+			LastAgentID:            "custom-aiden",
+			LastAgentKind:          "codex",
+			LastAgentStartCommand:  startCommand,
+			LastAgentResumeCommand: resumeCommand,
+		},
+	}
+	if err := rt.RestartAgent(); err != nil {
+		t.Fatal(err)
+	}
+	<-terminal.started
+	close(terminal.release)
+	waitForAgentRestartWrites(t, terminal, 1)
+	if writes := terminal.snapshotWrites(); len(writes) != 1 || writes[0] != resumeCommand+"\r" {
+		t.Fatalf("restart writes = %#v", writes)
+	}
+	if got := rt.Snapshot(); got.LastAgentStartCommand != startCommand || got.LastAgentResumeCommand != resumeCommand || got.LastAgentKind != "codex" {
+		t.Fatalf("restart state = %#v", got)
+	}
+}
+
 func waitForAgentRestartWrites(t *testing.T, terminal *controlledForegroundTerminal, count int) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)

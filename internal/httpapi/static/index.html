@@ -58,15 +58,12 @@
         <div class="agent-preset-controls onboarding-agent-controls">
           <label class="agent-field">
             <span>默认 Agent</span>
-            <select id="onboarding-agent-preset" aria-label="默认 Agent">
-              <option value="codex">Codex</option>
-              <option value="claude">Claude Code</option>
-              <option value="custom">自定义 Agent</option>
-            </select>
+            <select id="onboarding-agent-preset" aria-label="默认 Agent"></select>
           </label>
-          <div id="onboarding-custom-agent-fields" class="custom-agent-fields hidden" hidden>
+          <div id="onboarding-custom-agent-fields" class="custom-agent-fields">
             <label class="agent-field"><span>Agent 名称</span><input id="onboarding-agent-custom-name" maxlength="40" placeholder="例如：OpenCode"></label>
             <label class="agent-field"><span>启动命令</span><input id="onboarding-agent-custom-command" aria-label="自定义 Agent 启动命令" placeholder="例如：opencode --yolo"></label>
+            <button id="onboarding-agent-add" type="button">添加 Agent</button>
           </div>
         </div>
         <div id="onboarding-agent-status" class="agent-preset-status" aria-live="polite"></div>
@@ -136,16 +133,10 @@
               <div class="agent-preset-controls">
                 <label class="agent-field">
                   <span>Agent 类型</span>
-                  <select id="cfg-agent-preset" aria-label="默认 Agent">
-                    <option value="codex">Codex</option>
-                    <option value="claude">Claude Code</option>
-                    <option value="custom">自定义 Agent</option>
-                  </select>
+                  <select id="cfg-agent-preset" aria-label="默认 Agent"></select>
                 </label>
-                <div id="cfg-custom-agent-fields" class="custom-agent-fields hidden" hidden>
-                  <label class="agent-field"><span>Agent 名称</span><input id="cfg-agent-custom-name" maxlength="40" placeholder="例如：OpenCode"></label>
-                  <label class="agent-field"><span>启动命令</span><input id="cfg-agent-custom-command" aria-label="自定义 Agent 启动命令" placeholder="例如：opencode --yolo"></label>
-                </div>
+                <div id="agent-option-list" class="agent-option-list"></div>
+                <button id="agent-option-add" type="button">添加自定义 Agent</button>
               </div>
               <div id="agent-preset-status" class="agent-preset-status" aria-live="polite"></div>
             </div>

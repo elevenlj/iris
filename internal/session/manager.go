@@ -141,16 +141,23 @@ func (m *Manager) agentOption(id string) (AgentOption, bool) {
 }
 
 func normalizeAgentConfig(agent AgentConfig) AgentConfig {
+	agent.ID = strings.ToLower(strings.TrimSpace(agent.ID))
 	agent.Name = strings.TrimSpace(agent.Name)
 	agent.Kind = strings.ToLower(strings.TrimSpace(agent.Kind))
 	agent.Command = strings.TrimSpace(agent.Command)
 	if agent.Kind == "codex" {
+		agent.ID = "codex"
 		agent.Name = "Codex"
-		agent.Command = CodexAgentCommand
+		if agent.Command == "" {
+			agent.Command = CodexAgentCommand
+		}
 	}
 	if agent.Kind == "claude" {
+		agent.ID = "claude"
 		agent.Name = "Claude Code"
-		agent.Command = ClaudeAgentCommand
+		if agent.Command == "" {
+			agent.Command = ClaudeAgentCommand
+		}
 	}
 	if agent.Kind == "custom" && agent.Name == "" {
 		agent.Name = "自定义 Agent"
@@ -588,6 +595,20 @@ func sessionSupportsWorkspaceSwitch(sess Session) bool {
 	return ok && info.Kind == "codex"
 }
 
+func agentKindForCommand(command, fallback string) string {
+	argv := shellFields(command)
+	for len(argv) > 0 && isShellEnvAssignment(argv[0]) {
+		argv = argv[1:]
+	}
+	if info, ok := agentLaunchInfo(argv); ok {
+		return info.Kind
+	}
+	if fallback = strings.ToLower(strings.TrimSpace(fallback)); fallback != "" {
+		return fallback
+	}
+	return "custom"
+}
+
 func (m *Manager) sessionRecoveryDir(sess Session) string {
 	if strings.TrimSpace(m.recoveryBaseDir) == "" || strings.TrimSpace(sess.RecoveryKey) == "" {
 		return ""
@@ -882,6 +903,7 @@ func (m *Manager) SwitchWorkspace(ctx context.Context, id, path string) (Session
 	}
 	rt.mu.Lock()
 	rt.session.LastCWD = path
+	rt.pendingAgentDirectory = path
 	rt.session.UpdatedAt = time.Now().UTC()
 	sess = rt.session
 	rt.mu.Unlock()
@@ -1100,6 +1122,7 @@ type RuntimeSession struct {
 	pendingTerminalInteraction        *TerminalInteraction
 	lastConsumedTerminalInteractionID string
 	lastTerminalAgentContext          *TerminalAgentContext
+	pendingAgentDirectory             string
 	agentTurnHookVerified             bool
 	hookCompletedCurrentRound         bool
 	hookCompletionTipClaimed          bool
@@ -1393,24 +1416,29 @@ func (rt *RuntimeSession) RestartAgent() error {
 		rt.mu.Unlock()
 		return errors.New("Agent 正在重启")
 	}
-	command := strings.TrimSpace(rt.session.LastAgentStartCommand)
+	startCommand := strings.TrimSpace(rt.session.LastAgentStartCommand)
+	agentKind := strings.TrimSpace(rt.session.LastAgentKind)
+	agentID := strings.TrimSpace(rt.session.LastAgentID)
+	resumeCommand := strings.TrimSpace(rt.session.LastAgentResumeCommand)
+	command := exactAgentResumeCommand(rt.session)
 	if command == "" {
-		command = strings.TrimSpace(rt.session.LastAgentResumeCommand)
+		command = startCommand
 	}
 	if command == "" && rt.manager != nil {
 		agent, _ := rt.manager.AgentConfig()
 		command = strings.TrimSpace(agent.Command)
+		startCommand = command
+		agentKind = agent.Kind
+		agentID = agent.ID
 	}
 	if command == "" {
 		rt.mu.Unlock()
 		return errors.New("当前会话没有可用的 Agent 启动命令")
 	}
-	agentKind := strings.TrimSpace(rt.session.LastAgentKind)
-	resumeCommand := strings.TrimSpace(rt.session.LastAgentResumeCommand)
 	rt.agentRestartPending = true
 	terminal := rt.terminal
 	rt.mu.Unlock()
-	return rt.restartAgentAfterConfirmedExit(terminal, command, agentKind, resumeCommand)
+	return rt.restartAgentAfterConfirmedExit(terminal, command, agentID, agentKind, startCommand, resumeCommand)
 }
 
 func (rt *RuntimeSession) SwitchAgent(optionID string) (AgentOption, error) {
@@ -1430,56 +1458,56 @@ func (rt *RuntimeSession) SwitchAgent(optionID string) (AgentOption, error) {
 		rt.mu.Unlock()
 		return AgentOption{}, errors.New("Agent 正在重启")
 	}
-	if strings.EqualFold(strings.TrimSpace(rt.session.LastAgentKind), option.Kind) && strings.TrimSpace(rt.session.LastAgentStartCommand) == option.Command {
+	if strings.EqualFold(strings.TrimSpace(rt.session.LastAgentID), option.ID) {
 		rt.mu.Unlock()
 		return AgentOption{}, errors.New("当前已经是 " + option.Label)
 	}
 	rt.agentRestartPending = true
 	terminal := rt.terminal
 	rt.mu.Unlock()
-	if err := rt.restartAgentAfterConfirmedExit(terminal, option.Command, option.Kind, option.Command); err != nil {
+	if err := rt.restartAgentAfterConfirmedExit(terminal, option.Command, option.ID, option.Kind, option.Command, ""); err != nil {
 		return AgentOption{}, err
 	}
 	return option, nil
 }
 
-func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, command, agentKind, resumeCommand string) error {
-	command = strings.TrimSpace(command)
-	if command == "" {
+func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, launchCommand, agentID, agentKind, startCommand, resumeCommand string) error {
+	launchCommand = strings.TrimSpace(launchCommand)
+	if launchCommand == "" {
 		rt.mu.Lock()
 		rt.agentRestartPending = false
 		rt.mu.Unlock()
 		return errors.New("当前会话没有可用的 Agent 启动命令")
 	}
 	rt.MarkAgentExitActivity()
+	agentKind = agentKindForCommand(launchCommand, agentKind)
 	go func() {
 		if err := terminateAgentForegroundProcess(terminal); err != nil {
 			rt.finishAgentRestartFailure()
 			log.Printf("agent restart cancelled session=%s: %v", rt.Snapshot().ID, err)
 			return
 		}
-		rt.RecordShellCommandForRecovery(command)
+		rt.RecordShellCommandForRecovery(launchCommand)
 		rt.mu.Lock()
 		rt.session.LastMode = SessionModeAgent
-		if agentKind == "" {
-			agentKind = "custom"
-		}
+		rt.session.LastAgentID = strings.TrimSpace(agentID)
 		rt.session.LastAgentKind = agentKind
-		rt.session.LastAgentStartCommand = command
-		if resumeCommand == "" {
-			resumeCommand = command
+		if strings.TrimSpace(startCommand) != "" {
+			rt.session.LastAgentStartCommand = strings.TrimSpace(startCommand)
 		}
-		rt.session.LastAgentResumeCommand = resumeCommand
+		if strings.TrimSpace(resumeCommand) != "" {
+			rt.session.LastAgentResumeCommand = strings.TrimSpace(resumeCommand)
+		}
 		rt.session.UpdatedAt = time.Now().UTC()
 		sess := rt.session
 		rt.mu.Unlock()
 		if rt.manager != nil {
 			_ = rt.manager.persist(context.Background(), sess)
 		}
-		if !strings.HasSuffix(command, "\r") && !strings.HasSuffix(command, "\n") {
-			command += "\r"
+		if !strings.HasSuffix(launchCommand, "\r") && !strings.HasSuffix(launchCommand, "\n") {
+			launchCommand += "\r"
 		}
-		_, err := terminal.Write([]byte(command))
+		_, err := terminal.Write([]byte(launchCommand))
 		rt.mu.Lock()
 		rt.agentRestartPending = false
 		rt.mu.Unlock()
@@ -4071,6 +4099,7 @@ func (rt *RuntimeSession) decorateWaitingNotification(note WaitingNotification) 
 	}
 	sess := rt.Snapshot()
 	note.DeveloperModeEnabled = sess.DeveloperModeEnabled
+	note.AgentID = sess.LastAgentID
 	note.AgentKind = sess.LastAgentKind
 	if sessionSupportsWorkspaceSwitch(sess) {
 		note.WorkspaceOptions = rt.manager.WorkspaceOptionsForSession(sess)

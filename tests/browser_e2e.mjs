@@ -152,6 +152,14 @@ async function initializeIrisForE2E() {
 	await waitFor(() => evalExpr("location.pathname === '/' && Boolean(window.irisApp) && document.querySelector('#config-dialog').open === true"));
   await evalExpr(`(async () => {
     const config = await fetch('/api/config').then((response) => response.json());
+    config.agents = [...(config.agents || []), {
+      id: 'browser-e2e',
+      name: 'Browser E2E',
+      kind: 'custom',
+      command: 'bash --noprofile --norc',
+    }];
+    config.default_agent_id = 'browser-e2e';
+    config.agent_name = 'Browser E2E';
     config.agent_kind = 'custom';
     config.agent_command = 'bash --noprofile --norc';
     config.onboarding_completed = true;

@@ -873,8 +873,37 @@ dialog::backdrop {
 
 .custom-agent-fields {
   display: grid;
-  grid-template-columns: minmax(160px, 0.42fr) minmax(240px, 1fr);
+	grid-template-columns: minmax(160px, 0.42fr) minmax(240px, 1fr) auto;
   gap: 12px;
+	align-items: end;
+}
+
+.agent-option-list {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-option-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.35fr) minmax(260px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.agent-option-row label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.agent-option-remove {
+  color: var(--danger);
+  background: transparent;
 }
 
 .onboarding-agent-controls {
@@ -1554,6 +1583,12 @@ dialog::backdrop {
   }
 
   .workspace-option-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .agent-option-row,
+  .custom-agent-fields {
     grid-template-columns: 1fr;
     align-items: stretch;
   }

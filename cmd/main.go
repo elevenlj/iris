@@ -80,6 +80,8 @@ type Config struct {
 	SessionNamePresets              map[string]session.SessionStartPreset `json:"session_name_presets"`
 	LarkCustomShortcuts             []session.LarkCustomShortcut          `json:"lark_custom_shortcuts"`
 	OnboardingCompleted             bool                                  `json:"onboarding_completed"`
+	Agents                          []session.AgentConfig                 `json:"agents,omitempty"`
+	DefaultAgentID                  string                                `json:"default_agent_id,omitempty"`
 	AgentName                       string                                `json:"agent_name"`
 	AgentKind                       string                                `json:"agent_kind"`
 	AgentCommand                    string                                `json:"agent_command"`
@@ -134,12 +136,12 @@ func run() error {
 	}
 	cfg := loadConfig(configPath)
 	cfg, waitingTransitionChanged := migrateWaitingTransitionDefaults(cfg)
-	cfg, permissionModeChanged := enforceAgentPermissionMode(cfg)
-	updated, autoSelected := autoSelectFirstUseAgent(cfg, session.DetectAvailableAgentOptions(session.AgentConfig{}))
+	cfg, agentConfigChanged := migrateAgentDefinitions(cfg)
+	updated, autoSelected := autoSelectFirstUseAgent(cfg, session.DetectAvailableAgentOptions(cfg.Agents...))
 	if autoSelected {
 		cfg = updated
 	}
-	if waitingTransitionChanged || permissionModeChanged || autoSelected {
+	if waitingTransitionChanged || agentConfigChanged || autoSelected {
 		if err := writeConfigFile(configPath, cfg); err != nil {
 			return err
 		}
@@ -189,7 +191,7 @@ func run() error {
 	if sessions, listErr := st.ListSessions(context.Background()); listErr != nil {
 		log.Printf("startup Agent upgrade skipped: cannot list sessions: %v", listErr)
 	} else {
-		configuredAgent := session.AgentConfig{Name: cfg.AgentName, Kind: cfg.AgentKind, Command: cfg.AgentCommand}
+		configuredAgent := defaultAgentConfig(cfg)
 		for _, result := range session.UpgradeAgentCLIsOnStartup(context.Background(), sessions, configuredAgent) {
 			if result.Err != nil {
 				log.Printf("startup Agent upgrade failed agent=%s: %v output=%q", result.Kind, result.Err, result.Output)
@@ -225,8 +227,8 @@ func run() error {
 		}),
 	)
 	mgr.SetDefaultWorkspaceDir(cfg.DefaultWorkspaceDir)
-	mgr.SetAgentConfig(session.AgentConfig{Name: cfg.AgentName, Kind: cfg.AgentKind, Command: cfg.AgentCommand}, cfg.WorkspaceOptions)
-	mgr.SetAvailableAgentOptions(session.DetectAvailableAgentOptions(session.AgentConfig{Name: cfg.AgentName, Kind: cfg.AgentKind, Command: cfg.AgentCommand}))
+	mgr.SetAgentConfig(defaultAgentConfig(cfg), cfg.WorkspaceOptions)
+	mgr.SetAvailableAgentOptions(session.DetectAvailableAgentOptions(cfg.Agents...))
 
 	bridge := session.NewLarkReplyBridge(cfg.LarkAppID, cfg.LarkAppSecret, mgr, uploadsDir)
 	bridge.SetDefaultStartSessionName(cfg.LarkDefaultSessionName)
@@ -449,6 +451,162 @@ func loadConfig(path string) Config {
 	return cfg
 }
 
+func migrateAgentDefinitions(cfg Config) (Config, bool) {
+	original, _ := json.Marshal(struct {
+		Agents         []session.AgentConfig
+		DefaultAgentID string
+		AgentName      string
+		AgentKind      string
+		AgentCommand   string
+	}{cfg.Agents, cfg.DefaultAgentID, cfg.AgentName, cfg.AgentKind, cfg.AgentCommand})
+
+	agents := append([]session.AgentConfig(nil), cfg.Agents...)
+	legacyKind := strings.ToLower(strings.TrimSpace(cfg.AgentKind))
+	legacyCommand := strings.TrimSpace(cfg.AgentCommand)
+	if legacyKind == "custom" && legacyCommand != "" && agentConfigByID(agents, "custom").Command == "" {
+		agents = append(agents, session.AgentConfig{ID: "custom", Name: strings.TrimSpace(cfg.AgentName), Kind: "custom", Command: legacyCommand})
+	}
+	if agentConfigByID(agents, "codex").ID == "" {
+		command := session.CodexAgentCommand
+		if legacyKind == "codex" && legacyCommand != "" {
+			command = legacyCommand
+		}
+		agents = append([]session.AgentConfig{{ID: "codex", Name: "Codex", Kind: "codex", Command: command}}, agents...)
+	}
+	if agentConfigByID(agents, "claude").ID == "" {
+		command := session.ClaudeAgentCommand
+		if legacyKind == "claude" && legacyCommand != "" {
+			command = legacyCommand
+		}
+		insertAt := 1
+		if len(agents) < insertAt {
+			insertAt = len(agents)
+		}
+		agents = append(agents, session.AgentConfig{})
+		copy(agents[insertAt+1:], agents[insertAt:])
+		agents[insertAt] = session.AgentConfig{ID: "claude", Name: "Claude Code", Kind: "claude", Command: command}
+	}
+	normalized := make([]session.AgentConfig, 0, len(agents))
+	seen := map[string]bool{}
+	for _, agent := range agents {
+		agent.ID = strings.ToLower(strings.TrimSpace(agent.ID))
+		agent.Name = strings.TrimSpace(agent.Name)
+		agent.Kind = strings.ToLower(strings.TrimSpace(agent.Kind))
+		agent.Command = strings.TrimSpace(agent.Command)
+		if agent.ID == "codex" {
+			agent.Name, agent.Kind = "Codex", "codex"
+			if agent.Command == "" {
+				agent.Command = session.CodexAgentCommand
+			}
+		}
+		if agent.ID == "claude" {
+			agent.Name, agent.Kind = "Claude Code", "claude"
+			if agent.Command == "" {
+				agent.Command = session.ClaudeAgentCommand
+			}
+		}
+		if agent.ID == "" || seen[agent.ID] || agent.Name == "" || agent.Command == "" {
+			continue
+		}
+		if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "custom" {
+			continue
+		}
+		seen[agent.ID] = true
+		normalized = append(normalized, agent)
+	}
+	cfg.Agents = normalized
+	cfg.DefaultAgentID = strings.ToLower(strings.TrimSpace(cfg.DefaultAgentID))
+	if cfg.DefaultAgentID == "" {
+		switch legacyKind {
+		case "codex", "claude":
+			cfg.DefaultAgentID = legacyKind
+		case "custom":
+			cfg.DefaultAgentID = "custom"
+		}
+	}
+	cfg = syncLegacyDefaultAgent(cfg)
+
+	updated, _ := json.Marshal(struct {
+		Agents         []session.AgentConfig
+		DefaultAgentID string
+		AgentName      string
+		AgentKind      string
+		AgentCommand   string
+	}{cfg.Agents, cfg.DefaultAgentID, cfg.AgentName, cfg.AgentKind, cfg.AgentCommand})
+	return cfg, string(original) != string(updated)
+}
+
+func validateAgentDefinitions(agents []session.AgentConfig, defaultID string) ([]session.AgentConfig, session.AgentConfig, error) {
+	normalized := make([]session.AgentConfig, 0, len(agents))
+	seenIDs := map[string]bool{}
+	seenNames := map[string]bool{}
+	for _, agent := range agents {
+		agent.ID = strings.ToLower(strings.TrimSpace(agent.ID))
+		agent.Name = strings.TrimSpace(agent.Name)
+		agent.Kind = strings.ToLower(strings.TrimSpace(agent.Kind))
+		agent.Command = strings.TrimSpace(agent.Command)
+		if agent.ID == "" || agent.Name == "" || agent.Command == "" {
+			return nil, session.AgentConfig{}, errors.New("Agent 名称和启动命令不能为空")
+		}
+		if len([]rune(agent.Name)) > 40 {
+			return nil, session.AgentConfig{}, errors.New("Agent 名称不能超过 40 个字符")
+		}
+		if agent.ID == "codex" {
+			agent.Name, agent.Kind = "Codex", "codex"
+		} else if agent.ID == "claude" {
+			agent.Name, agent.Kind = "Claude Code", "claude"
+		} else if agent.Kind != "custom" {
+			return nil, session.AgentConfig{}, errors.New("自定义 Agent 类型无效")
+		}
+		nameKey := strings.ToLower(agent.Name)
+		if seenIDs[agent.ID] || seenNames[nameKey] {
+			return nil, session.AgentConfig{}, errors.New("Agent 名称不能重复")
+		}
+		seenIDs[agent.ID], seenNames[nameKey] = true, true
+		normalized = append(normalized, agent)
+	}
+	selected := agentConfigByID(normalized, defaultID)
+	if selected.ID == "" {
+		return nil, session.AgentConfig{}, errors.New("必须选择一个可用的默认 Agent")
+	}
+	available := session.DetectAvailableAgentOptions(normalized...)
+	availableDefault := false
+	for _, option := range available {
+		if option.ID == selected.ID {
+			availableDefault = true
+			break
+		}
+	}
+	if !availableDefault {
+		return nil, session.AgentConfig{}, errors.New("默认 Agent 当前不可用")
+	}
+	return normalized, selected, nil
+}
+
+func agentConfigByID(agents []session.AgentConfig, id string) session.AgentConfig {
+	id = strings.ToLower(strings.TrimSpace(id))
+	for _, agent := range agents {
+		if strings.ToLower(strings.TrimSpace(agent.ID)) == id {
+			return agent
+		}
+	}
+	return session.AgentConfig{}
+}
+
+func syncLegacyDefaultAgent(cfg Config) Config {
+	selected := agentConfigByID(cfg.Agents, cfg.DefaultAgentID)
+	if selected.ID == "" {
+		cfg.AgentName, cfg.AgentKind, cfg.AgentCommand = "", "", ""
+		return cfg
+	}
+	cfg.AgentName, cfg.AgentKind, cfg.AgentCommand = selected.Name, selected.Kind, selected.Command
+	return cfg
+}
+
+func defaultAgentConfig(cfg Config) session.AgentConfig {
+	return agentConfigByID(cfg.Agents, cfg.DefaultAgentID)
+}
+
 func autoSelectFirstUseAgent(cfg Config, options []session.AgentOption) (Config, bool) {
 	if strings.TrimSpace(cfg.AgentKind) != "" && strings.TrimSpace(cfg.AgentCommand) != "" {
 		return cfg, false
@@ -460,33 +618,11 @@ func autoSelectFirstUseAgent(cfg Config, options []session.AgentOption) (Config,
 		cfg.AgentKind = option.Kind
 		cfg.AgentName = option.Label
 		cfg.AgentCommand = option.Command
+		cfg.DefaultAgentID = option.ID
 		cfg.OnboardingCompleted = true
 		return cfg, true
 	}
 	return cfg, false
-}
-
-func enforceAgentPermissionMode(cfg Config) (Config, bool) {
-	kind := strings.ToLower(strings.TrimSpace(cfg.AgentKind))
-	want := ""
-	wantName := ""
-	switch kind {
-	case "codex":
-		want = session.CodexAgentCommand
-		wantName = "Codex"
-	case "claude":
-		want = session.ClaudeAgentCommand
-		wantName = "Claude Code"
-	default:
-		return cfg, false
-	}
-	if strings.TrimSpace(cfg.AgentCommand) == want && cfg.AgentKind == kind && strings.TrimSpace(cfg.AgentName) == wantName {
-		return cfg, false
-	}
-	cfg.AgentName = wantName
-	cfg.AgentKind = kind
-	cfg.AgentCommand = want
-	return cfg, true
 }
 
 // mergeRequiredLarkNotifyDropLineRules keeps existing user rules while making
@@ -688,30 +824,28 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 	if req.SessionNamePresets == nil {
 		req.SessionNamePresets = map[string]session.SessionStartPreset{}
 	}
-	req.AgentKind = strings.ToLower(strings.TrimSpace(req.AgentKind))
-	req.AgentName = strings.TrimSpace(req.AgentName)
-	req.AgentCommand = strings.TrimSpace(req.AgentCommand)
-	if req.AgentKind == "codex" {
-		req.AgentName = "Codex"
-		req.AgentCommand = session.CodexAgentCommand
-	}
-	if req.AgentKind == "claude" {
-		req.AgentName = "Claude Code"
-		req.AgentCommand = session.ClaudeAgentCommand
-	}
-	if req.AgentKind != "codex" && req.AgentKind != "claude" && req.AgentKind != "custom" {
-		return httpapi.RuntimeConfig{}, errors.New("必须选择 Codex、Claude Code 或自定义 Agent")
-	}
-	if req.AgentCommand == "" {
-		return httpapi.RuntimeConfig{}, errors.New("Agent 启动命令不能为空")
-	}
-	if req.AgentKind == "custom" {
-		if req.AgentName == "" {
-			return httpapi.RuntimeConfig{}, errors.New("自定义 Agent 名称不能为空")
+	if len(req.Agents) == 0 {
+		if strings.EqualFold(strings.TrimSpace(req.AgentKind), "custom") {
+			req.Agents = []session.AgentConfig{
+				{ID: "codex", Name: "Codex", Kind: "codex", Command: session.CodexAgentCommand},
+				{ID: "claude", Name: "Claude Code", Kind: "claude", Command: session.ClaudeAgentCommand},
+				{ID: "custom", Name: req.AgentName, Kind: "custom", Command: req.AgentCommand},
+			}
+			req.DefaultAgentID = "custom"
+		} else {
+			legacy, _ := migrateAgentDefinitions(Config{
+				AgentName:      req.AgentName,
+				AgentKind:      req.AgentKind,
+				AgentCommand:   req.AgentCommand,
+				DefaultAgentID: req.DefaultAgentID,
+			})
+			req.Agents = legacy.Agents
+			req.DefaultAgentID = legacy.DefaultAgentID
 		}
-		if len([]rune(req.AgentName)) > 40 {
-			return httpapi.RuntimeConfig{}, errors.New("自定义 Agent 名称不能超过 40 个字符")
-		}
+	}
+	agents, selectedAgent, err := validateAgentDefinitions(req.Agents, req.DefaultAgentID)
+	if err != nil {
+		return httpapi.RuntimeConfig{}, err
 	}
 	workspaces, err := validateWorkspaceOptions(req.WorkspaceOptions)
 	if err != nil {
@@ -742,9 +876,11 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 	cfg.SessionNamePresets = req.SessionNamePresets
 	cfg.LarkCustomShortcuts = req.LarkCustomShortcuts
 	cfg.OnboardingCompleted = req.OnboardingCompleted
-	cfg.AgentName = req.AgentName
-	cfg.AgentKind = req.AgentKind
-	cfg.AgentCommand = req.AgentCommand
+	cfg.Agents = agents
+	cfg.DefaultAgentID = selectedAgent.ID
+	cfg.AgentName = selectedAgent.Name
+	cfg.AgentKind = selectedAgent.Kind
+	cfg.AgentCommand = selectedAgent.Command
 	cfg.DefaultWorkspaceDir = defaultWorkspaceDir
 	cfg.WorkspaceOptions = workspaces
 	reconnectLark := oldCfg.LarkAppID != cfg.LarkAppID || oldCfg.LarkAppSecret != cfg.LarkAppSecret
@@ -807,8 +943,8 @@ func applyRuntimeConfig(cfg Config, manager *session.Manager, bridge *session.La
 	manager.SetHeadlessSnapshotTimeout(time.Duration(cfg.HeadlessSnapshotTimeoutMs) * time.Millisecond)
 	manager.SetPreStartCommand(cfg.SessionPreStartCommand)
 	manager.SetDefaultWorkspaceDir(cfg.DefaultWorkspaceDir)
-	manager.SetAgentConfig(session.AgentConfig{Name: cfg.AgentName, Kind: cfg.AgentKind, Command: cfg.AgentCommand}, cfg.WorkspaceOptions)
-	manager.SetAvailableAgentOptions(session.DetectAvailableAgentOptions(session.AgentConfig{Name: cfg.AgentName, Kind: cfg.AgentKind, Command: cfg.AgentCommand}))
+	manager.SetAgentConfig(defaultAgentConfig(cfg), cfg.WorkspaceOptions)
+	manager.SetAvailableAgentOptions(session.DetectAvailableAgentOptions(cfg.Agents...))
 	notifier := session.NewLarkAppNotifier(cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkNotifyReceiveID, cfg.LarkMentionEnabled)
 	notifier.SetCustomShortcuts(cfg.LarkCustomShortcuts)
 	manager.SetNotifier(notifier)
@@ -844,6 +980,7 @@ func applyRuntimeConfig(cfg Config, manager *session.Manager, bridge *session.La
 }
 
 func runtimeConfigFromConfig(cfg Config) httpapi.RuntimeConfig {
+	cfg, _ = migrateAgentDefinitions(cfg)
 	return httpapi.RuntimeConfig{
 		FastWaitingTransitionMs:         cfg.FastWaitingTransitionMs,
 		ConservativeWaitingTransitionMs: cfg.ConservativeWaitingTransitionMs,
@@ -866,6 +1003,9 @@ func runtimeConfigFromConfig(cfg Config) httpapi.RuntimeConfig {
 		SessionNamePresets:              cfg.SessionNamePresets,
 		LarkCustomShortcuts:             cfg.LarkCustomShortcuts,
 		OnboardingCompleted:             cfg.OnboardingCompleted,
+		Agents:                          append([]session.AgentConfig(nil), cfg.Agents...),
+		DefaultAgentID:                  cfg.DefaultAgentID,
+		AvailableAgents:                 session.DetectAvailableAgentOptions(cfg.Agents...),
 		AgentName:                       cfg.AgentName,
 		AgentKind:                       cfg.AgentKind,
 		AgentCommand:                    cfg.AgentCommand,

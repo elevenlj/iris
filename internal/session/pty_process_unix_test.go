@@ -31,7 +31,7 @@ func TestPTYForegroundTerminationEscalatesAndReturnsControlToShell(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := terminal.Write([]byte("sh -c 'trap \"\" INT TERM; while :; do sleep 1; done'\r")); err != nil {
+	if _, err := terminal.Write([]byte("sh -c 'trap \"\" INT TERM; while :; do :; done'\r")); err != nil {
 		t.Fatal(err)
 	}
 	agentGroup := waitForDifferentForegroundGroup(t, terminal, shellGroup)

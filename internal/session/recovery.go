@@ -67,12 +67,22 @@ func (rt *RuntimeSession) ConfigureAgentForRecovery(agent AgentConfig) {
 		return
 	}
 	rt.RecordShellCommandForRecovery(agent.Command)
+	rt.mu.Lock()
+	rt.session.LastAgentID = agent.ID
 	if agent.Kind != "custom" {
+		s := rt.session
+		rt.mu.Unlock()
+		if rt.manager != nil {
+			_ = rt.manager.persist(context.Background(), s)
+		}
 		return
 	}
-	rt.mu.Lock()
 	if rt.session.LastMode == SessionModeAgent && rt.session.LastAgentKind != "" && rt.session.LastAgentKind != "custom" {
+		s := rt.session
 		rt.mu.Unlock()
+		if rt.manager != nil {
+			_ = rt.manager.persist(context.Background(), s)
+		}
 		return
 	}
 	rt.session.LastMode = SessionModeAgent
@@ -143,6 +153,14 @@ func (rt *RuntimeSession) applyShellSegmentForRecoveryLocked(segment string) {
 			rt.session.LastAgentKind = info.Kind
 			rt.session.LastAgentStartCommand = strings.TrimSpace(segment)
 			rt.session.LastAgentResumeCommand = info.ResumeCommand
+			if rt.manager != nil {
+				for _, option := range rt.manager.AvailableAgentOptions() {
+					if strings.TrimSpace(option.Command) == strings.TrimSpace(segment) {
+						rt.session.LastAgentID = option.ID
+						break
+					}
+				}
+			}
 			if rt.manager != nil {
 				rt.session.LastAgentHome = rt.manager.sessionAgentHome(rt.session, info.Kind)
 			}
@@ -672,6 +690,37 @@ func codexResumeThreadID(command string) string {
 			}
 		}
 		break
+	}
+	return ""
+}
+
+func exactAgentResumeCommand(sess Session) string {
+	command := strings.TrimSpace(sess.LastAgentResumeCommand)
+	switch strings.ToLower(strings.TrimSpace(sess.LastAgentKind)) {
+	case "codex":
+		if codexResumeThreadID(command) != "" {
+			return command
+		}
+	case "claude":
+		if claudeResumeSessionID(command) != "" {
+			return command
+		}
+	}
+	return ""
+}
+
+func claudeResumeSessionID(command string) string {
+	argv := shellFields(command)
+	for i, arg := range argv {
+		if arg == "--resume" && i+1 < len(argv) && validCodexThreadID(argv[i+1]) {
+			return argv[i+1]
+		}
+		if strings.HasPrefix(arg, "--resume=") {
+			id := strings.TrimPrefix(arg, "--resume=")
+			if validCodexThreadID(id) {
+				return id
+			}
+		}
 	}
 	return ""
 }

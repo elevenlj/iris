@@ -98,6 +98,11 @@ class FakeElement {
       this._bySelector.set(".preset-command-input", input);
       this._bySelector.set(".preset-command-remove", remove);
     }
+    if (value.includes("agent-option-name")) {
+      this._bySelector.set(".agent-option-name", new FakeElement("", "input"));
+      this._bySelector.set(".agent-option-command", new FakeElement("", "input"));
+      if (value.includes("agent-option-remove")) this._bySelector.set(".agent-option-remove", new FakeElement("", "button"));
+    }
   }
 
   get innerHTML() {
@@ -110,6 +115,10 @@ class FakeElement {
 
   get hidden() {
     return Boolean(this._hidden);
+  }
+
+  get lastElementChild() {
+    return this.children.at(-1) || null;
   }
 
   querySelector(selector) {
@@ -204,6 +213,7 @@ const ids = [
   "onboarding-agent-preset",
   "onboarding-agent-custom-name",
   "onboarding-agent-custom-command",
+  "onboarding-agent-add",
   "onboarding-custom-agent-fields",
   "onboarding-agent-status",
   "onboarding-config",
@@ -264,9 +274,8 @@ const ids = [
   "cfg-session-name-presets",
   "cfg-session-start-presets",
   "cfg-agent-preset",
-  "cfg-agent-custom-name",
-  "cfg-agent-custom-command",
-  "cfg-custom-agent-fields",
+  "agent-option-list",
+  "agent-option-add",
   "cfg-default-workspace-dir",
   "cfg-workspace-options",
   "workspace-option-list",
@@ -461,6 +470,15 @@ const context = {
         agent_kind: "codex",
         agent_name: "Codex",
         agent_command: "codex --dangerously-bypass-approvals-and-sandbox",
+        default_agent_id: "codex",
+        agents: [
+          { id: "codex", name: "Codex", kind: "codex", command: "codex --dangerously-bypass-approvals-and-sandbox" },
+          { id: "claude", name: "Claude Code", kind: "claude", command: "claude --dangerously-skip-permissions" },
+        ],
+        available_agents: [
+          { id: "codex", label: "Codex", kind: "codex", command: "codex --dangerously-bypass-approvals-and-sandbox" },
+          { id: "claude", label: "Claude Code", kind: "claude", command: "claude --dangerously-skip-permissions" },
+        ],
         workspace_options: [],
       });
     }
@@ -1335,23 +1353,28 @@ assert.equal(generatedStartPresets["999999"], undefined, "Agent selection should
 elements["cfg-agent-preset"].value = "claude";
 elements["cfg-agent-preset"].onchange();
 assert.match(elements["agent-preset-status"].textContent, /claude --dangerously-skip-permissions/, "Claude preset should use unattended permission mode");
-elements["cfg-agent-preset"].value = "custom";
-elements["cfg-agent-custom-name"].value = "";
-elements["cfg-agent-custom-command"].value = "";
+elements["agent-option-add"].onclick();
+const customAgentRow = elements["agent-option-list"].lastElementChild;
+const customAgentID = customAgentRow.dataset.agentId;
+customAgentRow.querySelector(".agent-option-name").value = "My Agent";
+customAgentRow.querySelector(".agent-option-command").value = "my-agent --run";
+customAgentRow.querySelector(".agent-option-command").oninput();
+elements["cfg-agent-preset"].value = customAgentID;
 elements["cfg-agent-preset"].onchange();
-assert.equal(elements["cfg-agent-preset"].value, "custom", "empty custom preset should remain selected while the user enters a command");
-assert.equal(elements["cfg-custom-agent-fields"].hidden, false, "custom Agent fields should remain visible");
-elements["cfg-agent-custom-name"].value = "My Agent";
-elements["cfg-agent-custom-command"].value = "my-agent --run";
-elements["cfg-agent-custom-command"].onchange();
 assert.match(elements["agent-preset-status"].textContent, /my-agent --run/, "custom Agent command should be reflected in status");
 app.state.config = {
   ...app.state.config,
+  default_agent_id: "codex",
+  agents: [
+    { id: "codex", name: "Codex", kind: "codex", command: "codex --dangerously-bypass-approvals-and-sandbox" },
+    { id: "claude", name: "Claude Code", kind: "claude", command: "claude --dangerously-skip-permissions" },
+    { id: customAgentID, name: "My Agent", kind: "custom", command: "my-agent --run" },
+  ],
   agent_kind: "codex",
   agent_name: "Codex",
   agent_command: "codex --dangerously-bypass-approvals-and-sandbox",
 };
-app.openConfigDialog("config-session");
+await app.openConfigDialog("config-session");
 assert.equal(elements["cfg-agent-preset"].value, "codex", "Agent should be selected from saved Agent config");
 elements["startup-json-preview"].value = JSON.stringify({
   session_pre_start_command: "source ~/.zshrc",
@@ -1377,9 +1400,11 @@ elements["cfg-drop-patterns"].value = JSON.stringify([
 ]);
 elements["cfg-lark-custom-shortcuts"].value = JSON.stringify([{ label: "状态", command: "git status" }]);
 elements["cfg-lark-default-session-name"].value = "Claude 会话";
-elements["cfg-agent-preset"].value = "custom";
-elements["cfg-agent-custom-name"].value = "Claude 私有助手";
-elements["cfg-agent-custom-command"].value = "claude --dangerously-skip-permissions";
+const savedCustomRow = [...elements["agent-option-list"].children].find((row) => row.dataset.agentId === customAgentID);
+savedCustomRow.querySelector(".agent-option-name").value = "Claude 私有助手";
+savedCustomRow.querySelector(".agent-option-command").value = "claude --dangerously-skip-permissions";
+savedCustomRow.querySelector(".agent-option-command").oninput();
+elements["cfg-agent-preset"].value = customAgentID;
 elements["cfg-agent-preset"].onchange();
 await app.testLarkConfig();
 assert.ok(fetchCalls.some((call) => call.path === "/api/config/lark-test" && call.options.method === "POST"), "lark config test should POST /api/config/lark-test");

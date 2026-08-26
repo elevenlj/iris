@@ -64,6 +64,23 @@ func TestDetectCodexTerminalAgentContextIgnoresStaleScrollbackHeader(t *testing.
 	}
 }
 
+func TestPendingWorkspaceSelectionOverridesStaleAidenCodexDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	wanted := filepath.Join(home, "project", "new")
+	rt := &RuntimeSession{
+		visibleSnapshot: strings.Join([]string{
+			"OpenAI Codex",
+			"gpt-5.6-sol high fast · ~/project/old",
+		}, "\n"),
+		pendingAgentDirectory: wanted,
+	}
+	got := rt.notificationAgentContextLocked()
+	if got == nil || got.Directory != "~/project/new" {
+		t.Fatalf("Agent context = %#v", got)
+	}
+}
+
 func TestLarkNotificationCardRendersAgentContextBeforeButtons(t *testing.T) {
 	content, err := larkNotificationCardContent(WaitingNotification{
 		SessionID:            "sess-1",

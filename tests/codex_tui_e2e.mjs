@@ -103,6 +103,10 @@ async function initializeIrisForCodexE2E() {
   await waitFor(() => evalExpr("document.querySelector('#settings-access-dialog').open !== true"));
   await evalExpr(`(async () => {
     const config = await fetch('/api/config').then((response) => response.json());
+    config.agents = (config.agents || []).map((agent) => agent.id === 'codex'
+      ? { ...agent, command: 'codex --dangerously-bypass-approvals-and-sandbox' }
+      : agent);
+    config.default_agent_id = 'codex';
     config.agent_kind = 'codex';
     config.agent_command = 'codex --dangerously-bypass-approvals-and-sandbox';
     config.onboarding_completed = true;

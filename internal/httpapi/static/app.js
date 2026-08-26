@@ -935,10 +935,6 @@ function renderConfig() {
   $("settings-confirm-password").value = "";
   $("settings-password-status").textContent = "";
   renderSettingsPasswordMatch();
-  const agentKind = cfg.agent_kind || "codex";
-  $("cfg-agent-preset").value = agentKind;
-  $("cfg-agent-custom-name").value = agentKind === "custom" ? (cfg.agent_name || "自定义 Agent") : "";
-  $("cfg-agent-custom-command").value = agentKind === "custom" ? (cfg.agent_command || "") : "";
   renderAgentPresetControls();
   setAgentPresetStatus("所有新会话都会自动启动当前 Agent。");
   $("preset-session-name").value = "";
@@ -1055,9 +1051,8 @@ async function maybeShowOnboarding() {
   if (!state.config || state.config.onboarding_completed) return;
   if ($("config-dialog").open || $("help-dialog").open) return;
   $("onboarding-default-session-name").value = state.config.lark_default_session_name || DEFAULT_SESSION_NAME;
-  $("onboarding-agent-preset").value = state.config.agent_kind || "codex";
-  $("onboarding-agent-custom-name").value = state.config.agent_kind === "custom" ? (state.config.agent_name || "自定义 Agent") : "";
-  $("onboarding-agent-custom-command").value = state.config.agent_kind === "custom" ? (state.config.agent_command || "") : "";
+  $("onboarding-agent-custom-name").value = "";
+  $("onboarding-agent-custom-command").value = "";
   renderOnboardingAgentControls();
   $("onboarding-dialog").showModal();
 }
@@ -1090,11 +1085,10 @@ function readConfigForm() {
   const workspaces = parseJSONArray($("cfg-workspace-options").value || "[]", "工作目录配置")
     .map((item) => ({ label: String(item?.label || "").trim(), value: String(item?.value || "").trim(), default: Boolean(item?.default) }))
     .filter((item) => item.label || item.value);
-  const agentKind = $("cfg-agent-preset").value;
-  const agentName = agentKind === "custom" ? $("cfg-agent-custom-name").value.trim() : ({ codex: "Codex", claude: "Claude Code" }[agentKind] || "");
-  const agentCommand = agentCommandForPreset(agentKind, $("cfg-agent-custom-command").value);
-  if (!agentKind || !agentCommand) throw new Error("必须配置一个 Agent");
-  if (!agentName) throw new Error("自定义 Agent 名称不能为空");
+  const agents = configuredAgents();
+  const defaultAgentID = $("cfg-agent-preset").value;
+  const defaultAgent = agents.find((agent) => agent.id === defaultAgentID);
+  if (!defaultAgent || !defaultAgent.command) throw new Error("必须配置一个 Agent");
   return {
     lark_app_id: $("cfg-lark-app-id").value.trim(),
     lark_app_secret: $("cfg-lark-app-secret").value,
@@ -1117,9 +1111,11 @@ function readConfigForm() {
     onboarding_completed: Boolean(state.config?.onboarding_completed),
     session_name_presets: namePresets,
     session_start_presets: startPresets,
-    agent_kind: agentKind,
-    agent_name: agentName,
-    agent_command: agentCommand,
+    agents,
+    default_agent_id: defaultAgentID,
+    agent_kind: defaultAgent.kind,
+    agent_name: defaultAgent.name,
+    agent_command: defaultAgent.command,
     default_workspace_dir: $("cfg-default-workspace-dir").value.trim(),
     workspace_options: workspaces,
   };
@@ -1451,42 +1447,96 @@ function renderEnvironmentCheckResult(result) {
   }
 }
 
-function agentPresetCommand() {
-  return agentCommandForPreset($("cfg-agent-preset").value, $("cfg-agent-custom-command").value);
-}
-
-function agentCommandForPreset(preset, customCommand = "") {
-  if (preset === "custom") return customCommand.trim();
-  return {
-    codex: "codex --dangerously-bypass-approvals-and-sandbox",
-    claude: "claude --dangerously-skip-permissions",
-  }[preset] || "";
-}
-
-function presetForAgentCommand(command = "") {
-  const normalized = String(command || "").trim();
-  for (const preset of ["codex", "claude"]) {
-    if (normalized === agentCommandForPreset(preset)) return { preset, customCommand: "" };
+function configuredAgents() {
+  if (Array.isArray(state.config?.agents)) {
+    return state.config.agents.map((agent) => ({
+      id: String(agent?.id || "").trim().toLowerCase(),
+      name: String(agent?.name || "").trim(),
+      kind: String(agent?.kind || "custom").trim().toLowerCase(),
+      command: String(agent?.command || "").trim(),
+    }));
   }
-  if (normalized) return { preset: "custom", customCommand: normalized };
-  return { preset: "", customCommand: "" };
+  if (!state.config?.agent_command) return [];
+  return [{
+    id: state.config.agent_kind || "custom",
+    name: state.config.agent_name || "自定义 Agent",
+    kind: state.config.agent_kind || "custom",
+    command: state.config.agent_command,
+  }];
 }
 
-function renderDefaultAgentPresetFromStartPreset(startPresets = {}) {
-  if (state.config?.agent_kind) return;
-  const commands = Array.isArray(startPresets?.[DEFAULT_AGENT_PRESET_CODE]?.commands) ? startPresets[DEFAULT_AGENT_PRESET_CODE].commands : [];
-  const firstCommand = commands.find((command) => String(command || "").trim());
-  const matched = presetForAgentCommand(firstCommand || "");
-  $("cfg-agent-preset").value = matched.preset || "codex";
-  $("cfg-agent-custom-name").value = matched.preset === "custom" ? "自定义 Agent" : "";
-  $("cfg-agent-custom-command").value = matched.customCommand;
+function visibleAgents() {
+  const agents = configuredAgents();
+  if (!Array.isArray(state.config?.available_agents)) return agents;
+  const available = new Set(state.config.available_agents.map((agent) => String(agent?.id || "").toLowerCase()));
+  return agents.filter((agent) => agent.kind === "custom" || available.has(agent.id));
+}
+
+function renderAgentSelect(select, selectedID) {
+  select.innerHTML = "";
+  for (const agent of visibleAgents()) {
+    const option = document.createElement("option");
+    option.value = agent.id;
+    option.textContent = agent.name || "未命名 Agent";
+    select.appendChild(option);
+  }
+  select.value = selectedID || state.config?.default_agent_id || "";
 }
 
 function renderAgentPresetControls() {
-  const custom = $("cfg-agent-preset").value === "custom";
-  $("cfg-custom-agent-fields").hidden = !custom;
-  $("cfg-custom-agent-fields").classList.toggle("hidden", !custom);
+  const select = $("cfg-agent-preset");
+  renderAgentSelect(select, state.config?.default_agent_id || select.value);
+  const box = $("agent-option-list");
+  box.innerHTML = "";
+  for (const agent of visibleAgents()) {
+    const row = document.createElement("div");
+    row.className = "agent-option-row";
+    row.dataset.agentId = agent.id;
+    row.innerHTML = `
+      <label><span>名称</span><input class="agent-option-name" maxlength="40"></label>
+      <label><span>启动命令</span><input class="agent-option-command"></label>
+      ${agent.kind === "custom" ? '<button class="agent-option-remove" type="button">删除</button>' : ""}`;
+    const nameInput = row.querySelector(".agent-option-name");
+    const commandInput = row.querySelector(".agent-option-command");
+    nameInput.value = agent.name;
+    nameInput.disabled = agent.kind !== "custom";
+    commandInput.value = agent.command;
+    const update = () => {
+      const current = configuredAgents();
+      const target = current.find((item) => item.id === agent.id);
+      if (!target) return;
+      target.name = nameInput.value.trim();
+      target.command = commandInput.value.trim();
+      state.config.agents = current;
+      ensureDefaultAgentPreset();
+    };
+    nameInput.oninput = update;
+    commandInput.oninput = update;
+    const remove = row.querySelector(".agent-option-remove");
+    if (remove) remove.onclick = () => removeCustomAgent(agent.id);
+    box.appendChild(row);
+  }
 }
+
+function addCustomAgent() {
+  const id = `custom-${globalThis.crypto?.randomUUID?.() || Date.now()}`.toLowerCase();
+  state.config.agents = [...configuredAgents(), { id, name: "", kind: "custom", command: "" }];
+  state.config.default_agent_id = id;
+  renderAgentPresetControls();
+  $("cfg-agent-preset").value = id;
+  $("agent-option-list").lastElementChild?.querySelector(".agent-option-name")?.focus();
+}
+
+function removeCustomAgent(id) {
+  state.config.agents = configuredAgents().filter((agent) => agent.id !== id);
+  if (state.config.default_agent_id === id) {
+    state.config.default_agent_id = visibleAgents()[0]?.id || "";
+  }
+  renderAgentPresetControls();
+  ensureDefaultAgentPreset();
+}
+
+function renderDefaultAgentPresetFromStartPreset() {}
 
 function setAgentPresetStatus(message, ok = null) {
   const el = $("agent-preset-status");
@@ -1496,23 +1546,17 @@ function setAgentPresetStatus(message, ok = null) {
 }
 
 function ensureDefaultAgentPreset() {
-  const custom = $("cfg-agent-preset").value === "custom";
-  if (custom && !$("cfg-agent-custom-name").value.trim()) {
-    setAgentPresetStatus("请填写自定义 Agent 名称。", false);
+  const selected = configuredAgents().find((agent) => agent.id === $("cfg-agent-preset").value);
+  if (!selected?.name || !selected?.command) {
+    setAgentPresetStatus("请填写 Agent 名称和启动命令。", false);
     return;
   }
-  const command = agentPresetCommand();
-  if (!command) {
-    setAgentPresetStatus("请填写自定义 Agent 启动命令。", false);
-    return;
-  }
-  setAgentPresetStatus(`新会话将自动启动：${command}`, true);
+  state.config.default_agent_id = selected.id;
+  setAgentPresetStatus(`新会话将自动启动：${selected.command}`, true);
 }
 
 function renderOnboardingAgentControls() {
-  const custom = $("onboarding-agent-preset").value === "custom";
-  $("onboarding-custom-agent-fields").hidden = !custom;
-  $("onboarding-custom-agent-fields").classList.toggle("hidden", !custom);
+  renderAgentSelect($("onboarding-agent-preset"), state.config?.default_agent_id);
 }
 
 function setOnboardingAgentStatus(message, ok = null) {
@@ -1522,36 +1566,41 @@ function setOnboardingAgentStatus(message, ok = null) {
   el.classList.toggle("fail", ok === false);
 }
 
-function setDefaultAgentPresetInConfig(cfg, preset, customCommand, defaultSessionName = "") {
-  const command = agentCommandForPreset(preset, customCommand);
-  const sessionName = (defaultSessionName || cfg.lark_default_session_name || DEFAULT_SESSION_NAME).trim() || DEFAULT_SESSION_NAME;
-  const presets = cfg.session_start_presets && typeof cfg.session_start_presets === "object" && !Array.isArray(cfg.session_start_presets)
-    ? { ...cfg.session_start_presets }
-    : {};
-  if (command) {
-    presets[DEFAULT_AGENT_PRESET_CODE] = { commands: [command] };
+function addOnboardingAgent() {
+  const name = $("onboarding-agent-custom-name").value.trim();
+  const command = $("onboarding-agent-custom-command").value.trim();
+  if (!name || !command) {
+    setOnboardingAgentStatus("请填写自定义 Agent 名称和启动命令。", false);
+    return;
   }
-  return { ...cfg, lark_default_session_name: sessionName, session_start_presets: presets, onboarding_completed: true };
+  const id = `custom-${globalThis.crypto?.randomUUID?.() || Date.now()}`.toLowerCase();
+  const agent = { id, name, kind: "custom", command };
+  state.config.agents = [...configuredAgents(), agent];
+  state.config.available_agents = [...(state.config.available_agents || []), { ...agent, label: name }];
+  state.config.default_agent_id = id;
+  renderOnboardingAgentControls();
+  $("onboarding-agent-preset").value = id;
+  $("onboarding-agent-custom-name").value = "";
+  $("onboarding-agent-custom-command").value = "";
+  setOnboardingAgentStatus(`已添加：${name}`, true);
 }
 
 async function completeOnboarding(options = {}) {
   if (!state.config) await loadConfig();
-  const preset = $("onboarding-agent-preset").value;
+  const agentID = $("onboarding-agent-preset").value;
   const defaultSessionName = $("onboarding-default-session-name").value.trim() || DEFAULT_SESSION_NAME;
-  const customName = $("onboarding-agent-custom-name").value.trim();
-  const customCommand = $("onboarding-agent-custom-command").value.trim();
-  if (preset === "custom" && (!customName || !customCommand)) {
-    setOnboardingAgentStatus("请填写自定义 Agent 名称和启动命令。", false);
+  const agent = configuredAgents().find((item) => item.id === agentID);
+  if (!agent) {
+    setOnboardingAgentStatus("请先选择或添加一个 Agent。", false);
     return;
   }
-  const command = agentCommandForPreset(preset, customCommand);
-  const agentName = preset === "custom" ? customName : ({ codex: "Codex", claude: "Claude Code" }[preset] || "");
   state.config = {
     ...state.config,
     lark_default_session_name: defaultSessionName,
-    agent_kind: preset,
-    agent_name: agentName,
-    agent_command: command,
+    default_agent_id: agent.id,
+    agent_kind: agent.kind,
+    agent_name: agent.name,
+    agent_command: agent.command,
     onboarding_completed: true,
   };
   state.config = await api("/api/config", { method: "PATCH", body: JSON.stringify(state.config) });
@@ -2387,17 +2436,12 @@ $("environment-check-start").onclick = () => checkEnvironment().catch((err) => {
 $("cfg-lark-app-id").oninput = renderLarkPermissionGuide;
 
 $("cfg-agent-preset").onchange = () => {
-  renderAgentPresetControls();
+  state.config.default_agent_id = $("cfg-agent-preset").value;
   setAgentPresetStatus("");
-  if ($("cfg-agent-preset").value === "custom" && !$("cfg-agent-custom-name").value.trim()) {
-    $("cfg-agent-custom-name").focus();
-    return;
-  }
   ensureDefaultAgentPreset();
 };
 
-$("cfg-agent-custom-name").oninput = ensureDefaultAgentPreset;
-$("cfg-agent-custom-command").onchange = ensureDefaultAgentPreset;
+$("agent-option-add").onclick = addCustomAgent;
 
 $("preset-save").onclick = saveNamePresetFromForm;
 $("preset-clear").onclick = clearNamePresetForm;
@@ -2437,15 +2481,13 @@ document.querySelectorAll(".config-tab").forEach((tab) => {
 });
 
 $("onboarding-agent-preset").onchange = () => {
-  renderOnboardingAgentControls();
+  state.config.default_agent_id = $("onboarding-agent-preset").value;
   setOnboardingAgentStatus("");
-  if ($("onboarding-agent-preset").value === "custom" && !$("onboarding-agent-custom-name").value.trim()) {
-    $("onboarding-agent-custom-name").focus();
-  }
 };
 
 $("onboarding-agent-custom-name").oninput = () => setOnboardingAgentStatus("");
 $("onboarding-agent-custom-command").oninput = () => setOnboardingAgentStatus("");
+$("onboarding-agent-add").onclick = addOnboardingAgent;
 
 $("onboarding-config").onclick = async () => {
   try {
