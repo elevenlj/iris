@@ -4095,13 +4095,39 @@ func (rt *RuntimeSession) decorateWaitingNotification(note WaitingNotification) 
 	}
 	sess := rt.Snapshot()
 	note.DeveloperModeEnabled = sess.DeveloperModeEnabled
-	note.AgentID = sess.LastAgentID
 	note.AgentKind = sess.LastAgentKind
 	if sessionSupportsWorkspaceSwitch(sess) {
 		note.WorkspaceOptions = rt.manager.WorkspaceOptionsForSession(sess)
 	}
 	note.AgentOptions = rt.manager.AvailableAgentOptions()
+	defaultAgent, _ := rt.manager.AgentConfig()
+	if defaultAgent.Kind == "custom" && !agentOptionExists(note.AgentOptions, defaultAgent.ID) {
+		note.AgentOptions = append(note.AgentOptions, AgentOption{ID: defaultAgent.ID, Label: defaultAgent.Name, Kind: defaultAgent.Kind, Command: defaultAgent.Command})
+	}
+	note.AgentID = matchingAgentOptionID(sess, note.AgentOptions)
 	return note
+}
+
+func agentOptionExists(options []AgentOption, id string) bool {
+	for _, option := range options {
+		if strings.EqualFold(strings.TrimSpace(option.ID), strings.TrimSpace(id)) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchingAgentOptionID(sess Session, options []AgentOption) string {
+	if agentOptionExists(options, sess.LastAgentID) {
+		return strings.TrimSpace(sess.LastAgentID)
+	}
+	startCommand := strings.TrimSpace(sess.LastAgentStartCommand)
+	for _, option := range options {
+		if startCommand != "" && strings.TrimSpace(option.Command) == startCommand {
+			return option.ID
+		}
+	}
+	return ""
 }
 
 func (rt *RuntimeSession) waitingNotificationCandidateLocked() (WaitingNotification, string, bool, string) {

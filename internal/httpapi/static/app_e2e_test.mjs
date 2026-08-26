@@ -277,6 +277,7 @@ const ids = [
   "agent-option-list",
   "agent-option-add",
   "cfg-default-workspace-dir",
+  "default-workspace-summary",
   "cfg-workspace-options",
   "workspace-option-list",
   "workspace-option-add",
@@ -1247,6 +1248,12 @@ await notify.onchange({ stopPropagation() {}, target: notify });
 assert.ok(fetchCalls.some((call) => call.path === "/api/sessions/sess-1" && call.options.method === "PATCH" && call.options.body.includes('"notify_on_waiting":true')));
 
 await app.loadConfig();
+elements["cfg-default-workspace-dir"].value = "/data00/home/lijun.eleven/bytebot_robot_biz";
+elements["cfg-default-workspace-dir"].oninput();
+assert.match(elements["default-workspace-summary"].textContent, /\/data00\/home\/lijun\.eleven\/bytebot_robot_biz/, "workspace summary should show the configured default directory");
+elements["cfg-default-workspace-dir"].value = "";
+elements["cfg-default-workspace-dir"].oninput();
+assert.match(elements["default-workspace-summary"].textContent, /~\/Iris_Workspace\/default_dir/, "workspace summary should show the fallback only when empty");
 elements["cfg-fast-waiting"].value = "450";
 elements["cfg-conservative-waiting"].value = "900";
 elements["cfg-lark-max-lines"].value = "120";

@@ -965,6 +965,7 @@ function renderConfig() {
   $("cfg-session-name-presets").value = JSON.stringify(cfg.session_name_presets || {}, null, 2);
   $("cfg-session-start-presets").value = JSON.stringify(cfg.session_start_presets || {}, null, 2);
   $("cfg-default-workspace-dir").value = cfg.default_workspace_dir || "";
+  renderDefaultWorkspaceSummary();
   $("cfg-workspace-options").value = JSON.stringify(cfg.workspace_options || [], null, 2);
   renderDropRules();
   renderCustomShortcuts();
@@ -1630,6 +1631,13 @@ function renderWorkspaceOptions() {
     };
     box.appendChild(row);
   }
+}
+
+function renderDefaultWorkspaceSummary() {
+  const dir = $("cfg-default-workspace-dir").value.trim();
+  $("default-workspace-summary").textContent = dir
+    ? `新会话会在当前默认目录中启动 Agent：${dir}`
+    : "新会话会在默认目录中启动 Agent：~/Iris_Workspace/default_dir";
 }
 
 function syncWorkspaceOptions() {
@@ -2450,6 +2458,7 @@ $("prestart-command-add").onclick = () => addPreStartCommandRow("");
 $("drop-rule-add").onclick = addDropRule;
 $("custom-shortcut-add").onclick = addCustomShortcut;
 $("workspace-option-add").onclick = addWorkspaceOption;
+$("cfg-default-workspace-dir").oninput = renderDefaultWorkspaceSummary;
 $("startup-json-toggle").onclick = toggleStartupJSONPreview;
 $("startup-json-preview").oninput = () => {
   state.startupJSONDirty = true;

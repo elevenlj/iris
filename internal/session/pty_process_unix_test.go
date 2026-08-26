@@ -4,7 +4,9 @@ package session
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"os/signal"
 	"testing"
 	"time"
 
@@ -31,10 +33,26 @@ func TestPTYForegroundTerminationEscalatesAndReturnsControlToShell(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := terminal.Write([]byte("sh -c 'trap \"\" INT TERM; while :; do :; done'\r")); err != nil {
+	testBinary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyFile := t.TempDir() + "/ready"
+	command := "IRIS_TEST_IGNORE_SIGNALS=1 IRIS_TEST_SIGNAL_READY=" + shellQuote(readyFile) + " " + shellQuote(testBinary) + " -test.run '^TestPTYSignalIgnoringHelper$'"
+	if _, err := terminal.Write([]byte(command + "\r")); err != nil {
 		t.Fatal(err)
 	}
 	agentGroup := waitForDifferentForegroundGroup(t, terminal, shellGroup)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(readyFile); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("signal-ignoring helper did not become ready")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	t.Cleanup(func() {
 		_ = unix.Kill(-agentGroup, unix.SIGKILL)
 	})
@@ -54,6 +72,17 @@ func TestPTYForegroundTerminationEscalatesAndReturnsControlToShell(t *testing.T)
 	if foregroundGroup != shellGroup {
 		t.Fatalf("foreground group = %d, want shell group %d", foregroundGroup, shellGroup)
 	}
+}
+
+func TestPTYSignalIgnoringHelper(t *testing.T) {
+	if os.Getenv("IRIS_TEST_IGNORE_SIGNALS") != "1" {
+		return
+	}
+	signal.Ignore(unix.SIGINT, unix.SIGTERM)
+	if err := os.WriteFile(os.Getenv("IRIS_TEST_SIGNAL_READY"), []byte("ready"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {}
 }
 
 func waitForDifferentForegroundGroup(t *testing.T, terminal *ptyTerminal, shellGroup int) int {

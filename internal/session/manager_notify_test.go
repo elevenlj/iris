@@ -2401,6 +2401,20 @@ func TestLarkNotificationCardContentListsOnlyAvailableAgentOptions(t *testing.T)
 	}
 }
 
+func TestMatchingAgentOptionIDUsesStartCommandForLegacyCustomSession(t *testing.T) {
+	options := []AgentOption{
+		{ID: "codex", Label: "Codex", Kind: "codex", Command: CodexAgentCommand},
+		{ID: "custom-aiden", Label: "aiden", Kind: "custom", Command: "aiden x codex --dangerously-bypass-approvals-and-sandbox"},
+	}
+	got := matchingAgentOptionID(Session{
+		LastAgentKind:         "codex",
+		LastAgentStartCommand: "aiden x codex --dangerously-bypass-approvals-and-sandbox",
+	}, options)
+	if got != "custom-aiden" {
+		t.Fatalf("matched Agent ID = %q", got)
+	}
+}
+
 func TestLarkNotificationCardContentDisabledRemovesButtons(t *testing.T) {
 	content, err := larkNotificationCardContent(WaitingNotification{
 		SessionID:            "sess-1",
