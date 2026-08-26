@@ -22,7 +22,7 @@ func TestDetectAvailableAgentOptionsPrioritizesCodexThenClaudeAndIncludesCustom(
 		{ID: "custom-review", Name: "审查助手", Kind: "custom", Command: "review-agent"},
 	}, fakeAgentExecutableFinder{"codex": true, "claude": true})
 	want := []AgentOption{
-		{ID: "codex", Label: "Codex", Kind: "codex", Command: "codex --custom-flags"},
+		{ID: "codex", Label: "Codex", Kind: "codex", Command: CodexAgentCommand},
 		{ID: "claude", Label: "Claude Code", Kind: "claude", Command: ClaudeAgentCommand},
 		{ID: "custom-plan", Label: "方案助手", Kind: "custom", Command: "my-agent --full-access"},
 		{ID: "custom-review", Label: "审查助手", Kind: "custom", Command: "review-agent"},

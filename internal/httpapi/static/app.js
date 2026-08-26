@@ -1489,17 +1489,17 @@ function renderAgentPresetControls() {
   const box = $("agent-option-list");
   box.innerHTML = "";
   for (const agent of visibleAgents()) {
+    if (agent.kind !== "custom") continue;
     const row = document.createElement("div");
     row.className = "agent-option-row";
     row.dataset.agentId = agent.id;
     row.innerHTML = `
       <label><span>名称</span><input class="agent-option-name" maxlength="40"></label>
       <label><span>启动命令</span><input class="agent-option-command"></label>
-      ${agent.kind === "custom" ? '<button class="agent-option-remove" type="button">删除</button>' : ""}`;
+      <button class="agent-option-remove" type="button">删除</button>`;
     const nameInput = row.querySelector(".agent-option-name");
     const commandInput = row.querySelector(".agent-option-command");
     nameInput.value = agent.name;
-    nameInput.disabled = agent.kind !== "custom";
     commandInput.value = agent.command;
     const update = () => {
       const current = configuredAgents();
@@ -1512,8 +1512,7 @@ function renderAgentPresetControls() {
     };
     nameInput.oninput = update;
     commandInput.oninput = update;
-    const remove = row.querySelector(".agent-option-remove");
-    if (remove) remove.onclick = () => removeCustomAgent(agent.id);
+    row.querySelector(".agent-option-remove").onclick = () => removeCustomAgent(agent.id);
     box.appendChild(row);
   }
 }
@@ -1552,7 +1551,7 @@ function ensureDefaultAgentPreset() {
     return;
   }
   state.config.default_agent_id = selected.id;
-  setAgentPresetStatus(`新会话将自动启动：${selected.command}`, true);
+  setAgentPresetStatus(`新会话将自动启动：${selected.kind === "custom" ? selected.command : selected.name}`, true);
 }
 
 function renderOnboardingAgentControls() {

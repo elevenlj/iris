@@ -1352,7 +1352,8 @@ let generatedStartPresets = JSON.parse(elements["cfg-session-start-presets"].val
 assert.equal(generatedStartPresets["999999"], undefined, "Agent selection should no longer depend on a hidden start preset");
 elements["cfg-agent-preset"].value = "claude";
 elements["cfg-agent-preset"].onchange();
-assert.match(elements["agent-preset-status"].textContent, /claude --dangerously-skip-permissions/, "Claude preset should use unattended permission mode");
+assert.equal(elements["agent-option-list"].children.length, 0, "scanned Agents should not expose editable details");
+assert.equal(elements["agent-preset-status"].textContent, "新会话将自动启动：Claude Code", "scanned Agent status should not expose its command");
 elements["agent-option-add"].onclick();
 const customAgentRow = elements["agent-option-list"].lastElementChild;
 const customAgentID = customAgentRow.dataset.agentId;

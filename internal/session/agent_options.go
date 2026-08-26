@@ -31,31 +31,12 @@ func DetectAvailableAgentOptions(configured ...AgentConfig) []AgentOption {
 }
 
 func detectAvailableAgentOptions(configured []AgentConfig, finder agentExecutableFinder) []AgentOption {
-	configuredByID := make(map[string]AgentConfig, len(configured))
-	for _, agent := range configured {
-		agent.ID = strings.ToLower(strings.TrimSpace(agent.ID))
-		agent.Name = strings.TrimSpace(agent.Name)
-		agent.Kind = strings.ToLower(strings.TrimSpace(agent.Kind))
-		agent.Command = strings.TrimSpace(agent.Command)
-		if agent.ID != "" {
-			configuredByID[agent.ID] = agent
-		}
-	}
-
 	options := make([]AgentOption, 0, len(configured)+2)
 	if _, err := finder.LookPath("codex"); err == nil {
-		agent := configuredByID["codex"]
-		if agent.Command == "" {
-			agent.Command = CodexAgentCommand
-		}
-		options = append(options, AgentOption{ID: "codex", Label: "Codex", Kind: "codex", Command: agent.Command})
+		options = append(options, AgentOption{ID: "codex", Label: "Codex", Kind: "codex", Command: CodexAgentCommand})
 	}
 	if _, err := finder.LookPath("claude"); err == nil {
-		agent := configuredByID["claude"]
-		if agent.Command == "" {
-			agent.Command = ClaudeAgentCommand
-		}
-		options = append(options, AgentOption{ID: "claude", Label: "Claude Code", Kind: "claude", Command: agent.Command})
+		options = append(options, AgentOption{ID: "claude", Label: "Claude Code", Kind: "claude", Command: ClaudeAgentCommand})
 	}
 	for _, agent := range configured {
 		agent.ID = strings.ToLower(strings.TrimSpace(agent.ID))

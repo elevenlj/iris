@@ -23,4 +23,4 @@ It also installs the Codex `notify` and Claude Code `Stop` completion hooks toge
 
 The settings page includes an optional one-time environment check for Node.js, the headless browser, writable data storage, Feishu connectivity, and the configured Agent. The result is not saved and does not block setup.
 
-On first launch Iris automatically chooses an installed Agent in this order: Codex, then Claude Code. The Agent list supports editable built-in commands and multiple custom Agents, and developer-mode Feishu cards use the same list. Restarts resume the exact recorded Codex, Claude Code, or `aiden x codex` session when its session ID is available.
+On first launch Iris automatically chooses an installed Agent in this order: Codex, then Claude Code. Scanned built-in Agents use fixed commands, while the list supports multiple editable custom Agents; developer-mode Feishu cards use the same list. Restarts resume the exact recorded Codex, Claude Code, or `aiden x codex` session when its session ID is available.

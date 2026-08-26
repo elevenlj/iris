@@ -148,16 +148,12 @@ func normalizeAgentConfig(agent AgentConfig) AgentConfig {
 	if agent.Kind == "codex" {
 		agent.ID = "codex"
 		agent.Name = "Codex"
-		if agent.Command == "" {
-			agent.Command = CodexAgentCommand
-		}
+		agent.Command = CodexAgentCommand
 	}
 	if agent.Kind == "claude" {
 		agent.ID = "claude"
 		agent.Name = "Claude Code"
-		if agent.Command == "" {
-			agent.Command = ClaudeAgentCommand
-		}
+		agent.Command = ClaudeAgentCommand
 	}
 	if agent.Kind == "custom" && agent.Name == "" {
 		agent.Name = "自定义 Agent"

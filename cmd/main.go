@@ -467,24 +467,16 @@ func migrateAgentDefinitions(cfg Config) (Config, bool) {
 		agents = append(agents, session.AgentConfig{ID: "custom", Name: strings.TrimSpace(cfg.AgentName), Kind: "custom", Command: legacyCommand})
 	}
 	if agentConfigByID(agents, "codex").ID == "" {
-		command := session.CodexAgentCommand
-		if legacyKind == "codex" && legacyCommand != "" {
-			command = legacyCommand
-		}
-		agents = append([]session.AgentConfig{{ID: "codex", Name: "Codex", Kind: "codex", Command: command}}, agents...)
+		agents = append([]session.AgentConfig{{ID: "codex", Name: "Codex", Kind: "codex", Command: session.CodexAgentCommand}}, agents...)
 	}
 	if agentConfigByID(agents, "claude").ID == "" {
-		command := session.ClaudeAgentCommand
-		if legacyKind == "claude" && legacyCommand != "" {
-			command = legacyCommand
-		}
 		insertAt := 1
 		if len(agents) < insertAt {
 			insertAt = len(agents)
 		}
 		agents = append(agents, session.AgentConfig{})
 		copy(agents[insertAt+1:], agents[insertAt:])
-		agents[insertAt] = session.AgentConfig{ID: "claude", Name: "Claude Code", Kind: "claude", Command: command}
+		agents[insertAt] = session.AgentConfig{ID: "claude", Name: "Claude Code", Kind: "claude", Command: session.ClaudeAgentCommand}
 	}
 	normalized := make([]session.AgentConfig, 0, len(agents))
 	seen := map[string]bool{}
@@ -494,16 +486,10 @@ func migrateAgentDefinitions(cfg Config) (Config, bool) {
 		agent.Kind = strings.ToLower(strings.TrimSpace(agent.Kind))
 		agent.Command = strings.TrimSpace(agent.Command)
 		if agent.ID == "codex" {
-			agent.Name, agent.Kind = "Codex", "codex"
-			if agent.Command == "" {
-				agent.Command = session.CodexAgentCommand
-			}
+			agent.Name, agent.Kind, agent.Command = "Codex", "codex", session.CodexAgentCommand
 		}
 		if agent.ID == "claude" {
-			agent.Name, agent.Kind = "Claude Code", "claude"
-			if agent.Command == "" {
-				agent.Command = session.ClaudeAgentCommand
-			}
+			agent.Name, agent.Kind, agent.Command = "Claude Code", "claude", session.ClaudeAgentCommand
 		}
 		if agent.ID == "" || seen[agent.ID] || agent.Name == "" || agent.Command == "" {
 			continue
@@ -545,18 +531,18 @@ func validateAgentDefinitions(agents []session.AgentConfig, defaultID string) ([
 		agent.Name = strings.TrimSpace(agent.Name)
 		agent.Kind = strings.ToLower(strings.TrimSpace(agent.Kind))
 		agent.Command = strings.TrimSpace(agent.Command)
+		if agent.ID == "codex" {
+			agent.Name, agent.Kind, agent.Command = "Codex", "codex", session.CodexAgentCommand
+		} else if agent.ID == "claude" {
+			agent.Name, agent.Kind, agent.Command = "Claude Code", "claude", session.ClaudeAgentCommand
+		} else if agent.Kind != "custom" {
+			return nil, session.AgentConfig{}, errors.New("自定义 Agent 类型无效")
+		}
 		if agent.ID == "" || agent.Name == "" || agent.Command == "" {
 			return nil, session.AgentConfig{}, errors.New("Agent 名称和启动命令不能为空")
 		}
 		if len([]rune(agent.Name)) > 40 {
 			return nil, session.AgentConfig{}, errors.New("Agent 名称不能超过 40 个字符")
-		}
-		if agent.ID == "codex" {
-			agent.Name, agent.Kind = "Codex", "codex"
-		} else if agent.ID == "claude" {
-			agent.Name, agent.Kind = "Claude Code", "claude"
-		} else if agent.Kind != "custom" {
-			return nil, session.AgentConfig{}, errors.New("自定义 Agent 类型无效")
 		}
 		nameKey := strings.ToLower(agent.Name)
 		if seenIDs[agent.ID] || seenNames[nameKey] {

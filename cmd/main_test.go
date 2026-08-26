@@ -230,13 +230,23 @@ func TestAutoSelectFirstUseAgentKeepsExistingOrMissingConfiguration(t *testing.T
 	}
 }
 
-func TestMigrateAgentDefinitionsPreservesEditableBuiltinCommand(t *testing.T) {
+func TestMigrateAgentDefinitionsResetsBuiltinCommand(t *testing.T) {
 	cfg, changed := migrateAgentDefinitions(Config{AgentKind: "codex", AgentCommand: "codex --profile work"})
-	if !changed || cfg.DefaultAgentID != "codex" || cfg.AgentCommand != "codex --profile work" {
+	if !changed || cfg.DefaultAgentID != "codex" || cfg.AgentCommand != session.CodexAgentCommand {
 		t.Fatalf("migrated config = %#v changed=%v", cfg, changed)
 	}
-	if got := agentConfigByID(cfg.Agents, "codex").Command; got != "codex --profile work" {
+	if got := agentConfigByID(cfg.Agents, "codex").Command; got != session.CodexAgentCommand {
 		t.Fatalf("Codex command = %q", got)
+	}
+}
+
+func TestValidateAgentDefinitionsDoesNotAllowBuiltinOverrides(t *testing.T) {
+	agents, selected, err := validateAgentDefinitions([]session.AgentConfig{{ID: "codex", Name: "Changed", Kind: "custom", Command: "other"}}, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Name != "Codex" || selected.Kind != "codex" || selected.Command != session.CodexAgentCommand || agents[0] != selected {
+		t.Fatalf("validated built-in = %#v, agents=%#v", selected, agents)
 	}
 }
 
