@@ -3785,14 +3785,14 @@ func TestStartupPresetNotificationSuppressionSkipsExternalNotifyAndHook(t *testi
 	}
 }
 
-func TestStartupDiscardSkipsTerminalCardAndSignalsReady(t *testing.T) {
+func TestStartupDiscardWaitsForAgentComposerBeforeSignalingReady(t *testing.T) {
 	notifier := &recordingNotifier{}
 	m := NewManager(nil, nil, WithNotifier(notifier))
 	ready := make(chan string, 1)
 	m.SetNotificationSentHook(func(sessionID string) { ready <- sessionID })
 	rt := &RuntimeSession{
 		manager:           m,
-		session:           Session{ID: "sess-1", Name: "A", Status: StatusRunning, Live: true, NotifyOnWaiting: true},
+		session:           Session{ID: "sess-1", Name: "A", Status: StatusRunning, Live: true, NotifyOnWaiting: true, LastAgentKind: "custom", LastAgentStartCommand: "aiden x codex"},
 		startupNotifyMode: startupNotifyDiscard,
 	}
 
@@ -3808,14 +3808,31 @@ func TestStartupDiscardSkipsTerminalCardAndSignalsReady(t *testing.T) {
 	}
 	select {
 	case sessionID := <-ready:
+		t.Fatalf("startup header must not release queued input, got %q", sessionID)
+	default:
+	}
+	if !rt.discardingStartupNotifications() {
+		t.Fatal("startup discard mode should remain active until the composer is ready")
+	}
+
+	rt.mu.Lock()
+	rt.stopNotifyTimerLocked()
+	rt.visibleSnapshot = "OpenAI Codex\nmodel: gpt-5.6\ndirectory: /tmp/project\n› Ask Codex to do anything"
+	rt.visibleSnapshotSource = "browser:buffer;continuity_version=2;render_epoch=1;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=3"
+	version = rt.notifyVersion
+	rt.mu.Unlock()
+	rt.notifyIfStillWaiting(version)
+
+	select {
+	case sessionID := <-ready:
 		if sessionID != "sess-1" {
 			t.Fatalf("ready session = %q", sessionID)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("discarded startup output should release queued input")
+		t.Fatal("ready Agent composer should release queued input")
 	}
 	if rt.discardingStartupNotifications() {
-		t.Fatal("startup discard mode should end after the terminal becomes stable")
+		t.Fatal("startup discard mode should end after the Agent composer becomes ready")
 	}
 }
 

@@ -1743,7 +1743,7 @@ func TestLarkReplyBridgeQueuedRecoveryInputKeepsStartupTUISuppressed(t *testing.
 	rt.mu.Lock()
 	rt.session.Status = StatusRunning
 	rt.session.LastMode = SessionModeAgent
-	rt.inputQueueUntil = time.Now().Add(time.Minute)
+	rt.inputQueueUntil = time.Now().Add(-time.Second)
 	rt.startupNotifyMode = startupNotifyDiscard
 	rt.mu.Unlock()
 

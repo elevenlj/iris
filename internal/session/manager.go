@@ -1200,8 +1200,13 @@ func (rt *RuntimeSession) ShouldQueueInputWhileRunning() bool {
 }
 
 func (rt *RuntimeSession) shouldQueueInputWhileRunningLocked(now time.Time) bool {
+	if strings.TrimSpace(rt.session.LastMode) != SessionModeAgent {
+		return false
+	}
+	if rt.startupNotifyMode == startupNotifyDiscard {
+		return true
+	}
 	return rt.session.Status == StatusRunning &&
-		strings.TrimSpace(rt.session.LastMode) == SessionModeAgent &&
 		!rt.inputQueueUntil.IsZero() &&
 		now.Before(rt.inputQueueUntil)
 }
@@ -2154,7 +2159,7 @@ func parseSnapshotSourceContinuity(source string) snapshotSourceContinuity {
 		return metadata
 	}
 	guardLine, err := strconv.Atoi(values["anchor_guard_line"])
-	if err != nil || guardLine < 0 {
+	if err != nil || guardLine < -1 || (guard == "true" && guardLine < 0) {
 		return metadata
 	}
 	metadata.bufferAtCapacity = capacity == "true"
@@ -2169,6 +2174,21 @@ func parseSnapshotSourceContinuity(source string) snapshotSourceContinuity {
 	}
 	metadata.valid = true
 	return metadata
+}
+
+func startupAgentComposerReady(snapshot, source, agentKind string) bool {
+	switch strings.ToLower(strings.TrimSpace(agentKind)) {
+	case "codex", "claude", "aiden":
+	default:
+		return true
+	}
+	cursorLine := parseSnapshotSourceContinuity(source).cursorLine
+	lines := splitVisibleLines(snapshot)
+	if cursorLine < 0 || cursorLine >= len(lines) {
+		return false
+	}
+	_, ready := submittedInputPromptText(lines[cursorLine])
+	return ready
 }
 
 func (rt *RuntimeSession) currentRoundContentWithFreshSnapshot(timeout time.Duration) (string, bool) {
@@ -3699,6 +3719,23 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 		return
 	}
 	if rt.startupNotifyMode == startupNotifyDiscard {
+		rt.mu.Unlock()
+		rt.RequestFreshSnapshot(defaultNotifySnapshotTimeout)
+		rt.mu.Lock()
+		if rt.session.Status != StatusWaiting || !rt.session.Live || rt.notifyVersion != version || rt.startupNotifyMode != startupNotifyDiscard {
+			rt.mu.Unlock()
+			return
+		}
+		agentKind := agentKindForCommand(rt.session.LastAgentStartCommand, rt.session.LastAgentKind)
+		if !startupAgentComposerReady(rt.visibleSnapshot, rt.visibleSnapshotSource, agentKind) {
+			rt.rescheduleNotifyRetryLocked(version)
+			sessionID := rt.session.ID
+			source := rt.visibleSnapshotSource
+			rt.mu.Unlock()
+			log.Printf("startup input deferred session=%s version=%d reason=composer_not_ready snapshot_source=%s", sessionID, version, source)
+			return
+		}
+		rt.stopNotifyTimerLocked()
 		rt.startupNotifyMode = startupNotifyNormal
 		sessionID := rt.session.ID
 		rt.mu.Unlock()
@@ -4281,7 +4318,8 @@ func (rt *RuntimeSession) visibleSnapshotStaleForCurrentRoundLocked() bool {
 }
 
 func (rt *RuntimeSession) rescheduleNotifyRetryLocked(version int64) {
-	if rt.session.Status != StatusWaiting || !rt.session.Live || rt.notifyVersion != version || !rt.session.NotifyOnWaiting {
+	if rt.session.Status != StatusWaiting || !rt.session.Live || rt.notifyVersion != version ||
+		(!rt.session.NotifyOnWaiting && rt.startupNotifyMode != startupNotifyDiscard) {
 		return
 	}
 	rt.stopNotifyTimerLocked()
