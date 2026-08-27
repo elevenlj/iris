@@ -433,7 +433,8 @@ func RunCodexNotify(args []string) error {
 		}
 	}
 	var event struct {
-		Type string `json:"type"`
+		Type                 string `json:"type"`
+		LastAssistantMessage string `json:"last-assistant-message"`
 	}
 	if err := json.Unmarshal([]byte(payload), &event); err != nil {
 		return fmt.Errorf("parse Codex notify payload: %w", err)
@@ -441,7 +442,24 @@ func RunCodexNotify(args []string) error {
 	if event.Type != "agent-turn-complete" {
 		return nil
 	}
+	if isCodexTitleGenerationMessage(event.LastAssistantMessage) {
+		return nil
+	}
 	return postAgentTurnCompleted([]byte(payload))
+}
+
+// isCodexTitleGenerationMessage identifies Codex's internal conversation-title response.
+func isCodexTitleGenerationMessage(message string) bool {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(strings.TrimSpace(message)), &fields); err != nil || len(fields) != 1 {
+		return false
+	}
+	title, ok := fields["title"]
+	if !ok {
+		return false
+	}
+	var value string
+	return json.Unmarshal(title, &value) == nil
 }
 
 func postAgentTurnCompleted(payload []byte) error {

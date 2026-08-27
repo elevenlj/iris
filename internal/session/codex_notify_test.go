@@ -106,3 +106,13 @@ func TestRunCodexNotifyIgnoresOtherEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRunCodexNotifyIgnoresTitleGeneration(t *testing.T) {
+	t.Setenv("IRIS_API_URL", "http://127.0.0.1:1")
+	t.Setenv("IRIS_SESSION_ID", "session-9")
+	t.Setenv("IRIS_SESSION_TOKEN", "token-9")
+	payload := `{"type":"agent-turn-complete","thread-id":"thread-title","last-assistant-message":"{\"title\":\"排查未完成任务的异常推送\"}"}`
+	if err := RunCodexNotify([]string{payload}); err != nil {
+		t.Fatal(err)
+	}
+}
