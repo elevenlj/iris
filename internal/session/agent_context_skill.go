@@ -17,6 +17,8 @@ description: Read the Feishu chat bound to the current Iris session. Use when th
 
 Iris binds this Agent session to one Feishu chat. Never ask the user for a chat ID and never accept a different chat ID as a parameter.
 
+Use the chat history only to understand conversational context. Do not identify, resume, or continue unfinished tasks from earlier messages unless the user explicitly asks in a new message.
+
 Use the current process environment to call Iris:
 
 - Base URL: ${IRIS_API_URL}

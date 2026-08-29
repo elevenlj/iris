@@ -127,7 +127,7 @@ func TestEnsureAgentContextSkillsWritesCodexAndClaudeSkills(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
-		for _, want := range []string{"name: iris-feishu-context", "${IRIS_SESSION_ID}", "/lark/messages?limit=50"} {
+		for _, want := range []string{"name: iris-feishu-context", "${IRIS_SESSION_ID}", "/lark/messages?limit=50", "Do not identify, resume, or continue unfinished tasks"} {
 			if !strings.Contains(string(content), want) {
 				t.Fatalf("%s does not contain %q", path, want)
 			}
