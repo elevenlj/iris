@@ -402,11 +402,11 @@ func TestLarkReplyBridgeDirectContactCreatesAndReusesAssistantGroup(t *testing.T
 	bridge.mu.Lock()
 	queued := append([]larkPipelineInput(nil), bridge.pipelines[binding.SessionID]...)
 	bridge.mu.Unlock()
-	if got := launcher.terminals[0].writes(); !strings.Contains(got, "我想约个时间") {
-		t.Fatalf("the first startup input should flow through as an ordinary round: %q", got)
+	if got := launcher.terminals[0].writes(); strings.Contains(got, "我想约个时间") || strings.Contains(got, "明天下午可以吗") {
+		t.Fatalf("contact messages must wait until the Agent composer is ready: %q", got)
 	}
-	if len(queued) != 1 || queued[0].Text != "明天下午可以吗" {
-		t.Fatalf("only the overlapping follow-up should use the ordinary running queue: %#v", queued)
+	if len(queued) != 2 || queued[0].Text != "我想约个时间" || queued[1].Text != "明天下午可以吗" {
+		t.Fatalf("contact messages should remain ordered in the startup queue: %#v", queued)
 	}
 	joined := strings.Join(messages, "\n")
 	if !strings.Contains(joined, "oc-contact:小林：我想约个时间") || !strings.Contains(joined, "oc-contact:小林：明天下午可以吗") {
@@ -1730,6 +1730,123 @@ func TestLarkReplyBridgeQueuesFollowupWhileRuntimeRunningDuringStartupWindow(t *
 	}
 }
 
+func TestLarkReplyBridgeQueuesRecoveryInputUntilComposerReady(t *testing.T) {
+	resetLarkRegistryForTest()
+	previousDelay := structuredInputEnterDelay
+	structuredInputEnterDelay = 0
+	defer func() { structuredInputEnterDelay = previousDelay }()
+
+	launcher := &recordingLauncher{}
+	notifier := &recordingNotifier{messageID: "queued-card"}
+	manager := NewManager(nil, launcher, WithNotifier(notifier))
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	sess, err := manager.CreateSession(context.Background(), "Recovered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := manager.GetRuntime(sess.ID)
+	rt.mu.Lock()
+	rt.session.Status = StatusWaiting
+	rt.session.LastMode = SessionModeAgent
+	rt.session.LastAgentKind = "codex"
+	rt.session.Live = true
+	rt.session.NotifyOnWaiting = true
+	rt.startupNotifyMode = startupNotifyDiscard
+	rt.visibleSnapshot = "OpenAI Codex\nloading"
+	rt.visibleSnapshotSource = "browser:buffer;continuity_version=2;render_epoch=1;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=1"
+	rt.mu.Unlock()
+	defaultLarkMessageRegistry.remember(sess.ID, "startup-anchor")
+
+	event := p2MessageWithChat("startup-queued-message", "startup-anchor", "", "text", `{"text":"我重启了一下，你好呀"}`, "group", "oc-group", "ou-sender")
+	if err := bridge.HandleP2MessageReceive(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.HandleP2MessageReceive(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	if got := launcher.terminals[0].writes(); strings.Contains(got, "我重启了一下，你好呀") {
+		t.Fatalf("startup input was written before the composer was ready: %q", got)
+	}
+	bridge.mu.Lock()
+	queued := append([]larkPipelineInput(nil), bridge.pipelines[sess.ID]...)
+	bridge.mu.Unlock()
+	if len(queued) != 1 || queued[0].Text != "我重启了一下，你好呀" || !queued[0].PreserveRunningNotification {
+		t.Fatalf("startup input queue = %#v", queued)
+	}
+	notes := notifier.notes()
+	if len(notes) != 1 || !notes[0].Running || notes[0].MessageID != "" || notes[0].MentionOpenID != "ou-sender" {
+		t.Fatalf("queued startup input should create one ordinary running card for the sender, got %#v", notes)
+	}
+
+	rt.mu.Lock()
+	rt.visibleSnapshot = "OpenAI Codex\nmodel: gpt-5.6\ndirectory: /tmp/project\n› Ask Codex to do anything"
+	rt.visibleSnapshotSource = "browser:buffer;continuity_version=2;render_epoch=2;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=3"
+	version := rt.notifyVersion
+	rt.mu.Unlock()
+	rt.notifyIfStillWaitingForInteraction(version)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if lastSubmittedWrite(launcher.terminals[0].writeParts(), "我重启了一下，你好呀") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	parts := launcher.terminals[0].writeParts()
+	if !lastSubmittedWrite(parts, "我重启了一下，你好呀") {
+		t.Fatalf("queued startup input was not submitted after composer readiness: %#v", parts)
+	}
+	textWrites := 0
+	for _, part := range parts {
+		if part == "我重启了一下，你好呀" {
+			textWrites++
+		}
+	}
+	if textWrites != 1 {
+		t.Fatalf("queued startup input should be submitted once, writes=%#v", parts)
+	}
+	if notes = notifier.notes(); len(notes) != 1 {
+		t.Fatalf("queued startup input should keep the same ordinary running card, got %#v", notes)
+	}
+}
+
+func TestLarkReplyBridgeCreatesOneRunningCardPerQueuedRecoveryInput(t *testing.T) {
+	launcher := &recordingLauncher{}
+	notifier := &recordingNotifier{createMessageIDs: []string{"queued-card-1", "queued-card-2"}}
+	manager := NewManager(nil, launcher, WithNotifier(notifier))
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	sess, err := manager.CreateSession(context.Background(), "Recovered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := manager.GetRuntime(sess.ID)
+	rt.mu.Lock()
+	rt.session.LastMode = SessionModeAgent
+	rt.session.NotifyOnWaiting = true
+	rt.startupNotifyMode = startupNotifyDiscard
+	rt.mu.Unlock()
+
+	if !bridge.enqueueInputIfRuntimeBusy(rt, sess.ID, []string{"第一条"}, "ou-first") {
+		t.Fatal("first recovery input should be queued")
+	}
+	if !bridge.enqueueInputIfRuntimeBusy(rt, sess.ID, []string{"第二条"}, "ou-second") {
+		t.Fatal("second recovery input should be queued")
+	}
+	bridge.mu.Lock()
+	queued := append([]larkPipelineInput(nil), bridge.pipelines[sess.ID]...)
+	bridge.mu.Unlock()
+	if len(queued) != 2 || queued[0].RunningMessageID != "queued-card-1" || queued[1].RunningMessageID != "queued-card-2" {
+		t.Fatalf("queued recovery cards = %#v", queued)
+	}
+	notes := notifier.notes()
+	if len(notes) != 2 || !notes[0].Running || !notes[1].Running || notes[0].MentionOpenID != "ou-first" || notes[1].MentionOpenID != "ou-second" {
+		t.Fatalf("each queued recovery input should create its own ordinary running card, got %#v", notes)
+	}
+	if got := launcher.terminals[0].writes(); strings.Contains(got, "第一条") || strings.Contains(got, "第二条") {
+		t.Fatalf("queued recovery inputs must not reach the terminal early: %q", got)
+	}
+}
+
 func TestLarkReplyBridgeStartupInputUsesOrdinaryRoundAndNewCard(t *testing.T) {
 	resetLarkRegistryForTest()
 	previousDelay := structuredInputEnterDelay
@@ -1765,8 +1882,8 @@ func TestLarkReplyBridgeStartupInputUsesOrdinaryRoundAndNewCard(t *testing.T) {
 	if queued != 0 {
 		t.Fatalf("startup input must not enter a special queue, queued=%d", queued)
 	}
-	if rt.discardingStartupNotifications() {
-		t.Fatal("startup input should become an ordinary round immediately")
+	if !rt.discardingStartupNotifications() {
+		t.Fatal("startup protection should remain active until the Agent composer is ready")
 	}
 	notes := waitForNotifierNotes(t, notifier, 1)
 	if len(notes) != 1 || !notes[0].Running || notes[0].Content != RunningNotificationPlaceholder {

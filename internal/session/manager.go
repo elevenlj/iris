@@ -1243,7 +1243,7 @@ func (rt *RuntimeSession) shouldQueueInputWhileRunningLocked(now time.Time) bool
 		return false
 	}
 	if rt.startupNotifyMode == startupNotifyDiscard {
-		return false
+		return true
 	}
 	return rt.session.Status == StatusRunning &&
 		!rt.inputQueueUntil.IsZero() &&
@@ -2744,14 +2744,18 @@ func (rt *RuntimeSession) preferBrowserSnapshotSourceLocked(responder chan Runti
 }
 
 func (rt *RuntimeSession) MarkStructuredInputActivity(text string) {
-	rt.markStructuredInputActivity(text, nil)
+	rt.markStructuredInputActivity(text, nil, false)
 }
 
 func (rt *RuntimeSession) markStructuredInputActivityWithPreviousRoundState(text string, previousRoundUnfinished bool) {
-	rt.markStructuredInputActivity(text, &previousRoundUnfinished)
+	rt.markStructuredInputActivity(text, &previousRoundUnfinished, false)
 }
 
-func (rt *RuntimeSession) markStructuredInputActivity(text string, previousRoundUnfinishedOverride *bool) {
+func (rt *RuntimeSession) markStructuredInputActivityPreservingRunningNotification(text string, previousRoundUnfinished bool) {
+	rt.markStructuredInputActivity(text, &previousRoundUnfinished, true)
+}
+
+func (rt *RuntimeSession) markStructuredInputActivity(text string, previousRoundUnfinishedOverride *bool, preserveRunningNotification bool) {
 	rt.mu.Lock()
 	if rt.closed {
 		rt.mu.Unlock()
@@ -2769,9 +2773,9 @@ func (rt *RuntimeSession) markStructuredInputActivity(text string, previousRound
 	var disabledNote WaitingNotification
 	var disabledOK bool
 	if previousRoundUnfinishedOverride != nil {
-		disabledNote, disabledOK = rt.markInputActivityLockedWithPreviousRoundState(true, previousInput, *previousRoundUnfinishedOverride)
+		disabledNote, disabledOK = rt.markInputActivityLockedWithPreviousRoundState(true, previousInput, *previousRoundUnfinishedOverride, preserveRunningNotification)
 	} else {
-		disabledNote, disabledOK = rt.markInputActivityLocked(true, previousInput)
+		disabledNote, disabledOK = rt.markInputActivityLockedWithPreviousRoundState(true, previousInput, rt.session.Status == StatusRunning && strings.TrimSpace(previousInput) != "" && rt.snapshotAtRoundStartSet, preserveRunningNotification)
 	}
 	s := rt.session
 	sessionID := rt.session.ID
@@ -2841,10 +2845,10 @@ func minDuration(a, b time.Duration) time.Duration {
 
 func (rt *RuntimeSession) markInputActivityLocked(submitted bool, previousInput string) (WaitingNotification, bool) {
 	previousRoundUnfinished := rt.session.Status == StatusRunning && strings.TrimSpace(previousInput) != "" && rt.snapshotAtRoundStartSet
-	return rt.markInputActivityLockedWithPreviousRoundState(submitted, previousInput, previousRoundUnfinished)
+	return rt.markInputActivityLockedWithPreviousRoundState(submitted, previousInput, previousRoundUnfinished, false)
 }
 
-func (rt *RuntimeSession) markInputActivityLockedWithPreviousRoundState(submitted bool, previousInput string, previousRoundUnfinished bool) (WaitingNotification, bool) {
+func (rt *RuntimeSession) markInputActivityLockedWithPreviousRoundState(submitted bool, previousInput string, previousRoundUnfinished bool, preserveRunningNotification bool) (WaitingNotification, bool) {
 	var disabledNote WaitingNotification
 	disabledOK := false
 	rt.controlInputActive = false
@@ -2857,7 +2861,7 @@ func (rt *RuntimeSession) markInputActivityLockedWithPreviousRoundState(submitte
 		}
 		rt.snapshotRoundGeneration++
 		rt.cancelSnapshotRequestsLocked(false)
-		overlapRunningCard := rt.notificationRunning && rt.lastNotifiedMessageID != ""
+		overlapRunningCard := !preserveRunningNotification && rt.notificationRunning && rt.lastNotifiedMessageID != ""
 		if overlapRunningCard {
 			disabledNote, disabledOK = rt.disabledNotificationLocked(rt.lastNotifiedMessageID)
 			rt.freezeNotificationMessageLocked(rt.lastNotifiedMessageID)
@@ -2881,10 +2885,12 @@ func (rt *RuntimeSession) markInputActivityLockedWithPreviousRoundState(submitte
 		rt.capturedInputBaselineResponder = nil
 		rt.capturedInputBaselineHeadless = false
 		rt.lastNotifiedRoundHash = ""
-		rt.lastNotifiedMessageID = ""
-		rt.lastNotifiedContent = ""
-		rt.notificationUpdateNo = 0
-		rt.notificationRunning = false
+		if !preserveRunningNotification {
+			rt.lastNotifiedMessageID = ""
+			rt.lastNotifiedContent = ""
+			rt.notificationUpdateNo = 0
+			rt.notificationRunning = false
+		}
 		rt.hookCompletedCurrentRound = false
 		rt.hookCompletionTipClaimed = false
 		rt.hookLastAssistantMessage = ""
@@ -2897,9 +2903,9 @@ func (rt *RuntimeSession) markInputActivityLockedWithPreviousRoundState(submitte
 	rt.stopNotifyTimerLocked()
 	rt.stopNotifyStableTimerLocked()
 	rt.stopStartupNotifyTimerLocked()
-	// User input always starts an ordinary round, including input that answers
-	// an updater, trust prompt, approval, or another startup modal.
-	rt.startupNotifyMode = startupNotifyNormal
+	if rt.startupNotifyMode != startupNotifyDiscard {
+		rt.startupNotifyMode = startupNotifyNormal
+	}
 	return disabledNote, disabledOK
 }
 
@@ -2908,6 +2914,10 @@ func (rt *RuntimeSession) NotifyInputRunning() {
 }
 
 func (rt *RuntimeSession) createAgentRestartRunningNotification(mentionOpenID string) string {
+	return rt.createNewRunningNotification(mentionOpenID)
+}
+
+func (rt *RuntimeSession) createNewRunningNotification(mentionOpenID string) string {
 	if rt == nil {
 		return ""
 	}
@@ -2930,6 +2940,67 @@ func (rt *RuntimeSession) createAgentRestartRunningNotification(mentionOpenID st
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	return rt.lastNotifiedMessageID
+}
+
+func (rt *RuntimeSession) createDetachedRunningNotification(mentionOpenID string) string {
+	if rt == nil || rt.manager == nil || rt.manager.notifier == nil || !rt.manager.notifier.Available() {
+		return ""
+	}
+	rt.mu.Lock()
+	if !rt.session.Live || !rt.session.NotifyOnWaiting || (rt.requireLarkChat && strings.TrimSpace(rt.session.LarkChatID) == "") {
+		rt.mu.Unlock()
+		return ""
+	}
+	n := WaitingNotification{
+		SessionID:          rt.session.ID,
+		Name:               rt.session.Name,
+		Content:            RunningNotificationPlaceholder,
+		ChatID:             rt.session.LarkChatID,
+		MentionOpenID:      strings.TrimSpace(mentionOpenID),
+		Running:            true,
+		AutoRefreshEnabled: rt.autoRefreshEnabled,
+		AutoSummaryEnabled: rt.autoSummaryEnabled,
+		MentionModeEnabled: rt.session.LarkMentionModeEnabled,
+		AgentContext:       cloneTerminalAgentContext(rt.lastTerminalAgentContext),
+	}
+	rt.mu.Unlock()
+
+	rt.notificationPatchMu.Lock()
+	result, err := rt.notifyWaitingWithRetry(n)
+	rt.notificationPatchMu.Unlock()
+	if err != nil {
+		log.Printf("detached running notification failed session=%s: %v", n.SessionID, err)
+		return ""
+	}
+	messageID := strings.TrimSpace(result.MessageID)
+	if messageID != "" {
+		defaultLarkMessageRegistry.remember(n.SessionID, messageID)
+		defaultLarkMessageRegistry.rememberLatest(n.SessionID)
+	}
+	return messageID
+}
+
+func (rt *RuntimeSession) bindQueuedRunningNotification(messageID, mentionOpenID string) {
+	if rt == nil {
+		return
+	}
+	messageID = strings.TrimSpace(messageID)
+	rt.mu.Lock()
+	if rt.lastNotifiedMessageID != "" && rt.lastNotifiedMessageID != messageID {
+		rt.freezeNotificationMessageLocked(rt.lastNotifiedMessageID)
+	}
+	rt.notificationPatchVersion++
+	rt.lastNotifiedMessageID = messageID
+	rt.lastNotifiedContent = RunningNotificationPlaceholder
+	rt.lastNotifiedRoundHash = ""
+	rt.notificationUpdateNo = 0
+	rt.notificationRunning = messageID != ""
+	rt.autoRefreshMessageID = messageID
+	rt.notificationMentionOpenID = strings.TrimSpace(mentionOpenID)
+	rt.mu.Unlock()
+	if messageID == "" {
+		rt.NotifyInputRunning()
+	}
 }
 
 func (rt *RuntimeSession) NotifyInputRunningOnMessage(messageID string) {
@@ -3938,6 +4009,7 @@ func (rt *RuntimeSession) notifyIfStillWaitingForInteraction(version int64) {
 }
 
 func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate, requestFreshSnapshot bool) {
+	interactionNotification := !requestFreshSnapshot
 	if !immediate {
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -3957,13 +4029,19 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 		}
 		agentKind := agentKindForCommand(rt.session.LastAgentStartCommand, rt.session.LastAgentKind)
 		if !startupAgentComposerReady(rt.visibleSnapshot, rt.visibleSnapshotSource, agentKind) {
-			rt.stopNotifyTimerLocked()
-			rt.startupNotifyMode = startupNotifyNormal
+			if (!interactionNotification && !rt.hasPendingCodexInteractionLocked()) || rt.notificationRunning {
+				rt.rescheduleNotifyRetryLocked(version)
+				sessionID := rt.session.ID
+				source := rt.visibleSnapshotSource
+				rt.mu.Unlock()
+				log.Printf("startup input deferred session=%s version=%d reason=composer_not_ready snapshot_source=%s", sessionID, version, source)
+				return
+			}
 			startupFallback = true
 			requestFreshSnapshot = false
 			sessionID := rt.session.ID
 			source := rt.visibleSnapshotSource
-			log.Printf("startup fallback entering ordinary notification flow session=%s version=%d snapshot_source=%s", sessionID, version, source)
+			log.Printf("startup fallback using ordinary notification flow session=%s version=%d snapshot_source=%s", sessionID, version, source)
 		} else {
 			rt.stopNotifyTimerLocked()
 			rt.startupNotifyMode = startupNotifyNormal
@@ -4151,6 +4229,15 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 	}
 	rt.mu.Unlock()
 	defaultLarkMessageRegistry.rememberLatest(n.SessionID)
+	if startupFallback {
+		rt.mu.Lock()
+		if rt.startupNotifyMode == startupNotifyDiscard {
+			rt.rescheduleNotifyRetryLocked(version)
+			rt.mu.Unlock()
+			return
+		}
+		rt.mu.Unlock()
+	}
 	rt.manager.notificationSent(n.SessionID)
 }
 

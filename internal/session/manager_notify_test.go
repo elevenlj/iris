@@ -3821,20 +3821,32 @@ func TestStartupBlockerUsesOrdinaryFallbackNotification(t *testing.T) {
 	}
 	select {
 	case sessionID := <-ready:
-		if sessionID != "sess-startup-fallback" {
-			t.Fatalf("ready session = %q", sessionID)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("ordinary fallback notification should complete its normal delivery flow")
+		t.Fatalf("startup fallback must not release queued input, got %q", sessionID)
+	default:
 	}
-	if rt.discardingStartupNotifications() {
-		t.Fatal("startup fallback should enter ordinary round handling after the first blocker")
+	if !rt.discardingStartupNotifications() {
+		t.Fatal("startup fallback should keep startup protection active")
 	}
 	rt.mu.Lock()
 	if rt.lastNotifiedMessageID != "fallback-card" {
 		t.Fatalf("ordinary fallback should bind the normal notification card, got %q", rt.lastNotifiedMessageID)
 	}
 	rt.mu.Unlock()
+
+	rt.mu.Lock()
+	rt.stopNotifyTimerLocked()
+	rt.visibleSnapshot = "OpenAI Codex\nmodel: gpt-5.6\ndirectory: /tmp/project\n› Ask Codex to do anything"
+	rt.visibleSnapshotSource = "browser:buffer;continuity_version=2;render_epoch=2;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=3"
+	rt.mu.Unlock()
+	rt.notifyIfStillWaitingForInteraction(7)
+	select {
+	case sessionID := <-ready:
+		if sessionID != "sess-startup-fallback" {
+			t.Fatalf("ready session = %q", sessionID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ready composer should release queued input")
+	}
 }
 
 func TestStartupDiscardReadyComposerDoesNotCreateFallbackCard(t *testing.T) {
