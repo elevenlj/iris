@@ -149,6 +149,9 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		if note.StartupInputEnabled && !note.StartupComplete && !note.Disabled {
 			elements = append(elements, larkStartupInputFormElement(note.SessionID))
 		}
+		if !note.StartupComplete && !note.Disabled {
+			elements = append(elements, larkFlowShortcutActionElement(larkRestartAgentButtonColumn(note.SessionID)))
+		}
 	} else {
 		var interactionElement map[string]any
 		if note.DeveloperModeEnabled && !note.Disabled && !note.Running {

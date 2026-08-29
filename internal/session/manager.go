@@ -1823,6 +1823,9 @@ func (rt *RuntimeSession) resetStartupNotificationLocked(mentionOpenID string) {
 	if rt.lastNotifiedMessageID != "" {
 		rt.freezeNotificationMessageLocked(rt.lastNotifiedMessageID)
 	}
+	if rt.startupNotificationMessageID != "" {
+		rt.freezeNotificationMessageLocked(rt.startupNotificationMessageID)
+	}
 	rt.lastNotifiedMessageID = ""
 	rt.lastNotifiedContent = ""
 	rt.lastNotifiedRoundHash = ""
@@ -1960,6 +1963,19 @@ func (rt *RuntimeSession) discardingStartupNotifications() bool {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	return rt.startupNotifyMode == startupNotifyDiscard
+}
+
+func (rt *RuntimeSession) activeStartupNotification(messageID string) bool {
+	if rt == nil {
+		return false
+	}
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return false
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.startupNotifyMode == startupNotifyDiscard && messageID == rt.startupNotificationMessageID && !rt.notificationMessageFrozenLocked(messageID)
 }
 
 func (rt *RuntimeSession) FinishStartupNotifications() {

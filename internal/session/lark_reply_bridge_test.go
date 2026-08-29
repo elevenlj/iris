@@ -2687,6 +2687,61 @@ func TestLarkReplyBridgeRestartAgentRequiresDeveloperModeAndReusesStartCommand(t
 	}
 }
 
+func TestLarkReplyBridgeStartupCardRestartDoesNotRequireDeveloperMode(t *testing.T) {
+	launcher := &recordingLauncher{}
+	notifier := &recordingNotifier{createMessageIDs: []string{"new-startup-card"}}
+	manager := NewManager(nil, launcher, WithNotifier(notifier))
+	manager.SetAgentConfig(AgentConfig{Kind: "custom", Command: "my-agent --fast"}, nil)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	sess, err := manager.CreateSession(context.Background(), "Iris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := manager.sessions[sess.ID]
+	rt.mu.Lock()
+	rt.session.Status = StatusWaiting
+	rt.session.NotifyOnWaiting = true
+	rt.session.DeveloperModeEnabled = false
+	rt.session.LastMode = SessionModeAgent
+	rt.session.LastAgentKind = "custom"
+	rt.session.LastAgentStartCommand = "my-agent --fast"
+	rt.startupNotifyMode = startupNotifyDiscard
+	rt.startupNotificationMessageID = "startup-card"
+	rt.mu.Unlock()
+
+	action := &callback.CallBackAction{Value: map[string]interface{}{
+		"iris_action": "restart_agent",
+		"session_id":  sess.ID,
+	}}
+	before := len(launcher.terminals[0].writeParts())
+	resp, err := bridge.handleCardAction(context.Background(), action, "startup-card", "", "ou-clicker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || resp.Toast.Content != "正在重启 Agent" {
+		t.Fatalf("startup restart response = %#v", resp)
+	}
+	notes := waitForNotifierNotes(t, notifier, 1)
+	if len(notes) != 1 || !notes[0].Startup || notes[0].MentionOpenID != "ou-clicker" {
+		t.Fatalf("startup restart should create a new startup card for the clicker, got %#v", notes)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(launcher.terminals[0].writeParts()) < before+2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	parts := launcher.terminals[0].writeParts()
+	if len(parts) < before+2 || parts[before] != "\x03\x03" || parts[before+1] != "my-agent --fast\r" {
+		t.Fatalf("startup restart writes = %#v", parts)
+	}
+	rt.mu.Lock()
+	oldFrozen := rt.notificationMessageFrozenLocked("startup-card")
+	newStartupMessageID := rt.startupNotificationMessageID
+	rt.mu.Unlock()
+	if !oldFrozen || newStartupMessageID != "new-startup-card" {
+		t.Fatalf("startup restart state: old_frozen=%v new_message=%q", oldFrozen, newStartupMessageID)
+	}
+}
+
 func TestLarkReplyBridgeRestartAgentReadsGroupContextAfterComposerReady(t *testing.T) {
 	oldTimeout := agentRestartContextTimeout
 	oldPoll := agentRestartReadyPollInterval

@@ -454,7 +454,7 @@ func (b *LarkReplyBridge) handleCardRestartAgent(value map[string]interface{}, o
 		return blocked, nil
 	}
 	sess := rt.Snapshot()
-	if !sess.DeveloperModeEnabled {
+	if !sess.DeveloperModeEnabled && !rt.activeStartupNotification(openMessageID) {
 		return larkCardToast("warning", "请先开启开发者模式"), nil
 	}
 	hasLarkContext := strings.TrimSpace(sess.LarkChatID) != ""

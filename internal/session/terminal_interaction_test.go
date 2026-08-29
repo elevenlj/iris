@@ -442,7 +442,7 @@ func TestLarkNotificationCardRendersDedicatedStartupInputForm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{`"content":"Iris（启动中）"`, `"tag":"form"`, `"tag":"input"`, `"name":"iris_startup_input"`, `"form_action_type":"submit"`, `"iris_action":"startup_submit"`, `"content":"提交"`} {
+	for _, expected := range []string{`"content":"Iris（启动中）"`, `"tag":"form"`, `"tag":"input"`, `"name":"iris_startup_input"`, `"form_action_type":"submit"`, `"iris_action":"startup_submit"`, `"content":"提交"`, `"iris_action":"restart_agent"`, `"content":"重启 Agent"`} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("startup card missing %s: %s", expected, content)
 		}
