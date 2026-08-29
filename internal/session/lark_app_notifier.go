@@ -144,45 +144,52 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 	if mention && mentionID != "" {
 		elements = append(elements, map[string]any{"tag": "markdown", "content": "<at id=" + mentionID + "></at>"})
 	}
-	var interactionElement map[string]any
-	if note.DeveloperModeEnabled && !note.Disabled && !note.Running {
-		interactionElement = larkTerminalInteractionElement(note.SessionID, note.Interaction)
-	}
-	if interactionElement == nil {
+	if note.Startup {
 		elements = append(elements, larkTerminalTextElement(note.Content, note.SnapshotSource))
+		if note.StartupInputEnabled && !note.StartupComplete && !note.Disabled {
+			elements = append(elements, larkStartupInputFormElement(note.SessionID))
+		}
 	} else {
-		if note.Interaction.Kind == TerminalInteractionCodexResume {
-			elements = append(elements, larkTerminalInteractionHeadingElement("选择要恢复的会话"))
+		var interactionElement map[string]any
+		if note.DeveloperModeEnabled && !note.Disabled && !note.Running {
+			interactionElement = larkTerminalInteractionElement(note.SessionID, note.Interaction)
 		}
-		elements = append(elements, interactionElement)
-	}
-	if note.DeveloperModeEnabled {
-		if contextElement := larkTerminalAgentContextElement(note.AgentContext); contextElement != nil {
-			elements = append(elements, map[string]any{"tag": "hr"})
-			elements = append(elements, contextElement)
+		if interactionElement == nil {
+			elements = append(elements, larkTerminalTextElement(note.Content, note.SnapshotSource))
+		} else {
+			if note.Interaction.Kind == TerminalInteractionCodexResume {
+				elements = append(elements, larkTerminalInteractionHeadingElement("选择要恢复的会话"))
+			}
+			elements = append(elements, interactionElement)
 		}
-		developerSelectors := make([]map[string]any, 0, 2)
-		currentAgentID := strings.TrimSpace(note.AgentID)
-		if currentAgentID == "" {
-			currentAgentID = strings.TrimSpace(note.AgentKind)
-		}
-		if agentElement := larkAgentSelectElement(note.SessionID, note.AgentOptions, currentAgentID); agentElement != nil {
-			developerSelectors = append(developerSelectors, agentElement)
-		}
-		if len(note.WorkspaceOptions) > 0 {
-			if workspaceElement := larkWorkspaceSelectElement(note.SessionID, note.WorkspaceOptions, note.AgentContext); workspaceElement != nil {
-				developerSelectors = append(developerSelectors, workspaceElement)
+		if note.DeveloperModeEnabled {
+			if contextElement := larkTerminalAgentContextElement(note.AgentContext); contextElement != nil {
+				elements = append(elements, map[string]any{"tag": "hr"})
+				elements = append(elements, contextElement)
+			}
+			developerSelectors := make([]map[string]any, 0, 2)
+			currentAgentID := strings.TrimSpace(note.AgentID)
+			if currentAgentID == "" {
+				currentAgentID = strings.TrimSpace(note.AgentKind)
+			}
+			if agentElement := larkAgentSelectElement(note.SessionID, note.AgentOptions, currentAgentID); agentElement != nil {
+				developerSelectors = append(developerSelectors, agentElement)
+			}
+			if len(note.WorkspaceOptions) > 0 {
+				if workspaceElement := larkWorkspaceSelectElement(note.SessionID, note.WorkspaceOptions, note.AgentContext); workspaceElement != nil {
+					developerSelectors = append(developerSelectors, workspaceElement)
+				}
+			}
+			if selectorRow := larkDeveloperSelectorRow(developerSelectors...); selectorRow != nil {
+				elements = append(elements, selectorRow)
 			}
 		}
-		if selectorRow := larkDeveloperSelectorRow(developerSelectors...); selectorRow != nil {
-			elements = append(elements, selectorRow)
-		}
-	}
-	if !note.Disabled {
-		elements = append(elements, larkShortcutActionElements(note.SessionID, note.UpdateNo, note.MentionModeEnabled, note.DeveloperModeEnabled)...)
-		if shortcuts := normalizeLarkCustomShortcuts(customShortcuts); note.DeveloperModeEnabled && len(shortcuts) > 0 {
-			elements = append(elements, map[string]any{"tag": "hr"})
-			elements = append(elements, larkCustomShortcutActionElements(note.SessionID, shortcuts)...)
+		if !note.Disabled {
+			elements = append(elements, larkShortcutActionElements(note.SessionID, note.UpdateNo, note.MentionModeEnabled, note.DeveloperModeEnabled)...)
+			if shortcuts := normalizeLarkCustomShortcuts(customShortcuts); note.DeveloperModeEnabled && len(shortcuts) > 0 {
+				elements = append(elements, map[string]any{"tag": "hr"})
+				elements = append(elements, larkCustomShortcutActionElements(note.SessionID, shortcuts)...)
+			}
 		}
 	}
 	card := map[string]any{
@@ -196,6 +203,41 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 	}
 	b, err := json.Marshal(card)
 	return string(b), err
+}
+
+func larkStartupInputFormElement(sessionID string) map[string]any {
+	return map[string]any{
+		"tag":  "form",
+		"name": "iris_startup_form",
+		"elements": []map[string]any{
+			{
+				"tag":   "input",
+				"name":  "iris_startup_input",
+				"width": "fill",
+				"placeholder": map[string]any{
+					"tag":     "plain_text",
+					"content": "输入启动选项或确认内容",
+				},
+			},
+			{
+				"tag":              "button",
+				"name":             "iris_startup_submit",
+				"type":             "primary",
+				"width":            "fill",
+				"form_action_type": "submit",
+				"text":             map[string]any{"tag": "plain_text", "content": "提交"},
+				"behaviors": []map[string]any{
+					{
+						"type": "callback",
+						"value": map[string]any{
+							"iris_action": "startup_submit",
+							"session_id":  sessionID,
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
 func larkAgentSelectElement(sessionID string, agents []AgentOption, currentID string) map[string]any {
@@ -783,6 +825,18 @@ func larkCustomShortcutButtonColumn(sessionID string, shortcut LarkCustomShortcu
 }
 
 func larkNotificationTitle(note WaitingNotification) string {
+	if note.Startup {
+		if note.StartupFailed {
+			return note.Name + "（启动失败）"
+		}
+		if note.StartupComplete {
+			return note.Name + "（启动完成）"
+		}
+		return note.Name + "（启动中）"
+	}
+	if note.Queued && !note.Disabled {
+		return note.Name + "（排队中）"
+	}
 	if note.Running && !note.Disabled {
 		return note.Name + "（Running）"
 	}

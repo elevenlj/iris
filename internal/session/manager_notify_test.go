@@ -3813,11 +3813,11 @@ func TestStartupBlockerUsesOrdinaryFallbackNotification(t *testing.T) {
 
 	rt.notifyIfStillWaiting(7)
 	notes := notifier.notes()
-	if len(notes) != 1 || notes[0].Running || notes[0].Disabled || notes[0].MessageID != "" || !notes[0].SuppressUpdateTip {
-		t.Fatalf("startup blocker should create an ordinary notification card, got %#v", notes)
+	if len(notes) != 2 || !notes[0].Startup || !notes[0].StartupInputEnabled || notes[1].MessageID != "fallback-card" || !notes[1].Startup || !notes[1].SuppressUpdateTip {
+		t.Fatalf("startup blocker should create and update a dedicated startup card, got %#v", notes)
 	}
-	if !strings.Contains(notes[0].Content, "Update available!") || !strings.Contains(notes[0].Content, "Press enter to continue") {
-		t.Fatalf("startup fallback must preserve the visible terminal prompt, got %q", notes[0].Content)
+	if !strings.Contains(notes[1].Content, "Update available!") || !strings.Contains(notes[1].Content, "Press enter to continue") {
+		t.Fatalf("startup card must preserve the visible terminal prompt, got %q", notes[1].Content)
 	}
 	select {
 	case sessionID := <-ready:
@@ -3828,12 +3828,12 @@ func TestStartupBlockerUsesOrdinaryFallbackNotification(t *testing.T) {
 		t.Fatal("startup fallback should keep startup protection active")
 	}
 	rt.notifyIfStillWaiting(7)
-	if got := notifier.count(); got != 1 {
+	if got := notifier.count(); got != 2 {
 		t.Fatalf("unchanged startup waiting content should not update the card again, got %d writes", got)
 	}
 	rt.mu.Lock()
-	if rt.lastNotifiedMessageID != "fallback-card" {
-		t.Fatalf("ordinary fallback should bind the normal notification card, got %q", rt.lastNotifiedMessageID)
+	if rt.startupNotificationMessageID != "fallback-card" || rt.lastNotifiedMessageID != "" {
+		t.Fatalf("startup fallback should bind only the startup card, startup=%q normal=%q", rt.startupNotificationMessageID, rt.lastNotifiedMessageID)
 	}
 	rt.mu.Unlock()
 
@@ -3873,8 +3873,56 @@ func TestStartupDiscardReadyComposerDoesNotCreateFallbackCard(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("ready composer should be released")
 	}
-	if got := notifier.count(); got != 0 {
-		t.Fatalf("normal ready startup should not create a fallback card, got %d", got)
+	if notes := notifier.notes(); len(notes) != 2 || !notes[0].Startup || !notes[1].StartupComplete || notes[1].StartupInputEnabled {
+		t.Fatalf("ready startup should create and complete one dedicated startup card, got %#v", notes)
+	}
+}
+
+func TestDedicatedStartupCardCompletesForSupportedAgents(t *testing.T) {
+	for _, agent := range []struct {
+		name    string
+		kind    string
+		command string
+		prompt  string
+	}{
+		{name: "Codex", kind: "codex", command: "codex", prompt: "› Ask Codex to do anything"},
+		{name: "Claude Code", kind: "claude", command: "claude", prompt: "❯ Ask Claude anything"},
+		{name: "Aiden", kind: "aiden", command: "aiden", prompt: "> Ask Aiden anything"},
+		{name: "Aiden X Codex", kind: "custom", command: "aiden x codex", prompt: "› Ask Codex to do anything"},
+	} {
+		t.Run(agent.name, func(t *testing.T) {
+			notifier := &recordingNotifier{createMessageIDs: []string{"startup-card"}}
+			m := NewManager(nil, nil, WithNotifier(notifier))
+			ready := make(chan string, 1)
+			m.SetNotificationSentHook(func(sessionID string) { ready <- sessionID })
+			rt := &RuntimeSession{
+				manager: m,
+				session: Session{
+					ID:                    "sess-" + strings.ToLower(strings.ReplaceAll(agent.name, " ", "-")),
+					Name:                  agent.name,
+					Status:                StatusWaiting,
+					Live:                  true,
+					NotifyOnWaiting:       true,
+					LastAgentKind:         agent.kind,
+					LastAgentStartCommand: agent.command,
+				},
+				startupNotifyMode:     startupNotifyDiscard,
+				notifyVersion:         1,
+				visibleSnapshot:       agent.name + "\n" + agent.prompt,
+				visibleSnapshotSource: "browser:buffer;continuity_version=2;render_epoch=1;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=1",
+			}
+
+			rt.notifyIfStillWaitingForInteraction(1)
+			select {
+			case <-ready:
+			case <-time.After(time.Second):
+				t.Fatal("ready composer should release queued tasks")
+			}
+			notes := notifier.notes()
+			if len(notes) != 2 || !notes[0].Startup || !notes[1].StartupComplete || notes[1].MessageID != "startup-card" {
+				t.Fatalf("dedicated startup lifecycle = %#v", notes)
+			}
+		})
 	}
 }
 

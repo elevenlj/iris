@@ -755,6 +755,9 @@ func (m *Manager) RecoverRuntime(ctx context.Context, id string) (*RuntimeSessio
 	go rt.waitForExit()
 	rt.runRecoveryEnvironmentSetup()
 	rt.runRecoveryCommand()
+	if sess.NotifyOnWaiting {
+		go rt.beginStartupNotification("")
+	}
 	s := rt.Snapshot()
 	s.NotificationsAvailable = m.notifier != nil && m.notifier.Available()
 	return rt, s, true, nil
@@ -799,6 +802,7 @@ func (m *Manager) UpdateNotifyOnWaiting(ctx context.Context, id string, enabled 
 	err := m.persist(ctx, s)
 	if enabled {
 		m.EnsureBrowser(id)
+		rt.beginStartupNotification(rt.NotificationMentionOpenID())
 	} else {
 		m.StopBrowser(id)
 	}
@@ -1169,6 +1173,12 @@ type RuntimeSession struct {
 	autoRefreshStop                   chan struct{}
 	autoSummaryEnabled                bool
 	startupNotifyMode                 startupNotifyMode
+	startupNotificationMessageID      string
+	startupNotificationContent        string
+	startupNotificationHash           string
+	startupNotificationUpdateNo       int
+	startupNotificationMentionOpenID  string
+	startupNotificationCreating       bool
 	inputQueueUntil                   time.Time
 	subscribers                       map[chan RuntimeEvent]runtimeSubscriber
 	snapshotRequests                  map[string]*pendingSnapshotRequest
@@ -1519,18 +1529,26 @@ func (rt *RuntimeSession) restartAgent(options agentRestartOptions) error {
 		resumeCommand = info.ResumeCommand
 	}
 	rt.agentRestartPending = true
+	if options.createRunningNotification {
+		rt.resetStartupNotificationLocked(options.notificationMentionOpenID)
+	}
 	terminal := rt.terminal
 	rt.mu.Unlock()
 	if options.createRunningNotification {
-		messageID := rt.createAgentRestartRunningNotification(options.notificationMentionOpenID)
-		if options.followUp != nil {
-			options.followUp.messageID = messageID
-		}
+		rt.beginStartupNotification(options.notificationMentionOpenID)
 	}
 	return rt.restartAgentAfterConfirmedExit(terminal, command, agentID, agentKind, startCommand, resumeCommand, options.followUp)
 }
 
 func (rt *RuntimeSession) SwitchAgent(optionID string) (AgentOption, error) {
+	return rt.switchAgent(optionID, false, "")
+}
+
+func (rt *RuntimeSession) SwitchAgentWithLarkNotification(optionID, mentionOpenID string) (AgentOption, error) {
+	return rt.switchAgent(optionID, true, strings.TrimSpace(mentionOpenID))
+}
+
+func (rt *RuntimeSession) switchAgent(optionID string, createStartupNotification bool, startupMentionOpenID string) (AgentOption, error) {
 	if rt == nil || rt.manager == nil {
 		return AgentOption{}, errors.New("会话不在线")
 	}
@@ -1552,8 +1570,14 @@ func (rt *RuntimeSession) SwitchAgent(optionID string) (AgentOption, error) {
 		return AgentOption{}, errors.New("当前已经是 " + option.Label)
 	}
 	rt.agentRestartPending = true
+	if createStartupNotification {
+		rt.resetStartupNotificationLocked(startupMentionOpenID)
+	}
 	terminal := rt.terminal
 	rt.mu.Unlock()
+	if createStartupNotification {
+		rt.beginStartupNotification(startupMentionOpenID)
+	}
 	if err := rt.restartAgentAfterConfirmedExit(terminal, option.Command, option.ID, option.Kind, option.Command, "", nil); err != nil {
 		return AgentOption{}, err
 	}
@@ -1634,7 +1658,9 @@ func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, laun
 			log.Printf("agent restart context follow-up failed session=%s: %v", rt.Snapshot().ID, err)
 			return
 		}
-		rt.NotifyInputRunningOnMessage(followUp.messageID)
+		if followUp.messageID != "" {
+			rt.NotifyInputRunningOnMessage(followUp.messageID)
+		}
 		rt.mu.Lock()
 		rt.agentRestartPending = false
 		rt.mu.Unlock()
@@ -1689,7 +1715,8 @@ func (rt *RuntimeSession) finishAgentRestartContextFailure(message string) {
 	rt.notifyVersion++
 	rt.stopNotifyTimerLocked()
 	rt.stopNotifyStableTimerLocked()
-	if message != "" {
+	startupFailure := rt.startupNotificationMessageID != ""
+	if message != "" && !startupFailure {
 		if previous := strings.TrimSpace(rt.lastNotifiedContent); previous != "" {
 			rt.lastNotifiedContent = previous + "\n\n" + message
 		} else {
@@ -1698,7 +1725,7 @@ func (rt *RuntimeSession) finishAgentRestartContextFailure(message string) {
 	}
 	note := WaitingNotification{}
 	updateCard := false
-	if rt.manager != nil {
+	if rt.manager != nil && !startupFailure {
 		note, updateCard = rt.markNotificationWaitingLocked()
 	}
 	sess := rt.session
@@ -1708,6 +1735,9 @@ func (rt *RuntimeSession) finishAgentRestartContextFailure(message string) {
 	}
 	if updateCard {
 		go rt.updateNotificationRunning(note, false)
+	}
+	if startupFailure {
+		go rt.failStartupNotification(message)
 	}
 }
 
@@ -1720,14 +1750,15 @@ func (rt *RuntimeSession) finishAgentRestartFailure() {
 	rt.stateVersion++
 	rt.notifyVersion++
 	message := "Agent 重启失败：未能确认旧 Agent 已完全退出，因此没有执行新的启动命令。"
-	if previous := strings.TrimSpace(rt.lastNotifiedContent); previous != "" {
+	startupFailure := rt.startupNotificationMessageID != ""
+	if previous := strings.TrimSpace(rt.lastNotifiedContent); previous != "" && !startupFailure {
 		rt.lastNotifiedContent = previous + "\n\n" + message
-	} else {
+	} else if !startupFailure {
 		rt.lastNotifiedContent = message
 	}
 	note := WaitingNotification{}
 	updateCard := false
-	if rt.manager != nil {
+	if rt.manager != nil && !startupFailure {
 		note, updateCard = rt.markNotificationWaitingLocked()
 	}
 	sess := rt.session
@@ -1737,6 +1768,9 @@ func (rt *RuntimeSession) finishAgentRestartFailure() {
 	}
 	if updateCard {
 		go rt.updateNotificationRunning(note, false)
+	}
+	if startupFailure {
+		go rt.failStartupNotification(message)
 	}
 }
 
@@ -1782,6 +1816,140 @@ func (rt *RuntimeSession) writeInput(data string, baseline *inputSnapshotBaselin
 func (rt *RuntimeSession) SuppressStartupNotifications() {
 	rt.mu.Lock()
 	rt.startupNotifyMode = startupNotifySuppress
+	rt.mu.Unlock()
+}
+
+func (rt *RuntimeSession) resetStartupNotificationLocked(mentionOpenID string) {
+	if rt.lastNotifiedMessageID != "" {
+		rt.freezeNotificationMessageLocked(rt.lastNotifiedMessageID)
+	}
+	rt.lastNotifiedMessageID = ""
+	rt.lastNotifiedContent = ""
+	rt.lastNotifiedRoundHash = ""
+	rt.notificationUpdateNo = 0
+	rt.notificationRunning = false
+	rt.startupNotifyMode = startupNotifyDiscard
+	rt.startupNotificationMessageID = ""
+	rt.startupNotificationContent = ""
+	rt.startupNotificationHash = ""
+	rt.startupNotificationUpdateNo = 0
+	rt.startupNotificationMentionOpenID = strings.TrimSpace(mentionOpenID)
+	rt.startupNotificationCreating = false
+}
+
+func (rt *RuntimeSession) beginStartupNotification(mentionOpenID string) string {
+	if rt == nil || rt.manager == nil || rt.manager.notifier == nil || !rt.manager.notifier.Available() {
+		return ""
+	}
+	mentionOpenID = strings.TrimSpace(mentionOpenID)
+	rt.mu.Lock()
+	if mentionOpenID != "" {
+		rt.startupNotificationMentionOpenID = mentionOpenID
+	}
+	if rt.startupNotifyMode != startupNotifyDiscard || !rt.session.Live || !rt.session.NotifyOnWaiting ||
+		(rt.requireLarkChat && strings.TrimSpace(rt.session.LarkChatID) == "") {
+		rt.mu.Unlock()
+		return ""
+	}
+	if rt.startupNotificationMessageID != "" || rt.startupNotificationCreating {
+		messageID := rt.startupNotificationMessageID
+		rt.mu.Unlock()
+		return messageID
+	}
+	rt.startupNotificationCreating = true
+	n := WaitingNotification{
+		SessionID:           rt.session.ID,
+		Name:                rt.session.Name,
+		Content:             StartupNotificationPlaceholder,
+		ChatID:              rt.session.LarkChatID,
+		MentionOpenID:       rt.startupNotificationMentionOpenID,
+		SuppressUpdateTip:   true,
+		Startup:             true,
+		StartupInputEnabled: true,
+		SnapshotSource:      "startup",
+	}
+	rt.mu.Unlock()
+
+	rt.notificationPatchMu.Lock()
+	result, err := rt.notifyWaitingWithRetry(n)
+	rt.notificationPatchMu.Unlock()
+	rt.mu.Lock()
+	rt.startupNotificationCreating = false
+	if err == nil && result.MessageID != "" {
+		rt.startupNotificationMessageID = result.MessageID
+		rt.startupNotificationContent = n.Content
+		rt.startupNotificationHash = notifyContentHash(n.Content)
+	}
+	messageID := rt.startupNotificationMessageID
+	sessionID := rt.session.ID
+	rt.mu.Unlock()
+	if err != nil {
+		log.Printf("startup notification create failed session=%s: %v", sessionID, err)
+		return ""
+	}
+	if messageID != "" {
+		defaultLarkMessageRegistry.remember(sessionID, messageID)
+	}
+	return messageID
+}
+
+func (rt *RuntimeSession) completeStartupNotification() {
+	rt.finishStartupNotification(StartupCompletePlaceholder, false)
+}
+
+func (rt *RuntimeSession) failStartupNotification(content string) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		content = "Agent 启动失败。"
+	}
+	rt.mu.Lock()
+	if rt.startupNotifyMode == startupNotifyDiscard {
+		rt.startupNotifyMode = startupNotifyNormal
+	}
+	rt.mu.Unlock()
+	rt.finishStartupNotification(content, true)
+}
+
+func (rt *RuntimeSession) finishStartupNotification(content string, failed bool) {
+	if rt == nil || rt.manager == nil || rt.manager.notifier == nil || !rt.manager.notifier.Available() {
+		return
+	}
+	rt.mu.Lock()
+	messageID := strings.TrimSpace(rt.startupNotificationMessageID)
+	if messageID == "" {
+		rt.mu.Unlock()
+		return
+	}
+	n := WaitingNotification{
+		SessionID:           rt.session.ID,
+		Name:                rt.session.Name,
+		Content:             content,
+		MessageID:           messageID,
+		ChatID:              rt.session.LarkChatID,
+		MentionOpenID:       rt.startupNotificationMentionOpenID,
+		UpdateNo:            rt.startupNotificationUpdateNo + 1,
+		SuppressUpdateTip:   true,
+		Startup:             true,
+		StartupComplete:     true,
+		StartupFailed:       failed,
+		SnapshotSource:      "startup:complete",
+		NotificationVersion: rt.notificationPatchVersion,
+	}
+	rt.mu.Unlock()
+
+	rt.notificationPatchMu.Lock()
+	result, err := rt.notifyWaitingWithRetry(n)
+	rt.notificationPatchMu.Unlock()
+	if err != nil {
+		log.Printf("startup notification completion failed session=%s message=%s: %v", n.SessionID, messageID, err)
+		return
+	}
+	rt.mu.Lock()
+	rt.startupNotificationContent = n.Content
+	rt.startupNotificationHash = notifyContentHash(n.Content)
+	if result.Updated {
+		rt.startupNotificationUpdateNo = n.UpdateNo
+	}
 	rt.mu.Unlock()
 }
 
@@ -2954,10 +3122,10 @@ func (rt *RuntimeSession) createDetachedRunningNotification(mentionOpenID string
 	n := WaitingNotification{
 		SessionID:          rt.session.ID,
 		Name:               rt.session.Name,
-		Content:            RunningNotificationPlaceholder,
+		Content:            QueuedNotificationPlaceholder,
 		ChatID:             rt.session.LarkChatID,
 		MentionOpenID:      strings.TrimSpace(mentionOpenID),
-		Running:            true,
+		Queued:             true,
 		AutoRefreshEnabled: rt.autoRefreshEnabled,
 		AutoSummaryEnabled: rt.autoSummaryEnabled,
 		MentionModeEnabled: rt.session.LarkMentionModeEnabled,
@@ -2974,16 +3142,6 @@ func (rt *RuntimeSession) createDetachedRunningNotification(mentionOpenID string
 	}
 	messageID := strings.TrimSpace(result.MessageID)
 	if messageID != "" {
-		rt.mu.Lock()
-		rt.notificationPatchVersion++
-		rt.lastNotifiedMessageID = messageID
-		rt.lastNotifiedContent = RunningNotificationPlaceholder
-		rt.lastNotifiedRoundHash = ""
-		rt.notificationUpdateNo = 0
-		rt.notificationRunning = true
-		rt.autoRefreshMessageID = messageID
-		rt.notificationMentionOpenID = strings.TrimSpace(mentionOpenID)
-		rt.mu.Unlock()
 		defaultLarkMessageRegistry.remember(n.SessionID, messageID)
 		defaultLarkMessageRegistry.rememberLatest(n.SessionID)
 	}
@@ -4043,13 +4201,15 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 	if rt.startupNotifyMode == startupNotifyDiscard {
 		rt.mu.Unlock()
 		rt.RequestFreshSnapshot(defaultNotifySnapshotTimeout)
+		rt.beginStartupNotification("")
 		rt.mu.Lock()
 		if rt.session.Status != StatusWaiting || !rt.session.Live || rt.notifyVersion != version || rt.startupNotifyMode != startupNotifyDiscard {
 			rt.mu.Unlock()
 			return
 		}
 		agentKind := agentKindForCommand(rt.session.LastAgentStartCommand, rt.session.LastAgentKind)
-		if !startupAgentComposerReady(rt.visibleSnapshot, rt.visibleSnapshotSource, agentKind) {
+		composerReady := startupAgentComposerReady(rt.visibleSnapshot, rt.visibleSnapshotSource, agentKind)
+		if !composerReady || rt.agentRestartPending {
 			startupFallback = true
 			requestFreshSnapshot = false
 			sessionID := rt.session.ID
@@ -4060,7 +4220,8 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 			rt.startupNotifyMode = startupNotifyNormal
 			sessionID := rt.session.ID
 			rt.mu.Unlock()
-			log.Printf("startup terminal output discarded session=%s version=%d", sessionID, version)
+			rt.completeStartupNotification()
+			log.Printf("startup terminal completed session=%s version=%d", sessionID, version)
 			rt.manager.notificationSent(sessionID)
 			return
 		}
@@ -4152,7 +4313,7 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 	if rt.startupNotifyMode == startupNotifyFinal {
 		rt.startupNotifyMode = startupNotifyNormal
 	}
-	if rt.lastNotifiedMessageID != "" {
+	if !startupFallback && rt.lastNotifiedMessageID != "" {
 		n.MessageID = rt.lastNotifiedMessageID
 		n.UpdateNo = rt.notificationUpdateNo + 1
 		n.Running = false
@@ -4207,6 +4368,26 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 		return
 	}
 	log.Printf("waiting notification sent session=%s version=%d hash=%s", n.SessionID, version, shortNotifyHash(contentHash))
+	if startupFallback {
+		rt.mu.Lock()
+		if rt.startupNotifyMode == startupNotifyDiscard && rt.notifyVersion == version {
+			if result.MessageID != "" {
+				rt.startupNotificationMessageID = result.MessageID
+			}
+			rt.startupNotificationContent = n.Content
+			rt.startupNotificationHash = contentHash
+			if result.Updated {
+				rt.startupNotificationUpdateNo = n.UpdateNo
+			}
+		}
+		messageID := rt.startupNotificationMessageID
+		rt.rescheduleNotifyRetryLocked(version)
+		rt.mu.Unlock()
+		if messageID != "" {
+			defaultLarkMessageRegistry.remember(n.SessionID, messageID)
+		}
+		return
+	}
 	rt.mu.Lock()
 	if claimHookCompletionTip && rt.notifyVersion == version && rt.hookCompletedCurrentRound {
 		rt.hookCompletionTipClaimed = true
@@ -4247,15 +4428,6 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 	}
 	rt.mu.Unlock()
 	defaultLarkMessageRegistry.rememberLatest(n.SessionID)
-	if startupFallback {
-		rt.mu.Lock()
-		if rt.startupNotifyMode == startupNotifyDiscard {
-			rt.rescheduleNotifyRetryLocked(version)
-			rt.mu.Unlock()
-			return
-		}
-		rt.mu.Unlock()
-	}
 	rt.manager.notificationSent(n.SessionID)
 }
 
@@ -4589,7 +4761,7 @@ func (rt *RuntimeSession) startupFallbackWaitingNotificationCandidateLocked() (W
 		return WaitingNotification{}, "", false
 	}
 	contentHash := notifyContentHash(content)
-	if contentHash == rt.lastNotifiedRoundHash {
+	if contentHash == rt.startupNotificationHash {
 		return WaitingNotification{}, "", false
 	}
 	source := strings.TrimSpace(rt.visibleSnapshotSource)
@@ -4598,17 +4770,22 @@ func (rt *RuntimeSession) startupFallbackWaitingNotificationCandidateLocked() (W
 	} else {
 		source += ":startup_fallback"
 	}
+	updateNo := rt.startupNotificationUpdateNo
+	if rt.startupNotificationMessageID != "" {
+		updateNo++
+	}
 	return WaitingNotification{
-		SessionID:          rt.session.ID,
-		Name:               rt.session.Name,
-		Content:            content,
-		ChatID:             rt.session.LarkChatID,
-		MentionOpenID:      rt.notificationMentionOpenID,
-		AutoSummaryEnabled: rt.autoSummaryEnabled,
-		MentionModeEnabled: rt.session.LarkMentionModeEnabled,
-		SuppressUpdateTip:  true,
-		SnapshotSource:     source,
-		AgentContext:       rt.notificationAgentContextLocked(),
+		SessionID:           rt.session.ID,
+		Name:                rt.session.Name,
+		Content:             content,
+		MessageID:           rt.startupNotificationMessageID,
+		ChatID:              rt.session.LarkChatID,
+		MentionOpenID:       rt.startupNotificationMentionOpenID,
+		UpdateNo:            updateNo,
+		SuppressUpdateTip:   true,
+		SnapshotSource:      source,
+		Startup:             true,
+		StartupInputEnabled: true,
 	}, contentHash, true
 }
 

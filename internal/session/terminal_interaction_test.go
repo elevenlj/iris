@@ -431,6 +431,38 @@ func TestLarkNotificationCardRendersStartupFallbackAsOrdinaryCard(t *testing.T) 
 	}
 }
 
+func TestLarkNotificationCardRendersDedicatedStartupInputForm(t *testing.T) {
+	content, err := larkNotificationCardContent(WaitingNotification{
+		SessionID:           "sess-startup",
+		Name:                "Iris",
+		Content:             "Choose working directory\n1. Session\n2. Current",
+		Startup:             true,
+		StartupInputEnabled: true,
+	}, "ou_1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{`"content":"Iris（启动中）"`, `"tag":"form"`, `"tag":"input"`, `"name":"iris_startup_input"`, `"form_action_type":"submit"`, `"iris_action":"startup_submit"`, `"content":"提交"`} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("startup card missing %s: %s", expected, content)
+		}
+	}
+
+	completed, err := larkNotificationCardContent(WaitingNotification{
+		SessionID:       "sess-startup",
+		Name:            "Iris",
+		Content:         StartupCompletePlaceholder,
+		Startup:         true,
+		StartupComplete: true,
+	}, "ou_1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(completed, `"content":"Iris（启动完成）"`) || strings.Contains(completed, `"iris_action":"startup_submit"`) {
+		t.Fatalf("completed startup card should be frozen: %s", completed)
+	}
+}
+
 func TestLarkNotificationCardOmitsTerminalSelectWhenRunningOrDisabled(t *testing.T) {
 	interaction := &TerminalInteraction{
 		ID: "ti_1",

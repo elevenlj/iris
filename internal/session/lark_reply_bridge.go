@@ -379,16 +379,74 @@ func (b *LarkReplyBridge) handleCardAction(ctx context.Context, action *callback
 	case "restart_agent":
 		return b.handleCardRestartAgent(value, openMessageID, operatorOpenID)
 	case "agent_select":
-		return b.handleCardAgentSelect(value, action.Option, openMessageID)
+		return b.handleCardAgentSelect(value, action.Option, openMessageID, operatorOpenID)
 	case "workspace_select":
 		return b.handleCardWorkspaceSelect(ctx, value, action.Option, openMessageID)
 	case "delete_session":
 		return b.handleCardDeleteSession(ctx, value, openMessageID, openChatID)
 	case "terminal_select":
 		return b.handleCardTerminalSelect(ctx, value, action.Option, openMessageID, openChatID, operatorOpenID)
+	case "startup_submit":
+		return b.handleCardStartupSubmit(action, openMessageID, operatorOpenID)
 	default:
 		return larkCardToast("warning", "未知操作"), nil
 	}
+}
+
+func (b *LarkReplyBridge) handleCardStartupSubmit(action *callback.CallBackAction, openMessageID, operatorOpenID string) (*callback.CardActionTriggerResponse, error) {
+	if action == nil {
+		return larkCardToast("warning", "请输入启动选项或确认内容"), nil
+	}
+	value := action.Value
+	if value == nil {
+		value = map[string]interface{}{}
+	}
+	sessionID := strings.TrimSpace(fmt.Sprint(value["session_id"]))
+	rt, ok := b.manager.GetRuntime(sessionID)
+	if !ok {
+		return larkCardToast("warning", "会话不存在或已离线"), nil
+	}
+	input := ""
+	if action.FormValue != nil {
+		input = strings.TrimSpace(fmt.Sprint(action.FormValue["iris_startup_input"]))
+		if input == "<nil>" {
+			input = ""
+		}
+	}
+	if input == "" {
+		input = strings.TrimSpace(action.InputValue)
+	}
+	if input == "" {
+		return larkCardToast("warning", "请输入启动选项或确认内容"), nil
+	}
+	if err := submitStartupCardInput(rt, input, openMessageID, operatorOpenID); err != nil {
+		return larkCardToast("warning", err.Error()), nil
+	}
+	b.manager.EnsureBrowser(sessionID)
+	log.Printf("lark startup card input submitted session=%s message=%s input_len=%d", sessionID, openMessageID, len(input))
+	return larkCardToast("info", "已提交"), nil
+}
+
+func submitStartupCardInput(rt *RuntimeSession, input, messageID, mentionOpenID string) error {
+	if rt == nil {
+		return errors.New("会话不存在或已离线")
+	}
+	messageID = strings.TrimSpace(messageID)
+	rt.mu.Lock()
+	if rt.closed || !rt.session.Live || rt.terminal == nil {
+		rt.mu.Unlock()
+		return errors.New("会话不存在或已离线")
+	}
+	if rt.startupNotifyMode != startupNotifyDiscard || messageID == "" || messageID != rt.startupNotificationMessageID {
+		rt.mu.Unlock()
+		return errors.New("启动卡片已失效")
+	}
+	if mentionOpenID = strings.TrimSpace(mentionOpenID); mentionOpenID != "" {
+		rt.startupNotificationMentionOpenID = mentionOpenID
+	}
+	rt.mu.Unlock()
+	pressEnter := !structuredInputNumericOnlyRE.MatchString(strings.TrimSpace(input))
+	return submitStructuredInputWithMode(rt, input, mentionOpenID, false, pressEnter, nil, false)
 }
 
 func (b *LarkReplyBridge) handleCardRestartAgent(value map[string]interface{}, openMessageID string, operatorOpenID string) (*callback.CardActionTriggerResponse, error) {
@@ -421,7 +479,7 @@ func (b *LarkReplyBridge) handleCardRestartAgent(value map[string]interface{}, o
 	return larkCardToast("info", "正在重启 Agent"), nil
 }
 
-func (b *LarkReplyBridge) handleCardAgentSelect(value map[string]interface{}, option, openMessageID string) (*callback.CardActionTriggerResponse, error) {
+func (b *LarkReplyBridge) handleCardAgentSelect(value map[string]interface{}, option, openMessageID, operatorOpenID string) (*callback.CardActionTriggerResponse, error) {
 	sessionID, rt, blocked := b.resolveCardActionRuntime(value, openMessageID)
 	if blocked != nil {
 		return blocked, nil
@@ -429,7 +487,11 @@ func (b *LarkReplyBridge) handleCardAgentSelect(value map[string]interface{}, op
 	if !rt.Snapshot().DeveloperModeEnabled {
 		return larkCardToast("warning", "请先开启开发者模式"), nil
 	}
-	selected, err := rt.SwitchAgent(strings.TrimSpace(option))
+	mentionOpenID := strings.TrimSpace(operatorOpenID)
+	if mentionOpenID == "" {
+		mentionOpenID = rt.NotificationMentionOpenID()
+	}
+	selected, err := rt.SwitchAgentWithLarkNotification(strings.TrimSpace(option), mentionOpenID)
 	if err != nil {
 		return larkCardToast("warning", err.Error()), nil
 	}
@@ -437,7 +499,6 @@ func (b *LarkReplyBridge) handleCardAgentSelect(value map[string]interface{}, op
 	if openMessageID != "" {
 		defaultLarkMessageRegistry.remember(sessionID, openMessageID)
 	}
-	rt.NotifyInputRunningOnMessage(openMessageID)
 	log.Printf("lark card switched Agent session=%s message=%s agent=%s", sessionID, openMessageID, selected.Kind)
 	return larkCardToast("info", "正在切换至 "+selected.Label), nil
 }
@@ -1441,12 +1502,13 @@ func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionI
 	if !rt.ShouldQueueInputWhileRunning() {
 		return false
 	}
-	if structuredInputNumericOnlyRE.MatchString(strings.TrimSpace(parts[0])) {
+	starting := rt.discardingStartupNotifications()
+	if !starting && structuredInputNumericOnlyRE.MatchString(strings.TrimSpace(parts[0])) {
 		return false
 	}
-	starting := rt.discardingStartupNotifications()
 	rt.SetNotificationMentionOpenID(mentionOpenID)
 	if starting {
+		rt.beginStartupNotification(mentionOpenID)
 		b.enqueueStartupPipelineWithRunningCard(rt, sessionID, parts, mentionOpenID)
 	} else {
 		rt.MarkStructuredInputActivity(parts[0])
