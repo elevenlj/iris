@@ -375,7 +375,7 @@ func (b *LarkReplyBridge) handleCardAction(ctx context.Context, action *callback
 	case "toggle_developer_mode":
 		return b.handleCardToggleDeveloperMode(ctx, value, openMessageID, operatorOpenID)
 	case "restart_agent":
-		return b.handleCardRestartAgent(value, openMessageID)
+		return b.handleCardRestartAgent(value, openMessageID, operatorOpenID)
 	case "agent_select":
 		return b.handleCardAgentSelect(value, action.Option, openMessageID)
 	case "workspace_select":
@@ -389,7 +389,7 @@ func (b *LarkReplyBridge) handleCardAction(ctx context.Context, action *callback
 	}
 }
 
-func (b *LarkReplyBridge) handleCardRestartAgent(value map[string]interface{}, openMessageID string) (*callback.CardActionTriggerResponse, error) {
+func (b *LarkReplyBridge) handleCardRestartAgent(value map[string]interface{}, openMessageID string, operatorOpenID string) (*callback.CardActionTriggerResponse, error) {
 	sessionID, rt, blocked := b.resolveCardActionRuntime(value, openMessageID)
 	if blocked != nil {
 		return blocked, nil
@@ -399,21 +399,21 @@ func (b *LarkReplyBridge) handleCardRestartAgent(value map[string]interface{}, o
 		return larkCardToast("warning", "请先开启开发者模式"), nil
 	}
 	hasLarkContext := strings.TrimSpace(sess.LarkChatID) != ""
-	var err error
-	if hasLarkContext {
-		err = rt.RestartAgentWithFollowUp(larkRestartAgentContextPrompt, rt.NotificationMentionOpenID(), openMessageID)
-	} else {
-		err = rt.RestartAgent()
+	mentionOpenID := strings.TrimSpace(operatorOpenID)
+	if mentionOpenID == "" {
+		mentionOpenID = rt.NotificationMentionOpenID()
 	}
+	followUpPrompt := ""
+	if hasLarkContext {
+		followUpPrompt = larkRestartAgentContextPrompt
+	}
+	err := rt.RestartAgentWithLarkNotification(followUpPrompt, mentionOpenID)
 	if err != nil {
 		return larkCardToast("warning", err.Error()), nil
 	}
 	b.manager.EnsureBrowser(sessionID)
 	if openMessageID != "" {
 		defaultLarkMessageRegistry.remember(sessionID, openMessageID)
-	}
-	if !hasLarkContext {
-		rt.NotifyInputRunningOnMessage(openMessageID)
 	}
 	log.Printf("lark card restarted Agent session=%s message=%s", sessionID, openMessageID)
 	return larkCardToast("info", "正在重启 Agent"), nil

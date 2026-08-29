@@ -1449,8 +1449,14 @@ type agentRestartFollowUp struct {
 	messageID     string
 }
 
+type agentRestartOptions struct {
+	followUp                  *agentRestartFollowUp
+	createRunningNotification bool
+	notificationMentionOpenID string
+}
+
 func (rt *RuntimeSession) RestartAgent() error {
-	return rt.restartAgent(nil)
+	return rt.restartAgent(agentRestartOptions{})
 }
 
 func (rt *RuntimeSession) RestartAgentWithFollowUp(prompt, mentionOpenID, messageID string) error {
@@ -1458,14 +1464,29 @@ func (rt *RuntimeSession) RestartAgentWithFollowUp(prompt, mentionOpenID, messag
 	if prompt == "" {
 		return rt.RestartAgent()
 	}
-	return rt.restartAgent(&agentRestartFollowUp{
+	return rt.restartAgent(agentRestartOptions{followUp: &agentRestartFollowUp{
 		prompt:        prompt,
 		mentionOpenID: strings.TrimSpace(mentionOpenID),
 		messageID:     strings.TrimSpace(messageID),
-	})
+	}})
 }
 
-func (rt *RuntimeSession) restartAgent(followUp *agentRestartFollowUp) error {
+func (rt *RuntimeSession) RestartAgentWithLarkNotification(prompt, mentionOpenID string) error {
+	prompt = strings.TrimSpace(prompt)
+	options := agentRestartOptions{
+		createRunningNotification: true,
+		notificationMentionOpenID: strings.TrimSpace(mentionOpenID),
+	}
+	if prompt != "" {
+		options.followUp = &agentRestartFollowUp{
+			prompt:        prompt,
+			mentionOpenID: options.notificationMentionOpenID,
+		}
+	}
+	return rt.restartAgent(options)
+}
+
+func (rt *RuntimeSession) restartAgent(options agentRestartOptions) error {
 	if rt == nil {
 		return errors.New("会话不在线")
 	}
@@ -1500,7 +1521,13 @@ func (rt *RuntimeSession) restartAgent(followUp *agentRestartFollowUp) error {
 	rt.agentRestartPending = true
 	terminal := rt.terminal
 	rt.mu.Unlock()
-	return rt.restartAgentAfterConfirmedExit(terminal, command, agentID, agentKind, startCommand, resumeCommand, followUp)
+	if options.createRunningNotification {
+		messageID := rt.createAgentRestartRunningNotification(options.notificationMentionOpenID)
+		if options.followUp != nil {
+			options.followUp.messageID = messageID
+		}
+	}
+	return rt.restartAgentAfterConfirmedExit(terminal, command, agentID, agentKind, startCommand, resumeCommand, options.followUp)
 }
 
 func (rt *RuntimeSession) SwitchAgent(optionID string) (AgentOption, error) {
@@ -2878,6 +2905,31 @@ func (rt *RuntimeSession) markInputActivityLockedWithPreviousRoundState(submitte
 
 func (rt *RuntimeSession) NotifyInputRunning() {
 	rt.NotifyInputRunningOnMessage("")
+}
+
+func (rt *RuntimeSession) createAgentRestartRunningNotification(mentionOpenID string) string {
+	if rt == nil {
+		return ""
+	}
+	rt.mu.Lock()
+	if rt.lastNotifiedMessageID != "" {
+		rt.freezeNotificationMessageLocked(rt.lastNotifiedMessageID)
+	}
+	rt.notificationPatchVersion++
+	rt.lastNotifiedMessageID = ""
+	rt.lastNotifiedContent = ""
+	rt.lastNotifiedRoundHash = ""
+	rt.notificationUpdateNo = 0
+	rt.notificationRunning = false
+	rt.autoRefreshMessageID = ""
+	rt.notificationMentionOpenID = strings.TrimSpace(mentionOpenID)
+	rt.mu.Unlock()
+
+	rt.NotifyInputRunning()
+
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.lastNotifiedMessageID
 }
 
 func (rt *RuntimeSession) NotifyInputRunningOnMessage(messageID string) {

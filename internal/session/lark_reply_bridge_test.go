@@ -2519,7 +2519,8 @@ func TestLarkReplyBridgeRestartAgentReadsGroupContextAfterComposerReady(t *testi
 	})
 
 	launcher := &recordingLauncher{}
-	manager := NewManager(nil, launcher)
+	notifier := &recordingNotifier{createMessageIDs: []string{"restart-card"}}
+	manager := NewManager(nil, launcher, WithNotifier(notifier))
 	manager.SetAgentConfig(AgentConfig{Kind: "codex", Command: "codex --fast"}, nil)
 	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
 	sess, err := manager.CreateSession(context.Background(), "Iris")
@@ -2529,8 +2530,12 @@ func TestLarkReplyBridgeRestartAgentReadsGroupContextAfterComposerReady(t *testi
 	rt := manager.sessions[sess.ID]
 	rt.mu.Lock()
 	rt.session.Status = StatusWaiting
+	rt.session.NotifyOnWaiting = true
 	rt.session.DeveloperModeEnabled = true
 	rt.session.LarkChatID = "oc-group"
+	rt.lastNotifiedMessageID = "old-card"
+	rt.lastNotifiedContent = "上一轮已完成"
+	rt.notificationMentionOpenID = "ou-old"
 	expectedStartCommand := rt.session.LastAgentStartCommand
 	rt.mu.Unlock()
 	subscriber, cancel := rt.Subscribe()
@@ -2553,7 +2558,7 @@ func TestLarkReplyBridgeRestartAgentReadsGroupContextAfterComposerReady(t *testi
 		"session_id":  sess.ID,
 	}}
 	before := len(launcher.terminals[0].writeParts())
-	resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
+	resp, err := bridge.handleCardAction(context.Background(), action, "old-card", "oc-group", "ou-clicker")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2567,6 +2572,21 @@ func TestLarkReplyBridgeRestartAgentReadsGroupContextAfterComposerReady(t *testi
 	parts := launcher.terminals[0].writeParts()
 	if len(parts) < before+4 || parts[before] != "\x03\x03" || parts[before+1] != expectedStartCommand+"\r" || parts[before+2] != larkRestartAgentContextPrompt || parts[before+3] != "\r" {
 		t.Fatalf("restart context writes = %#v", parts)
+	}
+	notes := notifier.notes()
+	if len(notes) != 1 || notes[0].MessageID != "" || !notes[0].Running || notes[0].Content != RunningNotificationPlaceholder {
+		t.Fatalf("restart should create one new running card, got %#v", notes)
+	}
+	if notes[0].MentionOpenID != "ou-clicker" {
+		t.Fatalf("restart card mention = %q, want click operator", notes[0].MentionOpenID)
+	}
+	rt.mu.Lock()
+	messageID := rt.lastNotifiedMessageID
+	mentionOpenID := rt.notificationMentionOpenID
+	oldFrozen := rt.notificationMessageFrozenLocked("old-card")
+	rt.mu.Unlock()
+	if messageID != "restart-card" || mentionOpenID != "ou-clicker" || !oldFrozen {
+		t.Fatalf("restart notification state: message=%q mention=%q old_frozen=%v", messageID, mentionOpenID, oldFrozen)
 	}
 }
 
