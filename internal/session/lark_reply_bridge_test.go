@@ -2483,6 +2483,71 @@ func TestLarkReplyBridgeRestartAgentRequiresDeveloperModeAndReusesStartCommand(t
 	}
 }
 
+func TestLarkReplyBridgeRestartAgentReadsGroupContextAfterComposerReady(t *testing.T) {
+	oldTimeout := agentRestartContextTimeout
+	oldPoll := agentRestartReadyPollInterval
+	oldEnterDelay := structuredInputEnterDelay
+	agentRestartContextTimeout = 2 * time.Second
+	agentRestartReadyPollInterval = time.Millisecond
+	structuredInputEnterDelay = 0
+	t.Cleanup(func() {
+		agentRestartContextTimeout = oldTimeout
+		agentRestartReadyPollInterval = oldPoll
+		structuredInputEnterDelay = oldEnterDelay
+	})
+
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	manager.SetAgentConfig(AgentConfig{Kind: "codex", Command: "codex --fast"}, nil)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	sess, err := manager.CreateSession(context.Background(), "Iris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := manager.sessions[sess.ID]
+	rt.mu.Lock()
+	rt.session.Status = StatusWaiting
+	rt.session.DeveloperModeEnabled = true
+	rt.session.LarkChatID = "oc-group"
+	expectedStartCommand := rt.session.LastAgentStartCommand
+	rt.mu.Unlock()
+	subscriber, cancel := rt.Subscribe()
+	t.Cleanup(cancel)
+	readySnapshot := "OpenAI Codex\n› Ask Codex to do anything"
+	readySource := "browser:buffer;continuity_version=2;render_epoch=3;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=1"
+	var outputOnce sync.Once
+	go func() {
+		for event := range subscriber {
+			if event.Type != RuntimeEventSnapshotRequest {
+				continue
+			}
+			outputOnce.Do(func() { rt.HandleOutput([]byte("restarted Codex output")) })
+			rt.SetVisibleSnapshotResponseFrom(readySnapshot, readySource, event.RequestID, subscriber)
+		}
+	}()
+
+	action := &callback.CallBackAction{Value: map[string]interface{}{
+		"iris_action": "restart_agent",
+		"session_id":  sess.ID,
+	}}
+	before := len(launcher.terminals[0].writeParts())
+	resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || resp.Toast.Content != "正在重启 Agent" {
+		t.Fatalf("restart response = %#v", resp)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for len(launcher.terminals[0].writeParts()) < before+4 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	parts := launcher.terminals[0].writeParts()
+	if len(parts) < before+4 || parts[before] != "\x03\x03" || parts[before+1] != expectedStartCommand+"\r" || parts[before+2] != larkRestartAgentContextPrompt || parts[before+3] != "\r" {
+		t.Fatalf("restart context writes = %#v", parts)
+	}
+}
+
 func TestLarkReplyBridgeAgentSelectSwitchesToAvailableYoloCommand(t *testing.T) {
 	launcher := &recordingLauncher{}
 	manager := NewManager(nil, launcher)

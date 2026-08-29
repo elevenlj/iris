@@ -70,6 +70,7 @@ var workspaceSwitchToastDelay = 2 * time.Second
 const larkProcessingReactionEmoji = "THINKING"
 const defaultLarkSessionChatPrefix = "Iris · "
 const larkDisabledCardToastContent = "已失效，请点击最新卡片的按钮"
+const larkRestartAgentContextPrompt = "请使用 iris-feishu-context 读取当前飞书群最近的消息，了解重启前的上下文，并继续处理尚未完成的任务。如果没有明确的未完成任务，请说明已完成上下文同步并等待下一步。"
 const maxLarkReferencedItems = 20
 const maxLarkReferencedTextRunes = 12000
 const maxLarkReferencedAttachments = 10
@@ -389,17 +390,27 @@ func (b *LarkReplyBridge) handleCardRestartAgent(value map[string]interface{}, o
 	if blocked != nil {
 		return blocked, nil
 	}
-	if !rt.Snapshot().DeveloperModeEnabled {
+	sess := rt.Snapshot()
+	if !sess.DeveloperModeEnabled {
 		return larkCardToast("warning", "请先开启开发者模式"), nil
 	}
-	if err := rt.RestartAgent(); err != nil {
+	hasLarkContext := strings.TrimSpace(sess.LarkChatID) != ""
+	var err error
+	if hasLarkContext {
+		err = rt.RestartAgentWithFollowUp(larkRestartAgentContextPrompt, rt.NotificationMentionOpenID(), openMessageID)
+	} else {
+		err = rt.RestartAgent()
+	}
+	if err != nil {
 		return larkCardToast("warning", err.Error()), nil
 	}
 	b.manager.EnsureBrowser(sessionID)
 	if openMessageID != "" {
 		defaultLarkMessageRegistry.remember(sessionID, openMessageID)
 	}
-	rt.NotifyInputRunningOnMessage(openMessageID)
+	if !hasLarkContext {
+		rt.NotifyInputRunningOnMessage(openMessageID)
+	}
 	log.Printf("lark card restarted Agent session=%s message=%s", sessionID, openMessageID)
 	return larkCardToast("info", "正在重启 Agent"), nil
 }

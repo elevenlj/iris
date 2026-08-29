@@ -87,6 +87,128 @@ func TestRestartAgentWaitsForConfirmedProcessExitBeforeStarting(t *testing.T) {
 	}
 }
 
+func TestRestartAgentSubmitsFollowUpAfterNewComposerIsReady(t *testing.T) {
+	oldTimeout := agentRestartContextTimeout
+	oldPoll := agentRestartReadyPollInterval
+	oldEnterDelay := structuredInputEnterDelay
+	agentRestartContextTimeout = time.Second
+	agentRestartReadyPollInterval = time.Millisecond
+	structuredInputEnterDelay = 0
+	t.Cleanup(func() {
+		agentRestartContextTimeout = oldTimeout
+		agentRestartReadyPollInterval = oldPoll
+		structuredInputEnterDelay = oldEnterDelay
+	})
+
+	terminal := newControlledForegroundTerminal()
+	notifier := &recordingNotifier{messageID: "bot-card"}
+	manager := NewManager(nil, nil, WithNotifier(notifier))
+	rt := &RuntimeSession{
+		manager:                   manager,
+		terminal:                  terminal,
+		lastNotifiedMessageID:     "bot-card",
+		lastNotifiedContent:       "原卡片正文",
+		notificationRunning:       true,
+		notificationMentionOpenID: "ou-old",
+		session: Session{
+			ID:                    "sess-restart-follow-up",
+			Status:                StatusWaiting,
+			Live:                  true,
+			NotifyOnWaiting:       true,
+			LarkChatID:            "oc-group",
+			LastMode:              SessionModeAgent,
+			LastAgentKind:         "codex",
+			LastAgentStartCommand: "codex --dangerously-bypass-approvals-and-sandbox",
+		},
+	}
+	subscriber, cancel := rt.Subscribe()
+	t.Cleanup(cancel)
+	readySnapshot := "OpenAI Codex\n› Ask Codex to do anything"
+	readySource := "browser:buffer;continuity_version=2;render_epoch=2;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=1"
+	var outputOnce sync.Once
+	go func() {
+		for event := range subscriber {
+			if event.Type != RuntimeEventSnapshotRequest {
+				continue
+			}
+			outputOnce.Do(func() { rt.HandleOutput([]byte("new Agent boot output")) })
+			rt.SetVisibleSnapshotResponseFrom(readySnapshot, readySource, event.RequestID, subscriber)
+		}
+	}()
+
+	prompt := "读取当前群消息并继续任务"
+	if err := rt.RestartAgentWithFollowUp(prompt, "ou-user", "bot-card"); err != nil {
+		t.Fatal(err)
+	}
+	<-terminal.started
+	close(terminal.release)
+	waitForAgentRestartWrites(t, terminal, 3)
+	writes := terminal.snapshotWrites()
+	if writes[0] != "codex --dangerously-bypass-approvals-and-sandbox\r" || writes[1] != prompt || writes[2] != "\r" {
+		t.Fatalf("restart follow-up writes = %#v", writes)
+	}
+	rt.mu.Lock()
+	pending := rt.agentRestartPending
+	mentionOpenID := rt.notificationMentionOpenID
+	messageID := rt.lastNotifiedMessageID
+	_, frozen := rt.frozenNotificationMessages["bot-card"]
+	rt.mu.Unlock()
+	if pending || mentionOpenID != "ou-user" || messageID != "bot-card" || frozen {
+		t.Fatalf("restart follow-up state: pending=%v mention=%q message=%q frozen=%v", pending, mentionOpenID, messageID, frozen)
+	}
+}
+
+func TestRestartAgentFollowUpTimesOutWithoutNewComposer(t *testing.T) {
+	oldTimeout := agentRestartContextTimeout
+	oldPoll := agentRestartReadyPollInterval
+	agentRestartContextTimeout = 20 * time.Millisecond
+	agentRestartReadyPollInterval = time.Millisecond
+	t.Cleanup(func() {
+		agentRestartContextTimeout = oldTimeout
+		agentRestartReadyPollInterval = oldPoll
+	})
+
+	terminal := newControlledForegroundTerminal()
+	notifier := &recordingNotifier{messageID: "bot-card"}
+	rt := &RuntimeSession{
+		manager:               NewManager(nil, nil, WithNotifier(notifier)),
+		terminal:              terminal,
+		lastNotifiedMessageID: "bot-card",
+		lastNotifiedContent:   "原卡片正文",
+		notificationRunning:   true,
+		session: Session{
+			ID:                    "sess-restart-follow-up-timeout",
+			Status:                StatusWaiting,
+			Live:                  true,
+			NotifyOnWaiting:       true,
+			LarkChatID:            "oc-group",
+			LastMode:              SessionModeAgent,
+			LastAgentKind:         "codex",
+			LastAgentStartCommand: "codex",
+		},
+	}
+	if err := rt.RestartAgentWithFollowUp("读取群消息", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	<-terminal.started
+	close(terminal.release)
+	waitForAgentRestartPending(t, rt, false)
+	if writes := terminal.snapshotWrites(); len(writes) != 1 || writes[0] != "codex\r" {
+		t.Fatalf("timed-out restart follow-up writes = %#v", writes)
+	}
+	rt.mu.Lock()
+	status := rt.session.Status
+	content := rt.lastNotifiedContent
+	rt.mu.Unlock()
+	if status != StatusWaiting || !strings.Contains(content, "上下文恢复指令发送失败") {
+		t.Fatalf("timed-out restart state: status=%s content=%q", status, content)
+	}
+	notes := waitForRunningNotes(t, notifier, 1)
+	if len(notes) != 1 || notes[0].MessageID != "bot-card" || !strings.Contains(notes[0].Content, "上下文恢复指令发送失败") || notes[0].Running {
+		t.Fatalf("timed-out restart notification = %#v", notes)
+	}
+}
+
 func TestRestartAgentCancelsRelaunchWhenExitCannotBeConfirmed(t *testing.T) {
 	terminal := newControlledForegroundTerminal()
 	terminal.stopErr = errors.New("still running")
@@ -156,4 +278,19 @@ func waitForAgentRestartWrites(t *testing.T, terminal *controlledForegroundTermi
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("Agent restart writes = %#v, want at least %d", terminal.snapshotWrites(), count)
+}
+
+func waitForAgentRestartPending(t *testing.T, rt *RuntimeSession, want bool) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		rt.mu.Lock()
+		pending := rt.agentRestartPending
+		rt.mu.Unlock()
+		if pending == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("Agent restart pending did not become %v", want)
 }

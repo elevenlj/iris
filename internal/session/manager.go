@@ -35,10 +35,15 @@ const (
 	defaultStartupInputQueueWindow       = 30 * time.Second
 	defaultAgentRestartFallbackDelay     = time.Second
 	defaultAgentTerminationTimeout       = 6 * time.Second
+	defaultAgentRestartContextTimeout    = 30 * time.Second
+	defaultAgentRestartReadyPollInterval = 250 * time.Millisecond
 	defaultNotificationSendAttempts      = 3
 	defaultNotificationSendRetryDelay    = 120 * time.Millisecond
 	defaultWorkspaceDirName              = "default_dir"
 )
+
+var agentRestartContextTimeout = defaultAgentRestartContextTimeout
+var agentRestartReadyPollInterval = defaultAgentRestartReadyPollInterval
 
 var errNotificationMessageDisabled = errors.New("notification message is disabled")
 
@@ -1215,6 +1220,7 @@ const (
 	RuntimeEventSnapshotRequest  = "snapshot_request"
 	RuntimeEventTerminalResize   = "terminal_resize"
 	SnapshotPurposeInputBaseline = "input_baseline"
+	SnapshotPurposeAgentRestart  = "agent_restart"
 )
 
 func (rt *RuntimeSession) Snapshot() Session {
@@ -1437,7 +1443,29 @@ func (rt *RuntimeSession) WriteInputWithSnapshotBaselineFrom(data string, snapsh
 	return rt.writeInput(data, &inputSnapshotBaseline{data: snapshot, source: source, responder: responder}, responder)
 }
 
+type agentRestartFollowUp struct {
+	prompt        string
+	mentionOpenID string
+	messageID     string
+}
+
 func (rt *RuntimeSession) RestartAgent() error {
+	return rt.restartAgent(nil)
+}
+
+func (rt *RuntimeSession) RestartAgentWithFollowUp(prompt, mentionOpenID, messageID string) error {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return rt.RestartAgent()
+	}
+	return rt.restartAgent(&agentRestartFollowUp{
+		prompt:        prompt,
+		mentionOpenID: strings.TrimSpace(mentionOpenID),
+		messageID:     strings.TrimSpace(messageID),
+	})
+}
+
+func (rt *RuntimeSession) restartAgent(followUp *agentRestartFollowUp) error {
 	if rt == nil {
 		return errors.New("会话不在线")
 	}
@@ -1472,7 +1500,7 @@ func (rt *RuntimeSession) RestartAgent() error {
 	rt.agentRestartPending = true
 	terminal := rt.terminal
 	rt.mu.Unlock()
-	return rt.restartAgentAfterConfirmedExit(terminal, command, agentID, agentKind, startCommand, resumeCommand)
+	return rt.restartAgentAfterConfirmedExit(terminal, command, agentID, agentKind, startCommand, resumeCommand, followUp)
 }
 
 func (rt *RuntimeSession) SwitchAgent(optionID string) (AgentOption, error) {
@@ -1499,13 +1527,13 @@ func (rt *RuntimeSession) SwitchAgent(optionID string) (AgentOption, error) {
 	rt.agentRestartPending = true
 	terminal := rt.terminal
 	rt.mu.Unlock()
-	if err := rt.restartAgentAfterConfirmedExit(terminal, option.Command, option.ID, option.Kind, option.Command, ""); err != nil {
+	if err := rt.restartAgentAfterConfirmedExit(terminal, option.Command, option.ID, option.Kind, option.Command, "", nil); err != nil {
 		return AgentOption{}, err
 	}
 	return option, nil
 }
 
-func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, launchCommand, agentID, agentKind, startCommand, resumeCommand string) error {
+func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, launchCommand, agentID, agentKind, startCommand, resumeCommand string, followUp *agentRestartFollowUp) error {
 	launchCommand = strings.TrimSpace(launchCommand)
 	if launchCommand == "" {
 		rt.mu.Lock()
@@ -1532,6 +1560,18 @@ func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, laun
 		if strings.TrimSpace(resumeCommand) != "" {
 			rt.session.LastAgentResumeCommand = strings.TrimSpace(resumeCommand)
 		}
+		baselineSnapshotVersion := rt.visibleSnapshotVersion
+		baselineHistorySize := rt.session.HistorySize
+		rt.snapshotRoundGeneration++
+		rt.cancelSnapshotRequestsLocked(false)
+		rt.snapshotAtRoundStartSet = false
+		rt.snapshotAtRoundResponder = nil
+		rt.capturedInputBaselineResponder = nil
+		rt.capturedInputBaselineHeadless = false
+		rt.agentTurnHookVerified = false
+		rt.hookCompletedCurrentRound = false
+		rt.hookCompletionTipClaimed = false
+		rt.hookLastAssistantMessage = ""
 		rt.session.UpdatedAt = time.Now().UTC()
 		sess := rt.session
 		rt.mu.Unlock()
@@ -1542,14 +1582,106 @@ func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, laun
 			launchCommand += "\r"
 		}
 		_, err := terminal.Write([]byte(launchCommand))
+		if err != nil {
+			rt.finishAgentRestartContextFailure("Agent 重启失败：启动命令未能写入终端。")
+			log.Printf("agent restart command failed session=%s: %v", rt.Snapshot().ID, err)
+			return
+		}
+		if followUp == nil {
+			rt.mu.Lock()
+			rt.agentRestartPending = false
+			rt.mu.Unlock()
+			return
+		}
+		if !rt.waitForRestartedAgentComposer(agentKind, baselineSnapshotVersion, baselineHistorySize, agentRestartContextTimeout) {
+			rt.finishAgentRestartContextFailure("Agent 已重启，但上下文恢复指令发送失败。")
+			log.Printf("agent restart context follow-up timed out session=%s agent=%s", rt.Snapshot().ID, agentKind)
+			return
+		}
+		rt.mu.Lock()
+		rt.notificationRunning = false
+		rt.notificationPatchVersion++
+		rt.mu.Unlock()
+		if err := SubmitStructuredInputWithMention(rt, followUp.prompt, followUp.mentionOpenID); err != nil {
+			rt.finishAgentRestartContextFailure("Agent 已重启，但上下文恢复指令发送失败。")
+			log.Printf("agent restart context follow-up failed session=%s: %v", rt.Snapshot().ID, err)
+			return
+		}
+		rt.NotifyInputRunningOnMessage(followUp.messageID)
 		rt.mu.Lock()
 		rt.agentRestartPending = false
 		rt.mu.Unlock()
-		if err != nil {
-			log.Printf("agent restart command failed session=%s: %v", rt.Snapshot().ID, err)
-		}
+		log.Printf("agent restart context follow-up submitted session=%s agent=%s prompt_len=%d", rt.Snapshot().ID, agentKind, len(followUp.prompt))
 	}()
 	return nil
+}
+
+func (rt *RuntimeSession) waitForRestartedAgentComposer(agentKind string, baselineSnapshotVersion, baselineHistorySize int64, timeout time.Duration) bool {
+	if rt == nil || timeout <= 0 {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		delay := minDuration(agentRestartReadyPollInterval, remaining)
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		remaining = time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		rt.requestFreshSnapshot(minDuration(defaultNotifySnapshotTimeout, remaining), SnapshotPurposeAgentRestart)
+		rt.mu.Lock()
+		live := !rt.closed && rt.session.Live
+		ready := rt.visibleSnapshotVersion > baselineSnapshotVersion && rt.session.HistorySize > baselineHistorySize && startupAgentComposerReady(rt.visibleSnapshot, rt.visibleSnapshotSource, agentKind)
+		rt.mu.Unlock()
+		if !live {
+			return false
+		}
+		if ready {
+			return true
+		}
+		remaining = time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+	}
+}
+
+func (rt *RuntimeSession) finishAgentRestartContextFailure(message string) {
+	message = strings.TrimSpace(message)
+	rt.mu.Lock()
+	rt.agentRestartPending = false
+	rt.session.Status = StatusWaiting
+	rt.session.UpdatedAt = time.Now().UTC()
+	rt.stateVersion++
+	rt.notifyVersion++
+	rt.stopNotifyTimerLocked()
+	rt.stopNotifyStableTimerLocked()
+	if message != "" {
+		if previous := strings.TrimSpace(rt.lastNotifiedContent); previous != "" {
+			rt.lastNotifiedContent = previous + "\n\n" + message
+		} else {
+			rt.lastNotifiedContent = message
+		}
+	}
+	note := WaitingNotification{}
+	updateCard := false
+	if rt.manager != nil {
+		note, updateCard = rt.markNotificationWaitingLocked()
+	}
+	sess := rt.session
+	rt.mu.Unlock()
+	if rt.manager != nil {
+		_ = rt.manager.persist(context.Background(), sess)
+	}
+	if updateCard {
+		go rt.updateNotificationRunning(note, false)
+	}
 }
 
 func (rt *RuntimeSession) finishAgentRestartFailure() {
@@ -3399,6 +3531,7 @@ func (rt *RuntimeSession) HandleOutput(chunk []byte) {
 		rt.output = rt.output[len(rt.output)-maxOutputBytes:]
 	}
 	controlOutput := rt.controlInputActive
+	restartOutput := rt.agentRestartPending
 	if !controlOutput {
 		rt.roundReply = append(rt.roundReply, cp...)
 		if len(rt.roundReply) > maxRoundBytes {
@@ -3414,7 +3547,7 @@ func (rt *RuntimeSession) HandleOutput(chunk []byte) {
 	// that tail repaint, but do not reopen the completed round or re-arm the idle
 	// completion fallback. A submitted input clears hookCompletedCurrentRound.
 	completedHookRound := rt.agentTurnHookVerified && rt.hookCompletedCurrentRound && rt.session.Status == StatusWaiting
-	if renderable && !completedHookRound && !controlOutput {
+	if renderable && !completedHookRound && !controlOutput && !restartOutput {
 		previousStatus := rt.session.Status
 		rt.session.Status = StatusRunning
 		rt.stateVersion++
