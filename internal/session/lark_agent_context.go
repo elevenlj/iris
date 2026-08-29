@@ -193,6 +193,13 @@ func (m *Manager) authorizedAgentSession(ctx context.Context, sessionID, token s
 }
 
 func (b *LarkReplyBridge) LarkChatMetadata(ctx context.Context, chatID string) (LarkChatMetadata, error) {
+	if b != nil && b.fetchChatMetadata != nil {
+		return b.fetchChatMetadata(ctx, chatID)
+	}
+	return b.fetchLarkChatMetadata(ctx, chatID)
+}
+
+func (b *LarkReplyBridge) fetchLarkChatMetadata(ctx context.Context, chatID string) (LarkChatMetadata, error) {
 	chatID = strings.TrimSpace(chatID)
 	if b == nil || b.apiClient == nil || chatID == "" {
 		return LarkChatMetadata{}, ErrLarkContextUnavailable

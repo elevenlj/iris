@@ -57,6 +57,7 @@ type LarkReplyBridge struct {
 	sendChatText            func(context.Context, string, string) error
 	removeBotFromChat       func(context.Context, string) error
 	fetchBotIdentity        func(context.Context) (larkBotIdentity, error)
+	fetchChatMetadata       func(context.Context, string) (LarkChatMetadata, error)
 	startMu                 sync.Mutex
 	cancelStart             context.CancelFunc
 	startID                 int64
@@ -140,6 +141,9 @@ func NewLarkReplyBridge(appID, appSecret string, manager *Manager, uploadsDir st
 	b.sendChatText = b.sendTextToChat
 	b.removeBotFromChat = b.removeLarkBotFromChat
 	b.fetchBotIdentity = b.fetchLarkBotIdentity
+	if strings.HasPrefix(strings.TrimSpace(appID), "cli_") {
+		b.fetchChatMetadata = b.fetchLarkChatMetadata
+	}
 	return b
 }
 
@@ -1552,7 +1556,15 @@ func (b *LarkReplyBridge) createImplicitLarkSessionForMessage(ctx context.Contex
 	if routeCtx.ChatID != "" && isLarkDirectChatType(routeCtx.ChatType) {
 		return b.createDirectBotSessionForMessage(ctx, routeCtx)
 	}
-	return b.createLarkSessionForMessage(ctx, "lark-session", routeCtx)
+	name := "lark-session"
+	if routeCtx.ChatID != "" && strings.EqualFold(strings.TrimSpace(routeCtx.ChatType), "group") && b.fetchChatMetadata != nil {
+		if metadata, err := b.fetchChatMetadata(ctx, routeCtx.ChatID); err != nil {
+			log.Printf("lark reply bridge could not resolve implicit group name chat=%s: %v", routeCtx.ChatID, err)
+		} else if chatName := strings.TrimSpace(metadata.ChatName); chatName != "" {
+			name = chatName
+		}
+	}
+	return b.createLarkSessionForMessage(ctx, name, routeCtx)
 }
 
 func (b *LarkReplyBridge) createDirectBotSessionForMessage(ctx context.Context, routeCtx larkRouteContext) (Session, error) {

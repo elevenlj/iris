@@ -284,7 +284,9 @@ func TestDefaultPathsAllowHomeOverride(t *testing.T) {
 }
 
 func TestDefaultConfigPathAllowsConfigDirOverride(t *testing.T) {
+	home := t.TempDir()
 	dir := t.TempDir()
+	t.Setenv("HOME", home)
 	t.Setenv("IRIS_HOME", "")
 	t.Setenv("IRIS_CONFIG_DIR", dir)
 	t.Setenv("EASY_TERMINAL_HOME", "")
@@ -292,13 +294,13 @@ func TestDefaultConfigPathAllowsConfigDirOverride(t *testing.T) {
 	if got := defaultConfigPath(); got != filepath.Join(dir, "config.local.json") {
 		t.Fatalf("default config path with config dir override = %q", got)
 	}
-	if got := defaultDBPath(); got != filepath.Join(dir, "iris.db") {
+	if got := defaultDBPath(); got != filepath.Join(home, ".iris", "iris.db") {
 		t.Fatalf("default db path with config dir override = %q", got)
 	}
-	if got := defaultUploadsDir(); got != filepath.Join(dir, "data", "uploads") {
+	if got := defaultUploadsDir(); got != filepath.Join(home, ".iris", "data", "uploads") {
 		t.Fatalf("default uploads dir with config dir override = %q", got)
 	}
-	if got := defaultLogDir(); got != filepath.Join(dir, "log") {
+	if got := defaultLogDir(); got != filepath.Join(home, ".iris", "log") {
 		t.Fatalf("default log dir with config dir override = %q", got)
 	}
 	if got := configPathFromDir(filepath.Join(dir, "custom")); got != filepath.Join(dir, "custom", "config.local.json") {
@@ -306,23 +308,66 @@ func TestDefaultConfigPathAllowsConfigDirOverride(t *testing.T) {
 	}
 }
 
-func TestCLIConfigDirScopesRuntimeData(t *testing.T) {
+func TestCLIConfigDirDoesNotMoveRuntimeData(t *testing.T) {
+	home := t.TempDir()
 	dir := filepath.Join(t.TempDir(), "instance")
+	t.Setenv("HOME", home)
 	t.Setenv("IRIS_HOME", "")
 	t.Setenv("IRIS_CONFIG_DIR", "")
 	t.Setenv("EASY_TERMINAL_HOME", "")
 	t.Setenv("EASY_TERMINAL_CONFIG_DIR", "")
-	if got := dataDirFromConfigDir(dir); got != dir {
-		t.Fatalf("data dir from cli config dir = %q", got)
+	want := filepath.Join(home, ".iris")
+	if got := dataDirFromConfigDir(dir); got != want {
+		t.Fatalf("data dir from cli config dir = %q, want %q", got, want)
 	}
-	if got := dbPathInDataDir(dataDirFromConfigDir(dir)); got != filepath.Join(dir, "iris.db") {
+	if got := dbPathInDataDir(dataDirFromConfigDir(dir)); got != filepath.Join(want, "iris.db") {
 		t.Fatalf("db path from cli config dir = %q", got)
 	}
-	if got := uploadsDirInDataDir(dataDirFromConfigDir(dir)); got != filepath.Join(dir, "data", "uploads") {
+	if got := uploadsDirInDataDir(dataDirFromConfigDir(dir)); got != filepath.Join(want, "data", "uploads") {
 		t.Fatalf("uploads dir from cli config dir = %q", got)
 	}
-	if got := logDirInDataDir(dataDirFromConfigDir(dir)); got != filepath.Join(dir, "log") {
+	if got := logDirInDataDir(dataDirFromConfigDir(dir)); got != filepath.Join(want, "log") {
 		t.Fatalf("log dir from cli config dir = %q", got)
+	}
+}
+
+func TestEnterRuntimeDirUsesStableUserDataDir(t *testing.T) {
+	home := t.TempDir()
+	start := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+	if err := os.Chdir(start); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("IRIS_HOME", "")
+	t.Setenv("EASY_TERMINAL_HOME", "")
+
+	got, err := enterRuntimeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".iris")
+	if got != want {
+		t.Fatalf("runtime dir = %q, want %q", got, want)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wdInfo, err := os.Stat(wd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantInfo, err := os.Stat(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(wdInfo, wantInfo) {
+		t.Fatalf("working dir = %q, want %q", wd, want)
 	}
 }
 

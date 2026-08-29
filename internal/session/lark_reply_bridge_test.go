@@ -3241,6 +3241,26 @@ func TestLarkReplyBridgeStartWithoutDefaultKeepsFallbackBehavior(t *testing.T) {
 	}
 }
 
+func TestLarkReplyBridgeImplicitGroupSessionUsesChatName(t *testing.T) {
+	resetLarkRegistryForTest()
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	bridge.fetchChatMetadata = func(_ context.Context, chatID string) (LarkChatMetadata, error) {
+		return LarkChatMetadata{ChatID: chatID, ChatName: "Iris ·iris开发", ChatType: "group"}, nil
+	}
+
+	sess, err := bridge.createImplicitLarkSessionForMessage(context.Background(), larkRouteContext{
+		ChatID: "oc-dev", ChatType: "group", SenderOpenID: "ou-user",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Name != "Iris ·iris开发" {
+		t.Fatalf("implicit group session name = %q, want %q", sess.Name, "Iris ·iris开发")
+	}
+}
+
 func TestLarkReplyBridgeStartRunsNamePresetOnExactMatch(t *testing.T) {
 	resetLarkRegistryForTest()
 	launcher := &recordingLauncher{}

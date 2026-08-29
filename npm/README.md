@@ -14,7 +14,7 @@ iris --port 9090
 iris --config-dir /data/iris
 ```
 
-`--config-dir` controls the local config and runtime data directory.
+Iris always uses `~/.iris` as its runtime working directory and stores its database, uploads, and logs there, regardless of the directory it was launched from. `--config-dir` only selects an alternate configuration file directory. Set `IRIS_HOME` explicitly when an isolated runtime directory is required for tests or advanced deployments.
 
 After the service is ready, Iris opens the local configuration page automatically. First launch uses a dedicated password-setup page with password confirmation; later visits use a dedicated login page, with a secure browser session retained for thirty days.
 

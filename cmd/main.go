@@ -130,6 +130,9 @@ func run() error {
 		fmt.Println("Iris Agent hooks and Feishu context skills installed.")
 		return nil
 	}
+	if _, err := enterRuntimeDir(); err != nil {
+		return err
+	}
 	configPath := configPathFromDir(opts.ConfigDir)
 	if err := ensureConfigFile(configPath); err != nil {
 		return err
@@ -355,6 +358,13 @@ func parseStartupOptions(args []string) (startupOptions, error) {
 		return startupOptions{}, err
 	}
 	opts.ConfigDir = strings.TrimSpace(opts.ConfigDir)
+	if opts.ConfigDir != "" {
+		abs, err := filepath.Abs(opts.ConfigDir)
+		if err != nil {
+			return startupOptions{}, err
+		}
+		opts.ConfigDir = abs
+	}
 	if fs.NArg() > 0 {
 		return startupOptions{}, fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
 	}
@@ -723,10 +733,7 @@ func logDirInDataDir(dir string) string {
 	return filepath.Join(dir, "log")
 }
 
-func dataDirFromConfigDir(dir string) string {
-	if dir := strings.TrimSpace(dir); dir != "" {
-		return dir
-	}
+func dataDirFromConfigDir(_ string) string {
 	return defaultDataDir()
 }
 
@@ -737,16 +744,25 @@ func defaultDataDir() string {
 	if dir := strings.TrimSpace(os.Getenv("EASY_TERMINAL_HOME")); dir != "" {
 		return dir
 	}
-	if dir := strings.TrimSpace(os.Getenv("IRIS_CONFIG_DIR")); dir != "" {
-		return dir
-	}
-	if dir := strings.TrimSpace(os.Getenv("EASY_TERMINAL_CONFIG_DIR")); dir != "" {
-		return dir
-	}
 	if dir, err := os.UserHomeDir(); err == nil && dir != "" {
 		return filepath.Join(dir, ".iris")
 	}
 	return ".iris"
+}
+
+func enterRuntimeDir() (string, error) {
+	dir := defaultDataDir()
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		return "", fmt.Errorf("无法创建 Iris 固定运行目录 %s: %w", abs, err)
+	}
+	if err := os.Chdir(abs); err != nil {
+		return "", fmt.Errorf("无法进入 Iris 固定运行目录 %s: %w", abs, err)
+	}
+	return abs, nil
 }
 
 type appConfigService struct {
