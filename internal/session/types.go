@@ -85,7 +85,6 @@ type WaitingNotification struct {
 	UpdateNo             int
 	Running              bool
 	Disabled             bool
-	StartupWaiting       bool
 	AutoRefreshEnabled   bool
 	AutoSummaryEnabled   bool
 	MentionModeEnabled   bool

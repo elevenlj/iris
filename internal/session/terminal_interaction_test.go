@@ -416,63 +416,18 @@ func TestLarkNotificationCardRendersResumeHeading(t *testing.T) {
 	}
 }
 
-func TestStartupMenuSelectionSequenceUsesCurrentHighlight(t *testing.T) {
-	menu := strings.Join([]string{
-		"Choose working directory to resume this session",
-		"› 1. Use session directory (/tmp/one)",
-		"2. Use current directory (/tmp/two)",
-		"3. Always use session directory",
-		"4. Always use current directory",
-		"Press enter to continue",
-	}, "\n")
-	for _, tc := range []struct {
-		target int
-		want   string
-	}{
-		{target: 1, want: "\r"},
-		{target: 2, want: "\x1b[B\r"},
-		{target: 4, want: "\x1b[B\x1b[B\x1b[B\r"},
-	} {
-		got, ok := startupMenuSelectionSequence(menu, tc.target)
-		if !ok || got != tc.want {
-			t.Fatalf("target %d sequence=%q ok=%v want=%q", tc.target, got, ok, tc.want)
-		}
-	}
-	if got, ok := startupMenuSelectionSequence(menu, 9); ok || got != "" {
-		t.Fatalf("missing option should be rejected, got=%q ok=%v", got, ok)
-	}
-}
-
-func TestLarkNotificationCardRendersStartupWaitingControls(t *testing.T) {
+func TestLarkNotificationCardRendersStartupFallbackAsOrdinaryCard(t *testing.T) {
 	content, err := larkNotificationCardContent(WaitingNotification{
-		SessionID: "sess-1", Name: "Codex", Content: "Update available!\n1. Update now\n2. Skip", StartupWaiting: true, DeveloperModeEnabled: true,
+		SessionID: "sess-1", Name: "Codex", Content: "Update available!\n1. Update now\n2. Skip", DeveloperModeEnabled: true,
 	}, "ou_1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(content, "Codex（启动等待）") || !strings.Contains(content, "Update available!") {
-		t.Fatalf("startup waiting card should identify and preserve the blocker: %s", content)
+	if !strings.Contains(content, `"content":"Codex"`) || !strings.Contains(content, "Update available!") {
+		t.Fatalf("startup fallback should use an ordinary card title and preserve the blocker: %s", content)
 	}
-	for _, want := range []string{"上一项", "下一项", "确认", "Esc", `"iris_action":"startup_shortcut"`} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("startup waiting card should include %q control: %s", want, content)
-		}
-	}
-	if strings.Contains(content, `"tag":"select_static"`) || strings.Contains(content, `"iris_action":"shortcut"`) {
-		t.Fatalf("startup waiting card should use only its independent terminal controls: %s", content)
-	}
-
-	closed, err := larkNotificationCardContent(WaitingNotification{
-		SessionID: "sess-1", Name: "Codex", Content: "Update available!", MessageID: "startup-card", StartupWaiting: true, Disabled: true,
-	}, "ou_1", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(closed, "Codex（启动等待已结束）") {
-		t.Fatalf("closed startup waiting card should be visibly resolved: %s", closed)
-	}
-	if strings.Contains(closed, `"iris_action":"startup_shortcut"`) {
-		t.Fatalf("closed startup waiting card must remove terminal controls: %s", closed)
+	if strings.Contains(content, "启动等待") || strings.Contains(content, `"iris_action":"startup_shortcut"`) || strings.Contains(content, "上一项") || strings.Contains(content, "下一项") {
+		t.Fatalf("startup fallback must not add dedicated status or controls: %s", content)
 	}
 }
 

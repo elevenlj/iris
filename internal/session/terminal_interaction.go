@@ -19,7 +19,6 @@ const (
 
 var (
 	terminalInteractionOptionRE  = regexp.MustCompile(`^\s*(?:[›❯>]\s*)?(\d{1,2})[.)]\s+(.+?)\s*$`)
-	startupMenuOptionRE          = regexp.MustCompile(`^\s*([›❯>]?)[ \t]*(\d{1,2})[.)]\s+.+?\s*$`)
 	terminalInteractionMarkerRE  = regexp.MustCompile(`(?i)\s*\((current|default)\)\s*`)
 	terminalInteractionColumnsRE = regexp.MustCompile(`\s{2,}`)
 	terminalInteractionResumeRE  = regexp.MustCompile(`(?i)^\s*([❯›>]\s*)?((?:now|\d+\s*(?:s|m|h|d|w|mo|y)(?:\s+ago)?))\s+(.+?)\s*$`)
@@ -27,38 +26,6 @@ var (
 	errTerminalInteractionExpired       = errors.New("该选择已失效，请刷新后重试")
 	errTerminalInteractionOptionInvalid = errors.New("未找到所选选项")
 )
-
-func startupMenuSelectionSequence(text string, target int) (string, bool) {
-	if target <= 0 {
-		return "", false
-	}
-	current := 0
-	targetFound := false
-	for _, line := range splitVisibleLines(trimVisibleText(text)) {
-		matches := startupMenuOptionRE.FindStringSubmatch(line)
-		if len(matches) != 3 {
-			continue
-		}
-		option, err := strconv.Atoi(matches[2])
-		if err != nil {
-			continue
-		}
-		if option == target {
-			targetFound = true
-		}
-		if strings.TrimSpace(matches[1]) != "" {
-			current = option
-		}
-	}
-	if current <= 0 || !targetFound {
-		return "", false
-	}
-	delta := target - current
-	if delta < 0 {
-		return strings.Repeat("\x1b[A", -delta) + "\r", true
-	}
-	return strings.Repeat("\x1b[B", delta) + "\r", true
-}
 
 type TerminalInteraction struct {
 	ID              string

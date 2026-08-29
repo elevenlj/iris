@@ -3785,66 +3785,15 @@ func TestStartupPresetNotificationSuppressionSkipsExternalNotifyAndHook(t *testi
 	}
 }
 
-func TestStartupDiscardWaitsForAgentComposerBeforeSignalingReady(t *testing.T) {
-	notifier := &recordingNotifier{}
-	m := NewManager(nil, nil, WithNotifier(notifier))
-	ready := make(chan string, 1)
-	m.SetNotificationSentHook(func(sessionID string) { ready <- sessionID })
-	rt := &RuntimeSession{
-		manager:           m,
-		session:           Session{ID: "sess-1", Name: "A", Status: StatusRunning, Live: true, NotifyOnWaiting: true, LastAgentKind: "custom", LastAgentStartCommand: "aiden x codex"},
-		startupNotifyMode: startupNotifyDiscard,
-	}
-
-	rt.HandleOutput([]byte("OpenAI Codex\nmodel: gpt-5.6\ndirectory: /tmp/project\n"))
-	rt.mu.Lock()
-	version := rt.stateVersion
-	rt.stopNotifyStableTimerLocked()
-	rt.mu.Unlock()
-	rt.notifyAfterStable(version)
-
-	if got := notifier.count(); got != 0 {
-		t.Fatalf("startup TUI must not be sent, got %d cards", got)
-	}
-	select {
-	case sessionID := <-ready:
-		t.Fatalf("startup header must not release queued input, got %q", sessionID)
-	default:
-	}
-	if !rt.discardingStartupNotifications() {
-		t.Fatal("startup discard mode should remain active until the composer is ready")
-	}
-
-	rt.mu.Lock()
-	rt.stopNotifyTimerLocked()
-	rt.visibleSnapshot = "OpenAI Codex\nmodel: gpt-5.6\ndirectory: /tmp/project\n› Ask Codex to do anything"
-	rt.visibleSnapshotSource = "browser:buffer;continuity_version=2;render_epoch=1;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=3"
-	version = rt.notifyVersion
-	rt.mu.Unlock()
-	rt.notifyIfStillWaiting(version)
-
-	select {
-	case sessionID := <-ready:
-		if sessionID != "sess-1" {
-			t.Fatalf("ready session = %q", sessionID)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("ready Agent composer should release queued input")
-	}
-	if rt.discardingStartupNotifications() {
-		t.Fatal("startup discard mode should end after the Agent composer becomes ready")
-	}
-}
-
-func TestStartupDiscardPushesAndUpdatesGenericWaitingCardWithoutSignalingReady(t *testing.T) {
-	notifier := &recordingNotifier{messageID: "startup-card"}
+func TestStartupBlockerUsesOrdinaryFallbackNotification(t *testing.T) {
+	notifier := &recordingNotifier{messageID: "fallback-card"}
 	m := NewManager(nil, nil, WithNotifier(notifier))
 	ready := make(chan string, 1)
 	m.SetNotificationSentHook(func(sessionID string) { ready <- sessionID })
 	rt := &RuntimeSession{
 		manager: m,
 		session: Session{
-			ID:              "sess-startup-waiting",
+			ID:              "sess-startup-fallback",
 			Name:            "Iris 开发",
 			Status:          StatusWaiting,
 			Live:            true,
@@ -3862,58 +3811,30 @@ func TestStartupDiscardPushesAndUpdatesGenericWaitingCardWithoutSignalingReady(t
 		visibleSnapshotSource: "browser:buffer;continuity_version=2;render_epoch=1;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=1",
 	}
 
-	rt.notifyStartupWaiting(7)
+	rt.notifyIfStillWaitingForInteraction(7)
 	notes := notifier.notes()
-	if len(notes) != 1 || !notes[0].StartupWaiting || notes[0].Running || notes[0].Disabled {
-		t.Fatalf("startup blocker should create one status-only waiting card, got %#v", notes)
+	if len(notes) != 1 || notes[0].Running || notes[0].Disabled || notes[0].MessageID != "" {
+		t.Fatalf("startup blocker should create an ordinary notification card, got %#v", notes)
 	}
 	if !strings.Contains(notes[0].Content, "Update available!") || !strings.Contains(notes[0].Content, "Press enter to continue") {
-		t.Fatalf("startup waiting card must preserve the visible terminal prompt, got %q", notes[0].Content)
+		t.Fatalf("startup fallback must preserve the visible terminal prompt, got %q", notes[0].Content)
 	}
 	select {
 	case sessionID := <-ready:
-		t.Fatalf("startup waiting card must not release queued input, got %q", sessionID)
-	default:
-	}
-
-	rt.notifyStartupWaiting(7)
-	if got := notifier.count(); got != 1 {
-		t.Fatalf("unchanged startup blocker should be deduplicated, got %d cards", got)
-	}
-
-	rt.mu.Lock()
-	rt.visibleSnapshot = "Do you trust the contents of this directory?\n1. Yes\n2. No"
-	rt.visibleSnapshotVersion++
-	rt.mu.Unlock()
-	rt.notifyStartupWaiting(7)
-	notes = notifier.notes()
-	if len(notes) != 2 || notes[1].MessageID != "startup-card" || notes[1].UpdateNo != 1 || !strings.Contains(notes[1].Content, "Do you trust") {
-		t.Fatalf("changed startup blocker should patch the same card, got %#v", notes)
-	}
-	select {
-	case sessionID := <-ready:
-		t.Fatalf("updated startup waiting card must not release queued input, got %q", sessionID)
-	default:
-	}
-
-	rt.mu.Lock()
-	rt.visibleSnapshot = "OpenAI Codex\nmodel: gpt-5.6\ndirectory: /tmp/project\n› Ask Codex to do anything"
-	rt.visibleSnapshotSource = "browser:buffer;continuity_version=2;render_epoch=1;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=3"
-	rt.mu.Unlock()
-	rt.notifyIfStillWaitingForInteraction(7)
-
-	select {
-	case sessionID := <-ready:
-		if sessionID != "sess-startup-waiting" {
+		if sessionID != "sess-startup-fallback" {
 			t.Fatalf("ready session = %q", sessionID)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("ready composer should release queued input after closing the startup waiting card")
+		t.Fatal("ordinary fallback notification should complete its normal delivery flow")
 	}
-	notes = notifier.notes()
-	if len(notes) != 3 || !notes[2].StartupWaiting || !notes[2].Disabled || notes[2].MessageID != "startup-card" {
-		t.Fatalf("ready composer should close the startup waiting card, got %#v", notes)
+	if rt.discardingStartupNotifications() {
+		t.Fatal("startup fallback should enter ordinary round handling after the first blocker")
 	}
+	rt.mu.Lock()
+	if rt.lastNotifiedMessageID != "fallback-card" {
+		t.Fatalf("ordinary fallback should bind the normal notification card, got %q", rt.lastNotifiedMessageID)
+	}
+	rt.mu.Unlock()
 }
 
 func TestStartupDiscardReadyComposerDoesNotCreateFallbackCard(t *testing.T) {

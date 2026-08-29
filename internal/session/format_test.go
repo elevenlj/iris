@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -395,6 +396,23 @@ func TestPickLarkNotifyFallbackTailContentUsesConfiguredNewestLines(t *testing.T
 	}, "\n")
 	if got != want {
 		t.Fatalf("fallback tail = %q, want %q", got, want)
+	}
+}
+
+func TestPickLarkStartupFallbackUsesDedicatedThirtyLineLimit(t *testing.T) {
+	SetLarkNotifyFallbackTailLines(2)
+	t.Cleanup(func() { SetLarkNotifyFallbackTailLines(defaultFallbackTailLines) })
+	lines := make([]string, 35)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("startup line %02d", i+1)
+	}
+	startup := strings.Split(pickLarkStartupFallbackContent(strings.Join(lines, "\n")), "\n")
+	if len(startup) != startupFallbackTailLines || startup[0] != "startup line 06" || startup[len(startup)-1] != "startup line 35" {
+		t.Fatalf("startup fallback should keep its dedicated newest 30 lines, got %#v", startup)
+	}
+	normal := strings.Split(pickLarkNotifyFallbackTailContent(strings.Join(lines, "\n")), "\n")
+	if len(normal) != 2 || normal[0] != "startup line 34" || normal[1] != "startup line 35" {
+		t.Fatalf("normal fallback should keep its separate configured limit, got %#v", normal)
 	}
 }
 

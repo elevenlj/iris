@@ -145,7 +145,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		elements = append(elements, map[string]any{"tag": "markdown", "content": "<at id=" + mentionID + "></at>"})
 	}
 	var interactionElement map[string]any
-	if note.DeveloperModeEnabled && !note.Disabled && !note.Running && !note.StartupWaiting {
+	if note.DeveloperModeEnabled && !note.Disabled && !note.Running {
 		interactionElement = larkTerminalInteractionElement(note.SessionID, note.Interaction)
 	}
 	if interactionElement == nil {
@@ -156,10 +156,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		}
 		elements = append(elements, interactionElement)
 	}
-	if note.StartupWaiting && !note.Disabled {
-		elements = append(elements, larkStartupShortcutActionElement(note.SessionID))
-	}
-	if note.DeveloperModeEnabled && !note.StartupWaiting {
+	if note.DeveloperModeEnabled {
 		if contextElement := larkTerminalAgentContextElement(note.AgentContext); contextElement != nil {
 			elements = append(elements, map[string]any{"tag": "hr"})
 			elements = append(elements, contextElement)
@@ -181,7 +178,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 			elements = append(elements, selectorRow)
 		}
 	}
-	if !note.Disabled && !note.StartupWaiting {
+	if !note.Disabled {
 		elements = append(elements, larkShortcutActionElements(note.SessionID, note.UpdateNo, note.MentionModeEnabled, note.DeveloperModeEnabled)...)
 		if shortcuts := normalizeLarkCustomShortcuts(customShortcuts); note.DeveloperModeEnabled && len(shortcuts) > 0 {
 			elements = append(elements, map[string]any{"tag": "hr"})
@@ -679,29 +676,6 @@ func larkShortcutButton(label, buttonType, sessionID, key string) map[string]any
 	}
 }
 
-func larkStartupShortcutActionElement(sessionID string) map[string]any {
-	columns := []map[string]any{
-		larkStartupShortcutButtonColumn("上一项", sessionID, "arrow_up"),
-		larkStartupShortcutButtonColumn("下一项", sessionID, "arrow_down"),
-		larkStartupShortcutButtonColumn("确认", sessionID, "enter"),
-		larkStartupShortcutButtonColumn("Esc", sessionID, "esc"),
-	}
-	return larkFlowShortcutActionElement(columns...)
-}
-
-func larkStartupShortcutButtonColumn(label, sessionID, key string) map[string]any {
-	return map[string]any{
-		"tag": "column", "width": "auto", "vertical_spacing": "8px",
-		"elements": []map[string]any{{
-			"tag": "button", "type": "default", "size": "tiny", "width": "default",
-			"text": map[string]any{"tag": "plain_text", "content": label},
-			"behaviors": []map[string]any{{"type": "callback", "value": map[string]any{
-				"iris_action": "startup_shortcut", "session_id": sessionID, "key": key,
-			}}},
-		}},
-	}
-}
-
 func larkDeleteSessionButtonColumn(sessionID string) map[string]any {
 	return map[string]any{
 		"tag":              "column",
@@ -809,12 +783,6 @@ func larkCustomShortcutButtonColumn(sessionID string, shortcut LarkCustomShortcu
 }
 
 func larkNotificationTitle(note WaitingNotification) string {
-	if note.StartupWaiting {
-		if note.Disabled {
-			return note.Name + "（启动等待已结束）"
-		}
-		return note.Name + "（启动等待）"
-	}
 	if note.Running && !note.Disabled {
 		return note.Name + "（Running）"
 	}

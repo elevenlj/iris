@@ -39,7 +39,7 @@ const (
 	defaultHeadlessSnapshotTimeoutMs       = 10000
 	defaultLarkNotifyMaxLines              = 200
 	defaultLarkNotifyFallbackTailLines     = 100
-	runtimeLogicVersion                    = "card-refresh-no-running-patch-v2"
+	runtimeLogicVersion                    = "startup-fallback-ordinary-round-v1"
 )
 
 var defaultLarkNotifyDropLineRules = session.LarkNotifyDropLineRules{

@@ -17,6 +17,7 @@ var emailRE = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2
 const (
 	defaultMaxLarkTextLines     = 300
 	defaultFallbackTailLines    = 100
+	startupFallbackTailLines    = 30
 	maxInputAnchorRunes         = 30
 	maxLarkTextRunes            = 12000
 	larkTruncatedPrefix         = "[truncated]\n"
@@ -145,16 +146,16 @@ func pickLarkNotifyFallbackTailContent(visibleSnapshot string) string {
 	return truncateForLark(sanitizeForLarkAudit(body))
 }
 
-// pickLarkStartupWaitingContent preserves the current terminal viewport for a
+// pickLarkStartupFallbackContent preserves the current terminal viewport for a
 // startup blocker. It intentionally bypasses semantic notification filters:
 // an updater, trust prompt, approval, or future Codex modal must remain visible
 // even when it does not belong to a normal Agent reply.
-func pickLarkStartupWaitingContent(visibleSnapshot string) string {
+func pickLarkStartupFallbackContent(visibleSnapshot string) string {
 	body := trimVisibleText(visibleSnapshot)
 	if body == "" {
 		return ""
 	}
-	body = truncateLinesFromTail(body, int(larkNotifyFallbackTailLines.Load()), "")
+	body = truncateLinesFromTail(body, startupFallbackTailLines, "")
 	return truncateForLark(sanitizeForLarkAudit(body))
 }
 

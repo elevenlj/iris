@@ -402,8 +402,11 @@ func TestLarkReplyBridgeDirectContactCreatesAndReusesAssistantGroup(t *testing.T
 	bridge.mu.Lock()
 	queued := append([]larkPipelineInput(nil), bridge.pipelines[binding.SessionID]...)
 	bridge.mu.Unlock()
-	if len(queued) != 2 || queued[0].Text != "我想约个时间" || queued[1].Text != "明天下午可以吗" {
-		t.Fatalf("contact messages should queue while Agent starts: %#v", queued)
+	if got := launcher.terminals[0].writes(); !strings.Contains(got, "我想约个时间") {
+		t.Fatalf("the first startup input should flow through as an ordinary round: %q", got)
+	}
+	if len(queued) != 1 || queued[0].Text != "明天下午可以吗" {
+		t.Fatalf("only the overlapping follow-up should use the ordinary running queue: %#v", queued)
 	}
 	joined := strings.Join(messages, "\n")
 	if !strings.Contains(joined, "oc-contact:小林：我想约个时间") || !strings.Contains(joined, "oc-contact:小林：明天下午可以吗") {
@@ -1727,192 +1730,65 @@ func TestLarkReplyBridgeQueuesFollowupWhileRuntimeRunningDuringStartupWindow(t *
 	}
 }
 
-func TestLarkReplyBridgeQueuedRecoveryInputKeepsStartupTUISuppressed(t *testing.T) {
+func TestLarkReplyBridgeStartupInputUsesOrdinaryRoundAndNewCard(t *testing.T) {
+	resetLarkRegistryForTest()
+	previousDelay := structuredInputEnterDelay
+	structuredInputEnterDelay = 0
+	defer func() { structuredInputEnterDelay = previousDelay }()
 	launcher := &recordingLauncher{}
-	notifier := &recordingNotifier{messageID: "task-card"}
+	notifier := &recordingNotifier{createMessageIDs: []string{"round-1", "round-2"}}
 	manager := NewManager(nil, launcher, WithNotifier(notifier))
 	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
 	sess, err := manager.CreateSession(context.Background(), "Recovered")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := manager.UpdateNotifyOnWaiting(context.Background(), sess.ID, true); err != nil || !ok {
-		t.Fatalf("enable notifications ok=%v err=%v", ok, err)
-	}
-	rt, _ := manager.GetRuntime(sess.ID)
-	rt.mu.Lock()
-	rt.session.Status = StatusRunning
-	rt.session.LastMode = SessionModeAgent
-	rt.inputQueueUntil = time.Now().Add(-time.Second)
-	rt.startupNotifyMode = startupNotifyDiscard
-	rt.mu.Unlock()
-
-	if !bridge.enqueueInputIfRuntimeBusy(rt, sess.ID, []string{"queued question"}, "ou_user") {
-		t.Fatal("recovery input should be queued while the Agent starts")
-	}
-	if !rt.discardingStartupNotifications() {
-		t.Fatal("queuing input must not expose the startup TUI")
-	}
-	if strings.Contains(launcher.terminals[0].writes(), "queued question") {
-		t.Fatal("queued input must not be written before startup settles")
-	}
-	if notes := notifier.notes(); len(notes) != 0 {
-		t.Fatalf("queued startup input must not create a premature running card: %#v", notes)
-	}
-
-	rt.mu.Lock()
-	rt.session.Status = StatusWaiting
-	rt.visibleSnapshot = "Update available!\n1. Update now\n2. Skip for now"
-	rt.visibleSnapshotSource = "browser:buffer;continuity_version=2;render_epoch=1;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=1"
-	version := rt.notifyVersion
-	rt.mu.Unlock()
-	rt.notifyStartupWaiting(version)
-	notes := notifier.notes()
-	if len(notes) != 1 || !notes[0].StartupWaiting || !strings.Contains(notes[0].Content, "Update available!") {
-		t.Fatalf("startup blocker should create a fallback status card, got %#v", notes)
-	}
-	if strings.Contains(launcher.terminals[0].writes(), "queued question") {
-		t.Fatal("fallback status card must not release queued startup input")
-	}
-	if err := SubmitStructuredInput(rt, "1"); err != nil {
-		t.Fatal(err)
-	}
-	if !rt.discardingStartupNotifications() {
-		t.Fatal("answering a startup choice must keep startup protection active until the composer is ready")
-	}
-	if strings.Contains(launcher.terminals[0].writes(), "queued question") {
-		t.Fatal("startup choice input must not release the queued user task")
-	}
-
-	bridge.OnNotificationSent(sess.ID)
-	if !lastSubmittedWrite(launcher.terminals[0].writeParts(), "queued question") {
-		t.Fatal("queued input should be submitted after startup settles")
-	}
-	notes = waitForNotifierNotes(t, notifier, 2)
-	if len(notes) != 2 || !notes[1].Running || notes[1].Content != RunningNotificationPlaceholder {
-		t.Fatalf("submitted task should create its running card after the fallback card, got %#v", notes)
-	}
-}
-
-func TestLarkReplyBridgeStartupCardNumericReplySelectsMenuWithoutQueueing(t *testing.T) {
-	resetLarkRegistryForTest()
-	launcher := &recordingLauncher{}
-	manager := NewManager(nil, launcher)
-	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
-	sess, err := manager.CreateSession(context.Background(), "Recovered")
-	if err != nil {
-		t.Fatal(err)
-	}
 	rt, _ := manager.GetRuntime(sess.ID)
 	rt.mu.Lock()
 	rt.session.Status = StatusWaiting
 	rt.session.LastMode = SessionModeAgent
+	rt.session.NotifyOnWaiting = true
 	rt.startupNotifyMode = startupNotifyDiscard
-	rt.startupWaitingMessageID = "startup-card"
-	rt.visibleSnapshot = strings.Join([]string{
-		"Choose working directory to resume this session",
-		"› 1. Use session directory (/tmp/one)",
-		"2. Use current directory (/tmp/two)",
-		"Press enter to continue",
-	}, "\n")
 	rt.mu.Unlock()
-	defaultLarkMessageRegistry.remember(sess.ID, "startup-card")
+	defaultLarkMessageRegistry.rememberLatest(sess.ID)
 
-	if err := bridge.HandleP2MessageReceive(context.Background(), p2Message("numeric-reply", "startup-card", "", "text", `{"text":"2"}`)); err != nil {
+	if err := bridge.HandleP2MessageReceive(context.Background(), p2Message("round-input-1", "", "", "text", `{"text":"2"}`)); err != nil {
 		t.Fatal(err)
 	}
 	parts := launcher.terminals[0].writeParts()
-	if len(parts) != 1 || parts[0] != "\x1b[B\r" {
-		t.Fatalf("numeric card reply should move to option 2 and confirm, got %#v", parts)
+	if len(parts) != 1 || parts[0] != "2" {
+		t.Fatalf("startup input should use the existing ordinary numeric input path, got %#v", parts)
 	}
 	bridge.mu.Lock()
 	queued := len(bridge.pipelines[sess.ID])
 	bridge.mu.Unlock()
 	if queued != 0 {
-		t.Fatalf("numeric startup choice must not enter the task queue, queued=%d", queued)
+		t.Fatalf("startup input must not enter a special queue, queued=%d", queued)
 	}
-	if !rt.discardingStartupNotifications() {
-		t.Fatal("startup choice must keep startup protection until the composer is ready")
+	if rt.discardingStartupNotifications() {
+		t.Fatal("startup input should become an ordinary round immediately")
 	}
-}
+	notes := waitForNotifierNotes(t, notifier, 1)
+	if len(notes) != 1 || !notes[0].Running || notes[0].Content != RunningNotificationPlaceholder {
+		t.Fatalf("first startup input should create an ordinary running card, got %#v", notes)
+	}
 
-func TestLarkReplyBridgeStartupCardControlsDoNotReleaseQueuedTask(t *testing.T) {
-	resetLarkRegistryForTest()
-	launcher := &recordingLauncher{}
-	manager := NewManager(nil, launcher)
-	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
-	sess, err := manager.CreateSession(context.Background(), "Recovered")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rt, _ := manager.GetRuntime(sess.ID)
 	rt.mu.Lock()
 	rt.session.Status = StatusWaiting
-	rt.session.LastMode = SessionModeAgent
-	rt.startupNotifyMode = startupNotifyDiscard
-	rt.startupWaitingMessageID = "startup-card"
+	rt.inputQueueUntil = time.Now().Add(-time.Second)
 	rt.mu.Unlock()
-	bridge.enqueuePipeline(sess.ID, []string{"queued task"}, "ou-user")
-
-	event := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
-		Action: &callback.CallBackAction{Value: map[string]interface{}{
-			"iris_action": "startup_shortcut",
-			"session_id":  sess.ID,
-			"key":         "arrow_down",
-		}},
-		Context: &callback.Context{OpenMessageID: "startup-card"},
-	}}
-	resp, err := bridge.HandleCardActionTrigger(context.Background(), event)
-	if err != nil {
+	if err := bridge.HandleP2MessageReceive(context.Background(), p2Message("round-input-2", "", "", "text", `{"text":"continue"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if resp != nil {
-		t.Fatalf("unexpected response: %#v", resp)
+	notes = waitForNotifierNotes(t, notifier, 3)
+	runningCreates := 0
+	for _, note := range notes {
+		if note.Running && note.MessageID == "" {
+			runningCreates++
+		}
 	}
-	parts := launcher.terminals[0].writeParts()
-	if len(parts) != 1 || parts[0] != "\x1b[B" {
-		t.Fatalf("startup control should write only the direction key, got %#v", parts)
-	}
-	bridge.mu.Lock()
-	queued := append([]larkPipelineInput(nil), bridge.pipelines[sess.ID]...)
-	bridge.mu.Unlock()
-	if len(queued) != 1 || queued[0].Text != "queued task" {
-		t.Fatalf("startup control must leave queued task untouched, got %#v", queued)
-	}
-	if !rt.discardingStartupNotifications() {
-		t.Fatal("startup control must not end startup protection")
-	}
-}
-
-func TestLarkReplyBridgePlainNumericStartupInputIsQueued(t *testing.T) {
-	resetLarkRegistryForTest()
-	launcher := &recordingLauncher{}
-	manager := NewManager(nil, launcher)
-	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
-	sess, err := manager.CreateSession(context.Background(), "Recovered")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rt, _ := manager.GetRuntime(sess.ID)
-	rt.mu.Lock()
-	rt.session.Status = StatusWaiting
-	rt.session.LastMode = SessionModeAgent
-	rt.startupNotifyMode = startupNotifyDiscard
-	rt.startupWaitingMessageID = "startup-card"
-	rt.mu.Unlock()
-	defaultLarkMessageRegistry.rememberLatest(sess.ID)
-
-	if err := bridge.HandleP2MessageReceive(context.Background(), p2Message("plain-number", "", "", "text", `{"text":"2"}`)); err != nil {
-		t.Fatal(err)
-	}
-	if got := launcher.terminals[0].writes(); got != "" {
-		t.Fatalf("plain numeric message must not leak into startup menu, got %q", got)
-	}
-	bridge.mu.Lock()
-	queued := append([]larkPipelineInput(nil), bridge.pipelines[sess.ID]...)
-	bridge.mu.Unlock()
-	if len(queued) != 1 || queued[0].Text != "2" {
-		t.Fatalf("plain numeric startup input should remain queued, got %#v", queued)
+	if runningCreates != 2 {
+		t.Fatalf("each ordinary input should create its own card, got %#v", notes)
 	}
 }
 
