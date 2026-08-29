@@ -1779,9 +1779,35 @@ func TestLarkReplyBridgeQueuesRecoveryInputUntilComposerReady(t *testing.T) {
 	}
 
 	rt.mu.Lock()
-	rt.visibleSnapshot = "OpenAI Codex\nmodel: gpt-5.6\ndirectory: /tmp/project\n› Ask Codex to do anything"
+	rt.visibleSnapshot = strings.Join([]string{
+		"Choose working directory to resume this session",
+		"1. Use session directory (/tmp/session)",
+		"2. Use current directory (/tmp/project)",
+		"Press enter to continue",
+	}, "\n")
 	rt.visibleSnapshotSource = "browser:buffer;continuity_version=2;render_epoch=2;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=3"
 	version := rt.notifyVersion
+	rt.mu.Unlock()
+	rt.notifyIfStillWaiting(version)
+
+	notes = notifier.notes()
+	if len(notes) != 2 || notes[1].MessageID != "queued-card" || notes[1].Running || !strings.Contains(notes[1].Content, "Choose working directory") {
+		t.Fatalf("startup waiting state should update the queued input card with terminal content, got %#v", notes)
+	}
+	if got := launcher.terminals[0].writes(); strings.Contains(got, "我重启了一下，你好呀") {
+		t.Fatalf("updating the waiting card must not release queued input: %q", got)
+	}
+	bridge.mu.Lock()
+	queuedAfterWaiting := len(bridge.pipelines[sess.ID])
+	bridge.mu.Unlock()
+	if queuedAfterWaiting != 1 {
+		t.Fatalf("waiting card update must preserve the queued input, queued=%d", queuedAfterWaiting)
+	}
+
+	rt.mu.Lock()
+	rt.stopNotifyTimerLocked()
+	rt.visibleSnapshot = "OpenAI Codex\nmodel: gpt-5.6\ndirectory: /tmp/project\n› Ask Codex to do anything"
+	rt.visibleSnapshotSource = "browser:buffer;continuity_version=2;render_epoch=3;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=3"
 	rt.mu.Unlock()
 	rt.notifyIfStillWaitingForInteraction(version)
 
@@ -1805,8 +1831,9 @@ func TestLarkReplyBridgeQueuesRecoveryInputUntilComposerReady(t *testing.T) {
 	if textWrites != 1 {
 		t.Fatalf("queued startup input should be submitted once, writes=%#v", parts)
 	}
-	if notes = notifier.notes(); len(notes) != 1 {
-		t.Fatalf("queued startup input should keep the same ordinary running card, got %#v", notes)
+	runningNotes := notifier.runningNotes()
+	if len(runningNotes) != 1 || runningNotes[0].MessageID != "queued-card" || !runningNotes[0].Running {
+		t.Fatalf("queued startup input card should return to running after composer readiness, got %#v", runningNotes)
 	}
 }
 

@@ -2974,6 +2974,16 @@ func (rt *RuntimeSession) createDetachedRunningNotification(mentionOpenID string
 	}
 	messageID := strings.TrimSpace(result.MessageID)
 	if messageID != "" {
+		rt.mu.Lock()
+		rt.notificationPatchVersion++
+		rt.lastNotifiedMessageID = messageID
+		rt.lastNotifiedContent = RunningNotificationPlaceholder
+		rt.lastNotifiedRoundHash = ""
+		rt.notificationUpdateNo = 0
+		rt.notificationRunning = true
+		rt.autoRefreshMessageID = messageID
+		rt.notificationMentionOpenID = strings.TrimSpace(mentionOpenID)
+		rt.mu.Unlock()
 		defaultLarkMessageRegistry.remember(n.SessionID, messageID)
 		defaultLarkMessageRegistry.rememberLatest(n.SessionID)
 	}
@@ -2986,9 +2996,6 @@ func (rt *RuntimeSession) bindQueuedRunningNotification(messageID, mentionOpenID
 	}
 	messageID = strings.TrimSpace(messageID)
 	rt.mu.Lock()
-	if rt.lastNotifiedMessageID != "" && rt.lastNotifiedMessageID != messageID {
-		rt.freezeNotificationMessageLocked(rt.lastNotifiedMessageID)
-	}
 	rt.notificationPatchVersion++
 	rt.lastNotifiedMessageID = messageID
 	rt.lastNotifiedContent = RunningNotificationPlaceholder
@@ -2997,10 +3004,25 @@ func (rt *RuntimeSession) bindQueuedRunningNotification(messageID, mentionOpenID
 	rt.notificationRunning = messageID != ""
 	rt.autoRefreshMessageID = messageID
 	rt.notificationMentionOpenID = strings.TrimSpace(mentionOpenID)
+	note := WaitingNotification{
+		SessionID:          rt.session.ID,
+		Name:               rt.session.Name,
+		Content:            RunningNotificationPlaceholder,
+		MessageID:          messageID,
+		ChatID:             rt.session.LarkChatID,
+		MentionOpenID:      rt.notificationMentionOpenID,
+		Running:            true,
+		AutoRefreshEnabled: rt.autoRefreshEnabled,
+		AutoSummaryEnabled: rt.autoSummaryEnabled,
+		MentionModeEnabled: rt.session.LarkMentionModeEnabled,
+		AgentContext:       cloneTerminalAgentContext(rt.lastTerminalAgentContext),
+	}
 	rt.mu.Unlock()
 	if messageID == "" {
 		rt.NotifyInputRunning()
+		return
 	}
+	rt.updateNotificationRunning(note, true)
 }
 
 func (rt *RuntimeSession) NotifyInputRunningOnMessage(messageID string) {
@@ -4009,7 +4031,6 @@ func (rt *RuntimeSession) notifyIfStillWaitingForInteraction(version int64) {
 }
 
 func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate, requestFreshSnapshot bool) {
-	interactionNotification := !requestFreshSnapshot
 	if !immediate {
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -4029,14 +4050,6 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 		}
 		agentKind := agentKindForCommand(rt.session.LastAgentStartCommand, rt.session.LastAgentKind)
 		if !startupAgentComposerReady(rt.visibleSnapshot, rt.visibleSnapshotSource, agentKind) {
-			if (!interactionNotification && !rt.hasPendingCodexInteractionLocked()) || rt.notificationRunning {
-				rt.rescheduleNotifyRetryLocked(version)
-				sessionID := rt.session.ID
-				source := rt.visibleSnapshotSource
-				rt.mu.Unlock()
-				log.Printf("startup input deferred session=%s version=%d reason=composer_not_ready snapshot_source=%s", sessionID, version, source)
-				return
-			}
 			startupFallback = true
 			requestFreshSnapshot = false
 			sessionID := rt.session.ID

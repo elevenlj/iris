@@ -3811,7 +3811,7 @@ func TestStartupBlockerUsesOrdinaryFallbackNotification(t *testing.T) {
 		visibleSnapshotSource: "browser:buffer;continuity_version=2;render_epoch=1;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=1",
 	}
 
-	rt.notifyIfStillWaitingForInteraction(7)
+	rt.notifyIfStillWaiting(7)
 	notes := notifier.notes()
 	if len(notes) != 1 || notes[0].Running || notes[0].Disabled || notes[0].MessageID != "" {
 		t.Fatalf("startup blocker should create an ordinary notification card, got %#v", notes)
