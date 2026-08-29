@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -100,6 +101,13 @@ func TestBrowserOpenCommandUsesPlatformLauncher(t *testing.T) {
 	}
 	if _, _, err := browserOpenCommand("plan9", target); err == nil {
 		t.Fatal("unsupported platform should return an error")
+	}
+}
+
+func TestStartupBrowserURLUsesMainPage(t *testing.T) {
+	got := startupBrowserURL(&net.TCPAddr{Port: 8080}, "")
+	if got != "http://localhost:8080/" {
+		t.Fatalf("startup browser URL = %q", got)
 	}
 }
 

@@ -266,9 +266,8 @@ func run() error {
 	}()
 	if !envBool("IRIS_NO_OPEN", false) {
 		go func() {
-			settingsURL := "http://localhost:" + listenerPort(listener.Addr(), cfg.Port) + "/?settings=1"
-			if err := openBrowserURL(settingsURL); err != nil {
-				log.Printf("failed to open Iris configuration page: %v", err)
+			if err := openBrowserURL(startupBrowserURL(listener.Addr(), cfg.Port)); err != nil {
+				log.Printf("failed to open Iris page: %v", err)
 			}
 		}()
 	}
@@ -307,6 +306,10 @@ func listenerPort(addr net.Addr, fallback string) string {
 		return strconv.Itoa(tcp.Port)
 	}
 	return strings.TrimSpace(fallback)
+}
+
+func startupBrowserURL(addr net.Addr, fallbackPort string) string {
+	return "http://localhost:" + listenerPort(addr, fallbackPort) + "/"
 }
 
 func openBrowserURL(target string) error {
