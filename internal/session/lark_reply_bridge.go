@@ -362,6 +362,8 @@ func (b *LarkReplyBridge) handleCardAction(ctx context.Context, action *callback
 	switch actionName {
 	case "shortcut":
 		return b.handleCardShortcut(ctx, value, openMessageID)
+	case "startup_shortcut":
+		return b.handleStartupCardShortcut(value, openMessageID)
 	case "custom_shortcut":
 		return b.handleCardCustomShortcut(ctx, value, openMessageID)
 	case "refresh":
@@ -602,6 +604,31 @@ func (b *LarkReplyBridge) handleCardShortcut(ctx context.Context, value map[stri
 	return nil, nil
 }
 
+func (b *LarkReplyBridge) handleStartupCardShortcut(value map[string]interface{}, openMessageID string) (*callback.CardActionTriggerResponse, error) {
+	sessionID := strings.TrimSpace(fmt.Sprint(value["session_id"]))
+	if sessionID == "" || b.manager == nil {
+		return larkCardToast("warning", "会话不在线"), nil
+	}
+	rt, ok := b.manager.GetRuntime(sessionID)
+	if !ok {
+		return larkCardToast("warning", "会话不在线"), nil
+	}
+	key := strings.TrimSpace(fmt.Sprint(value["key"]))
+	seq, _, supported := larkShortcutInputSequence(key)
+	if !supported {
+		return larkCardToast("warning", "不支持的快捷键"), nil
+	}
+	if err := rt.writeStartupWaitingInput(openMessageID, seq); err != nil {
+		if errors.Is(err, errNotificationMessageDisabled) {
+			return larkCardToast("warning", larkDisabledCardToastContent), nil
+		}
+		return nil, err
+	}
+	defaultLarkMessageRegistry.remember(sessionID, openMessageID)
+	log.Printf("lark startup card shortcut session=%s key=%s message=%s", sessionID, key, openMessageID)
+	return nil, nil
+}
+
 func (b *LarkReplyBridge) handleCardRefresh(ctx context.Context, value map[string]interface{}, openMessageID string) (*callback.CardActionTriggerResponse, error) {
 	sessionID, rt, blocked := b.resolveCardActionRuntimeForRefresh(value, openMessageID)
 	if blocked != nil {
@@ -760,6 +787,10 @@ func larkShortcutInputSequence(key string) (string, string, bool) {
 		return "\x1b", "Esc", true
 	case "enter", "return":
 		return "\r", "Enter", true
+	case "arrow_up", "arrow-up", "up":
+		return "\x1b[A", "上一项", true
+	case "arrow_down", "arrow-down", "down":
+		return "\x1b[B", "下一项", true
 	default:
 		return "", "", false
 	}
@@ -1200,6 +1231,17 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		rt, _ = b.manager.GetRuntime(sessionID)
 	}
 	b.manager.EnsureBrowser(sessionID)
+	if handled, handleErr := b.handleStartupWaitingReply(rt, routeCtx, inputParts); handled {
+		if handleErr != nil {
+			if err := b.replyLarkText(ctx, messageID, handleErr.Error()); err != nil {
+				return sessionID, err
+			}
+			defaultLarkMessageRegistry.remember(sessionID, messageID, parentID, rootID)
+			return sessionID, nil
+		}
+		defaultLarkMessageRegistry.remember(sessionID, messageID, parentID, rootID)
+		return sessionID, nil
+	}
 	if b.enqueueInputIfRuntimeBusy(rt, sessionID, inputParts, routeCtx.SenderOpenID) {
 		defaultLarkMessageRegistry.remember(sessionID, messageID, parentID, rootID)
 		return sessionID, nil
@@ -1439,10 +1481,10 @@ func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionI
 	if !rt.ShouldQueueInputWhileRunning() {
 		return false
 	}
-	if structuredInputNumericOnlyRE.MatchString(strings.TrimSpace(parts[0])) {
+	starting := rt.discardingStartupNotifications()
+	if !starting && structuredInputNumericOnlyRE.MatchString(strings.TrimSpace(parts[0])) {
 		return false
 	}
-	starting := rt.discardingStartupNotifications()
 	rt.SetNotificationMentionOpenID(mentionOpenID)
 	if !starting {
 		rt.MarkStructuredInputActivity(parts[0])
@@ -1453,6 +1495,35 @@ func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionI
 	}
 	log.Printf("lark reply bridge queued input session=%s parts=%d reason=runtime_running", sessionID, len(parts))
 	return true
+}
+
+func (b *LarkReplyBridge) handleStartupWaitingReply(rt *RuntimeSession, routeCtx larkRouteContext, parts []string) (bool, error) {
+	if rt == nil || len(parts) != 1 {
+		return false, nil
+	}
+	selectionText := strings.TrimSpace(parts[0])
+	if !structuredInputNumericOnlyRE.MatchString(selectionText) {
+		return false, nil
+	}
+	target, err := strconv.Atoi(selectionText)
+	if err != nil || target <= 0 {
+		return false, nil
+	}
+	for _, cardMessageID := range []string{routeCtx.ParentID, routeCtx.RootID} {
+		cardMessageID = strings.TrimSpace(cardMessageID)
+		if cardMessageID == "" {
+			continue
+		}
+		err = rt.submitStartupWaitingSelection(cardMessageID, target)
+		if err == nil {
+			log.Printf("lark startup card numeric selection session=%s target=%d message=%s", rt.Snapshot().ID, target, cardMessageID)
+			return true, nil
+		}
+		if !errors.Is(err, errNotificationMessageDisabled) {
+			return true, err
+		}
+	}
+	return false, nil
 }
 
 func (b *LarkReplyBridge) routeAttachments(ctx context.Context, routeCtx larkRouteContext, text string, parts []string, refs []larkAttachmentRef) (string, error) {

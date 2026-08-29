@@ -1794,6 +1794,128 @@ func TestLarkReplyBridgeQueuedRecoveryInputKeepsStartupTUISuppressed(t *testing.
 	}
 }
 
+func TestLarkReplyBridgeStartupCardNumericReplySelectsMenuWithoutQueueing(t *testing.T) {
+	resetLarkRegistryForTest()
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	sess, err := manager.CreateSession(context.Background(), "Recovered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := manager.GetRuntime(sess.ID)
+	rt.mu.Lock()
+	rt.session.Status = StatusWaiting
+	rt.session.LastMode = SessionModeAgent
+	rt.startupNotifyMode = startupNotifyDiscard
+	rt.startupWaitingMessageID = "startup-card"
+	rt.visibleSnapshot = strings.Join([]string{
+		"Choose working directory to resume this session",
+		"› 1. Use session directory (/tmp/one)",
+		"2. Use current directory (/tmp/two)",
+		"Press enter to continue",
+	}, "\n")
+	rt.mu.Unlock()
+	defaultLarkMessageRegistry.remember(sess.ID, "startup-card")
+
+	if err := bridge.HandleP2MessageReceive(context.Background(), p2Message("numeric-reply", "startup-card", "", "text", `{"text":"2"}`)); err != nil {
+		t.Fatal(err)
+	}
+	parts := launcher.terminals[0].writeParts()
+	if len(parts) != 1 || parts[0] != "\x1b[B\r" {
+		t.Fatalf("numeric card reply should move to option 2 and confirm, got %#v", parts)
+	}
+	bridge.mu.Lock()
+	queued := len(bridge.pipelines[sess.ID])
+	bridge.mu.Unlock()
+	if queued != 0 {
+		t.Fatalf("numeric startup choice must not enter the task queue, queued=%d", queued)
+	}
+	if !rt.discardingStartupNotifications() {
+		t.Fatal("startup choice must keep startup protection until the composer is ready")
+	}
+}
+
+func TestLarkReplyBridgeStartupCardControlsDoNotReleaseQueuedTask(t *testing.T) {
+	resetLarkRegistryForTest()
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	sess, err := manager.CreateSession(context.Background(), "Recovered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := manager.GetRuntime(sess.ID)
+	rt.mu.Lock()
+	rt.session.Status = StatusWaiting
+	rt.session.LastMode = SessionModeAgent
+	rt.startupNotifyMode = startupNotifyDiscard
+	rt.startupWaitingMessageID = "startup-card"
+	rt.mu.Unlock()
+	bridge.enqueuePipeline(sess.ID, []string{"queued task"}, "ou-user")
+
+	event := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
+		Action: &callback.CallBackAction{Value: map[string]interface{}{
+			"iris_action": "startup_shortcut",
+			"session_id":  sess.ID,
+			"key":         "arrow_down",
+		}},
+		Context: &callback.Context{OpenMessageID: "startup-card"},
+	}}
+	resp, err := bridge.HandleCardActionTrigger(context.Background(), event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp != nil {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	parts := launcher.terminals[0].writeParts()
+	if len(parts) != 1 || parts[0] != "\x1b[B" {
+		t.Fatalf("startup control should write only the direction key, got %#v", parts)
+	}
+	bridge.mu.Lock()
+	queued := append([]larkPipelineInput(nil), bridge.pipelines[sess.ID]...)
+	bridge.mu.Unlock()
+	if len(queued) != 1 || queued[0].Text != "queued task" {
+		t.Fatalf("startup control must leave queued task untouched, got %#v", queued)
+	}
+	if !rt.discardingStartupNotifications() {
+		t.Fatal("startup control must not end startup protection")
+	}
+}
+
+func TestLarkReplyBridgePlainNumericStartupInputIsQueued(t *testing.T) {
+	resetLarkRegistryForTest()
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	sess, err := manager.CreateSession(context.Background(), "Recovered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := manager.GetRuntime(sess.ID)
+	rt.mu.Lock()
+	rt.session.Status = StatusWaiting
+	rt.session.LastMode = SessionModeAgent
+	rt.startupNotifyMode = startupNotifyDiscard
+	rt.startupWaitingMessageID = "startup-card"
+	rt.mu.Unlock()
+	defaultLarkMessageRegistry.rememberLatest(sess.ID)
+
+	if err := bridge.HandleP2MessageReceive(context.Background(), p2Message("plain-number", "", "", "text", `{"text":"2"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := launcher.terminals[0].writes(); got != "" {
+		t.Fatalf("plain numeric message must not leak into startup menu, got %q", got)
+	}
+	bridge.mu.Lock()
+	queued := append([]larkPipelineInput(nil), bridge.pipelines[sess.ID]...)
+	bridge.mu.Unlock()
+	if len(queued) != 1 || queued[0].Text != "2" {
+		t.Fatalf("plain numeric startup input should remain queued, got %#v", queued)
+	}
+}
+
 func TestLarkReplyBridgeOverlappingFollowupFreezesRunningCardEndToEnd(t *testing.T) {
 	resetLarkRegistryForTest()
 	previousDelay := structuredInputEnterDelay

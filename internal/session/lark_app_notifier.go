@@ -156,6 +156,9 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		}
 		elements = append(elements, interactionElement)
 	}
+	if note.StartupWaiting && !note.Disabled {
+		elements = append(elements, larkStartupShortcutActionElement(note.SessionID))
+	}
 	if note.DeveloperModeEnabled && !note.StartupWaiting {
 		if contextElement := larkTerminalAgentContextElement(note.AgentContext); contextElement != nil {
 			elements = append(elements, map[string]any{"tag": "hr"})
@@ -673,6 +676,29 @@ func larkShortcutButton(label, buttonType, sessionID, key string) map[string]any
 				},
 			},
 		},
+	}
+}
+
+func larkStartupShortcutActionElement(sessionID string) map[string]any {
+	columns := []map[string]any{
+		larkStartupShortcutButtonColumn("上一项", sessionID, "arrow_up"),
+		larkStartupShortcutButtonColumn("下一项", sessionID, "arrow_down"),
+		larkStartupShortcutButtonColumn("确认", sessionID, "enter"),
+		larkStartupShortcutButtonColumn("Esc", sessionID, "esc"),
+	}
+	return larkFlowShortcutActionElement(columns...)
+}
+
+func larkStartupShortcutButtonColumn(label, sessionID, key string) map[string]any {
+	return map[string]any{
+		"tag": "column", "width": "auto", "vertical_spacing": "8px",
+		"elements": []map[string]any{{
+			"tag": "button", "type": "default", "size": "tiny", "width": "default",
+			"text": map[string]any{"tag": "plain_text", "content": label},
+			"behaviors": []map[string]any{{"type": "callback", "value": map[string]any{
+				"iris_action": "startup_shortcut", "session_id": sessionID, "key": key,
+			}}},
+		}},
 	}
 }
 

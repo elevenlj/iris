@@ -1771,6 +1771,48 @@ func (rt *RuntimeSession) discardingStartupNotifications() bool {
 	return rt.startupNotifyMode == startupNotifyDiscard
 }
 
+func (rt *RuntimeSession) writeStartupWaitingInput(messageID, data string) error {
+	if rt == nil || strings.TrimSpace(data) == "" {
+		return io.ErrClosedPipe
+	}
+	messageID = strings.TrimSpace(messageID)
+	rt.mu.Lock()
+	if rt.startupNotifyMode != startupNotifyDiscard || messageID == "" || messageID != strings.TrimSpace(rt.startupWaitingMessageID) {
+		rt.mu.Unlock()
+		return errNotificationMessageDisabled
+	}
+	terminal := rt.terminal
+	rt.mu.Unlock()
+	if terminal == nil {
+		return io.ErrClosedPipe
+	}
+	_, err := terminal.Write([]byte(data))
+	return err
+}
+
+func (rt *RuntimeSession) submitStartupWaitingSelection(messageID string, target int) error {
+	if rt == nil {
+		return io.ErrClosedPipe
+	}
+	messageID = strings.TrimSpace(messageID)
+	rt.mu.Lock()
+	if rt.startupNotifyMode != startupNotifyDiscard || messageID == "" || messageID != strings.TrimSpace(rt.startupWaitingMessageID) {
+		rt.mu.Unlock()
+		return errNotificationMessageDisabled
+	}
+	sequence, ok := startupMenuSelectionSequence(rt.visibleSnapshot, target)
+	terminal := rt.terminal
+	rt.mu.Unlock()
+	if !ok {
+		return errTerminalInteractionOptionInvalid
+	}
+	if terminal == nil {
+		return io.ErrClosedPipe
+	}
+	_, err := terminal.Write([]byte(sequence))
+	return err
+}
+
 func (rt *RuntimeSession) FinishStartupNotifications() {
 	rt.finishStartupNotificationsAfter(defaultStartupPresetSettleDelay)
 }
