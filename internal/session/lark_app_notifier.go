@@ -834,9 +834,6 @@ func larkNotificationTitle(note WaitingNotification) string {
 		}
 		return note.Name + "（启动中）"
 	}
-	if note.Queued && !note.Disabled {
-		return note.Name + "（排队中）"
-	}
 	if note.Running && !note.Disabled {
 		return note.Name + "（Running）"
 	}

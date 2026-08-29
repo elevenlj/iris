@@ -1843,9 +1843,6 @@ func (rt *RuntimeSession) beginStartupNotification(mentionOpenID string) string 
 	}
 	mentionOpenID = strings.TrimSpace(mentionOpenID)
 	rt.mu.Lock()
-	if mentionOpenID != "" {
-		rt.startupNotificationMentionOpenID = mentionOpenID
-	}
 	if rt.startupNotifyMode != startupNotifyDiscard || !rt.session.Live || !rt.session.NotifyOnWaiting ||
 		(rt.requireLarkChat && strings.TrimSpace(rt.session.LarkChatID) == "") {
 		rt.mu.Unlock()
@@ -1855,6 +1852,9 @@ func (rt *RuntimeSession) beginStartupNotification(mentionOpenID string) string 
 		messageID := rt.startupNotificationMessageID
 		rt.mu.Unlock()
 		return messageID
+	}
+	if mentionOpenID != "" {
+		rt.startupNotificationMentionOpenID = mentionOpenID
 	}
 	rt.startupNotificationCreating = true
 	n := WaitingNotification{
@@ -3081,13 +3081,9 @@ func (rt *RuntimeSession) NotifyInputRunning() {
 	rt.NotifyInputRunningOnMessage("")
 }
 
-func (rt *RuntimeSession) createAgentRestartRunningNotification(mentionOpenID string) string {
-	return rt.createNewRunningNotification(mentionOpenID)
-}
-
-func (rt *RuntimeSession) createNewRunningNotification(mentionOpenID string) string {
+func (rt *RuntimeSession) createNewRunningNotification(mentionOpenID string) {
 	if rt == nil {
-		return ""
+		return
 	}
 	rt.mu.Lock()
 	if rt.lastNotifiedMessageID != "" {
@@ -3104,83 +3100,6 @@ func (rt *RuntimeSession) createNewRunningNotification(mentionOpenID string) str
 	rt.mu.Unlock()
 
 	rt.NotifyInputRunning()
-
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	return rt.lastNotifiedMessageID
-}
-
-func (rt *RuntimeSession) createDetachedRunningNotification(mentionOpenID string) string {
-	if rt == nil || rt.manager == nil || rt.manager.notifier == nil || !rt.manager.notifier.Available() {
-		return ""
-	}
-	rt.mu.Lock()
-	if !rt.session.Live || !rt.session.NotifyOnWaiting || (rt.requireLarkChat && strings.TrimSpace(rt.session.LarkChatID) == "") {
-		rt.mu.Unlock()
-		return ""
-	}
-	n := WaitingNotification{
-		SessionID:          rt.session.ID,
-		Name:               rt.session.Name,
-		Content:            QueuedNotificationPlaceholder,
-		ChatID:             rt.session.LarkChatID,
-		MentionOpenID:      strings.TrimSpace(mentionOpenID),
-		Queued:             true,
-		AutoRefreshEnabled: rt.autoRefreshEnabled,
-		AutoSummaryEnabled: rt.autoSummaryEnabled,
-		MentionModeEnabled: rt.session.LarkMentionModeEnabled,
-		AgentContext:       cloneTerminalAgentContext(rt.lastTerminalAgentContext),
-	}
-	rt.mu.Unlock()
-
-	rt.notificationPatchMu.Lock()
-	result, err := rt.notifyWaitingWithRetry(n)
-	rt.notificationPatchMu.Unlock()
-	if err != nil {
-		log.Printf("detached running notification failed session=%s: %v", n.SessionID, err)
-		return ""
-	}
-	messageID := strings.TrimSpace(result.MessageID)
-	if messageID != "" {
-		defaultLarkMessageRegistry.remember(n.SessionID, messageID)
-		defaultLarkMessageRegistry.rememberLatest(n.SessionID)
-	}
-	return messageID
-}
-
-func (rt *RuntimeSession) bindQueuedRunningNotification(messageID, mentionOpenID string) {
-	if rt == nil {
-		return
-	}
-	messageID = strings.TrimSpace(messageID)
-	rt.mu.Lock()
-	rt.notificationPatchVersion++
-	rt.lastNotifiedMessageID = messageID
-	rt.lastNotifiedContent = RunningNotificationPlaceholder
-	rt.lastNotifiedRoundHash = ""
-	rt.notificationUpdateNo = 0
-	rt.notificationRunning = messageID != ""
-	rt.autoRefreshMessageID = messageID
-	rt.notificationMentionOpenID = strings.TrimSpace(mentionOpenID)
-	note := WaitingNotification{
-		SessionID:          rt.session.ID,
-		Name:               rt.session.Name,
-		Content:            RunningNotificationPlaceholder,
-		MessageID:          messageID,
-		ChatID:             rt.session.LarkChatID,
-		MentionOpenID:      rt.notificationMentionOpenID,
-		Running:            true,
-		AutoRefreshEnabled: rt.autoRefreshEnabled,
-		AutoSummaryEnabled: rt.autoSummaryEnabled,
-		MentionModeEnabled: rt.session.LarkMentionModeEnabled,
-		AgentContext:       cloneTerminalAgentContext(rt.lastTerminalAgentContext),
-	}
-	rt.mu.Unlock()
-	if messageID == "" {
-		rt.NotifyInputRunning()
-		return
-	}
-	rt.updateNotificationRunning(note, true)
 }
 
 func (rt *RuntimeSession) NotifyInputRunningOnMessage(messageID string) {

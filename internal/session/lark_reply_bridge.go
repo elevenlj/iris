@@ -84,7 +84,6 @@ type larkPipelineInput struct {
 	Text                        string
 	MentionOpenID               string
 	PreserveRunningNotification bool
-	RunningMessageID            string
 }
 
 type larkRouteContext struct {
@@ -1509,7 +1508,7 @@ func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionI
 	rt.SetNotificationMentionOpenID(mentionOpenID)
 	if starting {
 		rt.beginStartupNotification(mentionOpenID)
-		b.enqueueStartupPipelineWithRunningCard(rt, sessionID, parts, mentionOpenID)
+		b.enqueuePipelineWithFirstMode(sessionID, parts, mentionOpenID, true)
 	} else {
 		rt.MarkStructuredInputActivity(parts[0])
 		b.enqueuePipeline(sessionID, parts, mentionOpenID)
@@ -2105,7 +2104,7 @@ func (b *LarkReplyBridge) OnNotificationSent(sessionID string) {
 	b.manager.EnsureBrowser(sessionID)
 	var err error
 	if next.PreserveRunningNotification {
-		rt.bindQueuedRunningNotification(next.RunningMessageID, next.MentionOpenID)
+		rt.createNewRunningNotification(next.MentionOpenID)
 		err = SubmitQueuedStructuredInputWithMention(rt, next.Text, next.MentionOpenID)
 	} else {
 		err = SubmitStructuredInputWithMention(rt, next.Text, next.MentionOpenID)
@@ -2187,26 +2186,6 @@ func (b *LarkReplyBridge) enqueuePipelineWithFirstMode(sessionID string, parts [
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.pipelines[sessionID] = append(b.pipelines[sessionID], cleaned...)
-}
-
-func (b *LarkReplyBridge) enqueueStartupPipelineWithRunningCard(rt *RuntimeSession, sessionID string, parts []string, mentionOpenID string) {
-	if rt == nil || sessionID == "" || len(parts) == 0 {
-		return
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	cleaned := make([]larkPipelineInput, 0, len(parts))
-	for _, part := range parts {
-		if part = strings.TrimSpace(part); part != "" {
-			cleaned = append(cleaned, larkPipelineInput{Text: part, MentionOpenID: strings.TrimSpace(mentionOpenID)})
-		}
-	}
-	if len(cleaned) == 0 {
-		return
-	}
-	cleaned[0].PreserveRunningNotification = true
-	cleaned[0].RunningMessageID = rt.createDetachedRunningNotification(mentionOpenID)
 	b.pipelines[sessionID] = append(b.pipelines[sessionID], cleaned...)
 }
 

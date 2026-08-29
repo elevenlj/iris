@@ -1737,7 +1737,7 @@ func TestLarkReplyBridgeQueuesRecoveryInputUntilComposerReady(t *testing.T) {
 	defer func() { structuredInputEnterDelay = previousDelay }()
 
 	launcher := &recordingLauncher{}
-	notifier := &recordingNotifier{createMessageIDs: []string{"startup-card", "queued-card"}}
+	notifier := &recordingNotifier{createMessageIDs: []string{"startup-card", "running-card"}}
 	manager := NewManager(nil, launcher, WithNotifier(notifier))
 	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
 	sess, err := manager.CreateSession(context.Background(), "Recovered")
@@ -1774,8 +1774,8 @@ func TestLarkReplyBridgeQueuesRecoveryInputUntilComposerReady(t *testing.T) {
 		t.Fatalf("startup input queue = %#v", queued)
 	}
 	notes := notifier.notes()
-	if len(notes) != 2 || !notes[0].Startup || notes[0].MessageID != "" || !notes[1].Queued || notes[1].Running || notes[1].MentionOpenID != "ou-sender" {
-		t.Fatalf("startup and queued task should use separate cards, got %#v", notes)
+	if len(notes) != 1 || !notes[0].Startup || notes[0].MessageID != "" {
+		t.Fatalf("startup input should remain queued without creating a task card, got %#v", notes)
 	}
 
 	rt.mu.Lock()
@@ -1791,7 +1791,7 @@ func TestLarkReplyBridgeQueuesRecoveryInputUntilComposerReady(t *testing.T) {
 	rt.notifyIfStillWaiting(version)
 
 	notes = notifier.notes()
-	if len(notes) != 3 || notes[2].MessageID != "startup-card" || !notes[2].Startup || notes[2].Running || !notes[2].SuppressUpdateTip || !strings.Contains(notes[2].Content, "Choose working directory") {
+	if len(notes) != 2 || notes[1].MessageID != "startup-card" || !notes[1].Startup || notes[1].Running || !notes[1].SuppressUpdateTip || !strings.Contains(notes[1].Content, "Choose working directory") {
 		t.Fatalf("startup waiting state should update only the startup card, got %#v", notes)
 	}
 	if got := launcher.terminals[0].writes(); strings.Contains(got, "我重启了一下，你好呀") {
@@ -1831,15 +1831,22 @@ func TestLarkReplyBridgeQueuesRecoveryInputUntilComposerReady(t *testing.T) {
 	if textWrites != 1 {
 		t.Fatalf("queued startup input should be submitted once, writes=%#v", parts)
 	}
-	runningNotes := notifier.runningNotes()
-	if len(runningNotes) != 1 || runningNotes[0].MessageID != "queued-card" || !runningNotes[0].Running {
-		t.Fatalf("queued startup input card should return to running after composer readiness, got %#v", runningNotes)
+	notes = notifier.notes()
+	if len(notes) != 4 || !notes[2].StartupComplete || !notes[3].Running || notes[3].MentionOpenID != "ou-sender" {
+		t.Fatalf("task card should be created only after startup completion, got %#v", notes)
+	}
+	rt.mu.Lock()
+	runningMessageID := rt.lastNotifiedMessageID
+	rt.mu.Unlock()
+	if runningMessageID != "running-card" {
+		t.Fatalf("running task card = %q, want running-card", runningMessageID)
 	}
 }
 
 func TestLarkReplyBridgeCreatesOneRunningCardPerQueuedRecoveryInput(t *testing.T) {
+	resetLarkRegistryForTest()
 	launcher := &recordingLauncher{}
-	notifier := &recordingNotifier{createMessageIDs: []string{"startup-card", "queued-card-1", "queued-card-2"}}
+	notifier := &recordingNotifier{createMessageIDs: []string{"startup-card", "running-card-1", "running-card-2"}}
 	manager := NewManager(nil, launcher, WithNotifier(notifier))
 	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
 	sess, err := manager.CreateSession(context.Background(), "Recovered")
@@ -1852,6 +1859,7 @@ func TestLarkReplyBridgeCreatesOneRunningCardPerQueuedRecoveryInput(t *testing.T
 	rt.session.NotifyOnWaiting = true
 	rt.startupNotifyMode = startupNotifyDiscard
 	rt.mu.Unlock()
+	rt.beginStartupNotification("ou-clicker")
 
 	if !bridge.enqueueInputIfRuntimeBusy(rt, sess.ID, []string{"第一条"}, "ou-first") {
 		t.Fatal("first recovery input should be queued")
@@ -1862,15 +1870,48 @@ func TestLarkReplyBridgeCreatesOneRunningCardPerQueuedRecoveryInput(t *testing.T
 	bridge.mu.Lock()
 	queued := append([]larkPipelineInput(nil), bridge.pipelines[sess.ID]...)
 	bridge.mu.Unlock()
-	if len(queued) != 2 || queued[0].RunningMessageID != "queued-card-1" || queued[1].RunningMessageID != "queued-card-2" {
-		t.Fatalf("queued recovery cards = %#v", queued)
+	if len(queued) != 2 || !queued[0].PreserveRunningNotification || !queued[1].PreserveRunningNotification {
+		t.Fatalf("queued recovery inputs = %#v", queued)
 	}
 	notes := notifier.notes()
-	if len(notes) != 3 || !notes[0].Startup || !notes[1].Queued || !notes[2].Queued || notes[1].MentionOpenID != "ou-first" || notes[2].MentionOpenID != "ou-second" {
-		t.Fatalf("each queued recovery input should create its own queued card after the startup card, got %#v", notes)
+	if len(notes) != 1 || !notes[0].Startup {
+		t.Fatalf("queued recovery inputs must not create task cards before startup completes, got %#v", notes)
+	}
+	rt.mu.Lock()
+	startupMentionOpenID := rt.startupNotificationMentionOpenID
+	rt.mu.Unlock()
+	if startupMentionOpenID != "ou-clicker" {
+		t.Fatalf("queued input changed startup card mention to %q", startupMentionOpenID)
 	}
 	if got := launcher.terminals[0].writes(); strings.Contains(got, "第一条") || strings.Contains(got, "第二条") {
 		t.Fatalf("queued recovery inputs must not reach the terminal early: %q", got)
+	}
+
+	rt.mu.Lock()
+	rt.startupNotifyMode = startupNotifyNormal
+	rt.mu.Unlock()
+	bridge.OnNotificationSent(sess.ID)
+	notes = notifier.notes()
+	if len(notes) != 2 || !notes[1].Running || notes[1].MentionOpenID != "ou-first" {
+		t.Fatalf("first task card should be created when the first queued input starts, got %#v", notes)
+	}
+	bridge.mu.Lock()
+	remaining := len(bridge.pipelines[sess.ID])
+	bridge.mu.Unlock()
+	if remaining != 1 {
+		t.Fatalf("queued inputs remaining after first dispatch = %d, want 1", remaining)
+	}
+
+	bridge.OnNotificationSent(sess.ID)
+	notes = notifier.notes()
+	if len(notes) != 3 || !notes[2].Running || notes[2].MentionOpenID != "ou-second" {
+		t.Fatalf("second task card should be created when the second queued input starts, got %#v", notes)
+	}
+	written := launcher.terminals[0].writes()
+	firstIndex := strings.Index(written, "第一条")
+	secondIndex := strings.Index(written, "第二条")
+	if firstIndex < 0 || secondIndex <= firstIndex {
+		t.Fatalf("queued recovery inputs were not dispatched in order: %q", written)
 	}
 }
 
@@ -1880,7 +1921,7 @@ func TestLarkReplyBridgeStartupCardInputIsSeparatedFromQueuedChatInput(t *testin
 	structuredInputEnterDelay = 0
 	defer func() { structuredInputEnterDelay = previousDelay }()
 	launcher := &recordingLauncher{}
-	notifier := &recordingNotifier{createMessageIDs: []string{"startup-card", "queued-card"}}
+	notifier := &recordingNotifier{createMessageIDs: []string{"startup-card"}}
 	manager := NewManager(nil, launcher, WithNotifier(notifier))
 	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
 	sess, err := manager.CreateSession(context.Background(), "Recovered")
@@ -1908,9 +1949,9 @@ func TestLarkReplyBridgeStartupCardInputIsSeparatedFromQueuedChatInput(t *testin
 	if queued != 1 {
 		t.Fatalf("ordinary chat input should enter the task queue, queued=%d", queued)
 	}
-	notes := waitForNotifierNotes(t, notifier, 2)
-	if len(notes) != 2 || !notes[0].Startup || !notes[1].Queued {
-		t.Fatalf("startup and queued task cards should be separate, got %#v", notes)
+	notes := waitForNotifierNotes(t, notifier, 1)
+	if len(notes) != 1 || !notes[0].Startup {
+		t.Fatalf("ordinary chat input should not create a task card during startup, got %#v", notes)
 	}
 
 	event := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
