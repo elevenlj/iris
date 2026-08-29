@@ -145,7 +145,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		elements = append(elements, map[string]any{"tag": "markdown", "content": "<at id=" + mentionID + "></at>"})
 	}
 	var interactionElement map[string]any
-	if note.DeveloperModeEnabled && !note.Disabled && !note.Running {
+	if note.DeveloperModeEnabled && !note.Disabled && !note.Running && !note.StartupWaiting {
 		interactionElement = larkTerminalInteractionElement(note.SessionID, note.Interaction)
 	}
 	if interactionElement == nil {
@@ -156,7 +156,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		}
 		elements = append(elements, interactionElement)
 	}
-	if note.DeveloperModeEnabled {
+	if note.DeveloperModeEnabled && !note.StartupWaiting {
 		if contextElement := larkTerminalAgentContextElement(note.AgentContext); contextElement != nil {
 			elements = append(elements, map[string]any{"tag": "hr"})
 			elements = append(elements, contextElement)
@@ -178,7 +178,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 			elements = append(elements, selectorRow)
 		}
 	}
-	if !note.Disabled {
+	if !note.Disabled && !note.StartupWaiting {
 		elements = append(elements, larkShortcutActionElements(note.SessionID, note.UpdateNo, note.MentionModeEnabled, note.DeveloperModeEnabled)...)
 		if shortcuts := normalizeLarkCustomShortcuts(customShortcuts); note.DeveloperModeEnabled && len(shortcuts) > 0 {
 			elements = append(elements, map[string]any{"tag": "hr"})
@@ -783,6 +783,12 @@ func larkCustomShortcutButtonColumn(sessionID string, shortcut LarkCustomShortcu
 }
 
 func larkNotificationTitle(note WaitingNotification) string {
+	if note.StartupWaiting {
+		if note.Disabled {
+			return note.Name + "（启动等待已结束）"
+		}
+		return note.Name + "（启动等待）"
+	}
 	if note.Running && !note.Disabled {
 		return note.Name + "（Running）"
 	}

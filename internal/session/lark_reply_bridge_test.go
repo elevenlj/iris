@@ -1760,13 +1760,37 @@ func TestLarkReplyBridgeQueuedRecoveryInputKeepsStartupTUISuppressed(t *testing.
 		t.Fatalf("queued startup input must not create a premature running card: %#v", notes)
 	}
 
+	rt.mu.Lock()
+	rt.session.Status = StatusWaiting
+	rt.visibleSnapshot = "Update available!\n1. Update now\n2. Skip for now"
+	rt.visibleSnapshotSource = "browser:buffer;continuity_version=2;render_epoch=1;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=1"
+	version := rt.notifyVersion
+	rt.mu.Unlock()
+	rt.notifyStartupWaiting(version)
+	notes := notifier.notes()
+	if len(notes) != 1 || !notes[0].StartupWaiting || !strings.Contains(notes[0].Content, "Update available!") {
+		t.Fatalf("startup blocker should create a fallback status card, got %#v", notes)
+	}
+	if strings.Contains(launcher.terminals[0].writes(), "queued question") {
+		t.Fatal("fallback status card must not release queued startup input")
+	}
+	if err := SubmitStructuredInput(rt, "1"); err != nil {
+		t.Fatal(err)
+	}
+	if !rt.discardingStartupNotifications() {
+		t.Fatal("answering a startup choice must keep startup protection active until the composer is ready")
+	}
+	if strings.Contains(launcher.terminals[0].writes(), "queued question") {
+		t.Fatal("startup choice input must not release the queued user task")
+	}
+
 	bridge.OnNotificationSent(sess.ID)
 	if !lastSubmittedWrite(launcher.terminals[0].writeParts(), "queued question") {
 		t.Fatal("queued input should be submitted after startup settles")
 	}
-	notes := waitForNotifierNotes(t, notifier, 1)
-	if len(notes) != 1 || !notes[0].Running || notes[0].Content != RunningNotificationPlaceholder {
-		t.Fatalf("submitted task should create exactly one running card: %#v", notes)
+	notes = waitForNotifierNotes(t, notifier, 2)
+	if len(notes) != 2 || !notes[1].Running || notes[1].Content != RunningNotificationPlaceholder {
+		t.Fatalf("submitted task should create its running card after the fallback card, got %#v", notes)
 	}
 }
 

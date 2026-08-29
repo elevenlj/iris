@@ -416,6 +416,31 @@ func TestLarkNotificationCardRendersResumeHeading(t *testing.T) {
 	}
 }
 
+func TestLarkNotificationCardRendersStartupWaitingAsStatusOnly(t *testing.T) {
+	content, err := larkNotificationCardContent(WaitingNotification{
+		SessionID: "sess-1", Name: "Codex", Content: "Update available!\n1. Update now\n2. Skip", StartupWaiting: true, DeveloperModeEnabled: true,
+	}, "ou_1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, "Codex（启动等待）") || !strings.Contains(content, "Update available!") {
+		t.Fatalf("startup waiting card should identify and preserve the blocker: %s", content)
+	}
+	if strings.Contains(content, `"iris_action"`) || strings.Contains(content, `"tag":"select_static"`) {
+		t.Fatalf("startup waiting card must remain status-only: %s", content)
+	}
+
+	closed, err := larkNotificationCardContent(WaitingNotification{
+		SessionID: "sess-1", Name: "Codex", Content: "Update available!", MessageID: "startup-card", StartupWaiting: true, Disabled: true,
+	}, "ou_1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(closed, "Codex（启动等待已结束）") {
+		t.Fatalf("closed startup waiting card should be visibly resolved: %s", closed)
+	}
+}
+
 func TestLarkNotificationCardOmitsTerminalSelectWhenRunningOrDisabled(t *testing.T) {
 	interaction := &TerminalInteraction{
 		ID: "ti_1",

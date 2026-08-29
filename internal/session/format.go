@@ -145,6 +145,19 @@ func pickLarkNotifyFallbackTailContent(visibleSnapshot string) string {
 	return truncateForLark(sanitizeForLarkAudit(body))
 }
 
+// pickLarkStartupWaitingContent preserves the current terminal viewport for a
+// startup blocker. It intentionally bypasses semantic notification filters:
+// an updater, trust prompt, approval, or future Codex modal must remain visible
+// even when it does not belong to a normal Agent reply.
+func pickLarkStartupWaitingContent(visibleSnapshot string) string {
+	body := trimVisibleText(visibleSnapshot)
+	if body == "" {
+		return ""
+	}
+	body = truncateLinesFromTail(body, int(larkNotifyFallbackTailLines.Load()), "")
+	return truncateForLark(sanitizeForLarkAudit(body))
+}
+
 // pickLarkManualRefreshFallbackTailContent preserves terminal state lines such
 // as Codex "Working (...)" for an explicit user refresh. User-configured
 // line/block filters still apply, so tool output suppression remains intact.
