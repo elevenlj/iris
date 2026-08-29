@@ -4089,6 +4089,11 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 	} else {
 		n, contentHash, ok = rt.waitingNotificationLocked()
 	}
+	if startupFallback && !ok {
+		rt.rescheduleNotifyRetryLocked(version)
+		rt.mu.Unlock()
+		return
+	}
 	if !ok {
 		reason := "empty_content"
 		if !startupFallback {
@@ -4601,6 +4606,7 @@ func (rt *RuntimeSession) startupFallbackWaitingNotificationCandidateLocked() (W
 		MentionOpenID:      rt.notificationMentionOpenID,
 		AutoSummaryEnabled: rt.autoSummaryEnabled,
 		MentionModeEnabled: rt.session.LarkMentionModeEnabled,
+		SuppressUpdateTip:  true,
 		SnapshotSource:     source,
 		AgentContext:       rt.notificationAgentContextLocked(),
 	}, contentHash, true

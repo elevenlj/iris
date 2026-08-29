@@ -3813,7 +3813,7 @@ func TestStartupBlockerUsesOrdinaryFallbackNotification(t *testing.T) {
 
 	rt.notifyIfStillWaiting(7)
 	notes := notifier.notes()
-	if len(notes) != 1 || notes[0].Running || notes[0].Disabled || notes[0].MessageID != "" {
+	if len(notes) != 1 || notes[0].Running || notes[0].Disabled || notes[0].MessageID != "" || !notes[0].SuppressUpdateTip {
 		t.Fatalf("startup blocker should create an ordinary notification card, got %#v", notes)
 	}
 	if !strings.Contains(notes[0].Content, "Update available!") || !strings.Contains(notes[0].Content, "Press enter to continue") {
@@ -3826,6 +3826,10 @@ func TestStartupBlockerUsesOrdinaryFallbackNotification(t *testing.T) {
 	}
 	if !rt.discardingStartupNotifications() {
 		t.Fatal("startup fallback should keep startup protection active")
+	}
+	rt.notifyIfStillWaiting(7)
+	if got := notifier.count(); got != 1 {
+		t.Fatalf("unchanged startup waiting content should not update the card again, got %d writes", got)
 	}
 	rt.mu.Lock()
 	if rt.lastNotifiedMessageID != "fallback-card" {

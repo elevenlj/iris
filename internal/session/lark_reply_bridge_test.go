@@ -1791,7 +1791,7 @@ func TestLarkReplyBridgeQueuesRecoveryInputUntilComposerReady(t *testing.T) {
 	rt.notifyIfStillWaiting(version)
 
 	notes = notifier.notes()
-	if len(notes) != 2 || notes[1].MessageID != "queued-card" || notes[1].Running || !strings.Contains(notes[1].Content, "Choose working directory") {
+	if len(notes) != 2 || notes[1].MessageID != "queued-card" || notes[1].Running || !notes[1].SuppressUpdateTip || !strings.Contains(notes[1].Content, "Choose working directory") {
 		t.Fatalf("startup waiting state should update the queued input card with terminal content, got %#v", notes)
 	}
 	if got := launcher.terminals[0].writes(); strings.Contains(got, "我重启了一下，你好呀") {
