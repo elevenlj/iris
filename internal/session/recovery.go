@@ -32,6 +32,7 @@ func (rt *RuntimeSession) MarkAgentExitActivity() {
 		rt.mu.Unlock()
 		return
 	}
+	rt.controlInputActive = false
 	rt.session.LastMode = SessionModeShell
 	rt.session.UpdatedAt = time.Now().UTC()
 	s := rt.session

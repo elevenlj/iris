@@ -874,6 +874,9 @@ func (m *Manager) SwitchWorkspace(ctx context.Context, id, path string) (Session
 		return Session{}, false, nil
 	}
 	sess := rt.Snapshot()
+	if sess.Status == StatusRunning {
+		return Session{}, true, errors.New("当前任务正在进行中，无法切换目录")
+	}
 	workspaces := m.WorkspaceOptionsForSession(sess)
 	allowed := false
 	for _, workspace := range workspaces {
@@ -891,7 +894,11 @@ func (m *Manager) SwitchWorkspace(ctx context.Context, id, path string) (Session
 	}
 	input := "/cd " + path
 	if sessionSupportsWorkspaceSwitch(sess) {
-		if err := SubmitStructuredInputWithMention(rt, input, rt.NotificationMentionOpenID()); err != nil {
+		if err := rt.beginControlInput(); err != nil {
+			return Session{}, true, err
+		}
+		if err := SubmitSilentStructuredInput(rt, input); err != nil {
+			rt.cancelControlInput()
 			return Session{}, true, err
 		}
 	} else {
@@ -907,6 +914,31 @@ func (m *Manager) SwitchWorkspace(ctx context.Context, id, path string) (Session
 		return Session{}, true, err
 	}
 	return sess, true, nil
+}
+
+func (rt *RuntimeSession) beginControlInput() error {
+	if rt == nil {
+		return errors.New("会话不在线")
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.closed || !rt.session.Live || rt.terminal == nil {
+		return errors.New("会话不在线")
+	}
+	if rt.session.Status == StatusRunning {
+		return errors.New("当前任务正在进行中，无法切换目录")
+	}
+	rt.controlInputActive = true
+	return nil
+}
+
+func (rt *RuntimeSession) cancelControlInput() {
+	if rt == nil {
+		return
+	}
+	rt.mu.Lock()
+	rt.controlInputActive = false
+	rt.mu.Unlock()
 }
 
 func (m *Manager) GetLarkContactBinding(ctx context.Context, senderOpenID string) (LarkContactBinding, bool, error) {
@@ -1119,6 +1151,7 @@ type RuntimeSession struct {
 	lastConsumedTerminalInteractionID string
 	lastTerminalAgentContext          *TerminalAgentContext
 	pendingAgentDirectory             string
+	controlInputActive                bool
 	agentTurnHookVerified             bool
 	hookCompletedCurrentRound         bool
 	hookCompletionTipClaimed          bool
@@ -1420,11 +1453,7 @@ func (rt *RuntimeSession) RestartAgent() error {
 	startCommand := strings.TrimSpace(rt.session.LastAgentStartCommand)
 	agentKind := strings.TrimSpace(rt.session.LastAgentKind)
 	agentID := strings.TrimSpace(rt.session.LastAgentID)
-	resumeCommand := strings.TrimSpace(rt.session.LastAgentResumeCommand)
-	command := exactAgentResumeCommand(rt.session)
-	if command == "" {
-		command = startCommand
-	}
+	command := startCommand
 	if command == "" && rt.manager != nil {
 		agent, _ := rt.manager.AgentConfig()
 		command = strings.TrimSpace(agent.Command)
@@ -1435,6 +1464,10 @@ func (rt *RuntimeSession) RestartAgent() error {
 	if command == "" {
 		rt.mu.Unlock()
 		return errors.New("当前会话没有可用的 Agent 启动命令")
+	}
+	resumeCommand := command
+	if info, ok := agentLaunchInfo(shellFields(command)); ok {
+		resumeCommand = info.ResumeCommand
 	}
 	rt.agentRestartPending = true
 	terminal := rt.terminal
@@ -2655,6 +2688,7 @@ func (rt *RuntimeSession) markInputActivityLocked(submitted bool, previousInput 
 func (rt *RuntimeSession) markInputActivityLockedWithPreviousRoundState(submitted bool, previousInput string, previousRoundUnfinished bool) (WaitingNotification, bool) {
 	var disabledNote WaitingNotification
 	disabledOK := false
+	rt.controlInputActive = false
 	rt.pendingTerminalInteraction = nil
 	if submitted {
 		previousRoundUnfinished = previousRoundUnfinished && strings.TrimSpace(previousInput) != "" && rt.snapshotAtRoundStartSet
@@ -2820,6 +2854,10 @@ func (rt *RuntimeSession) RefreshNotificationControls(messageID string, preserve
 	preserveContent := strings.TrimSpace(rt.lastNotifiedContent) != ""
 	rt.mu.Unlock()
 	return rt.refreshNotificationMessage(messageID, true, preserveContent, preserveUpdateNo...)
+}
+
+func (rt *RuntimeSession) RefreshNotificationControlsPreservingContent(messageID string, preserveUpdateNo ...int) error {
+	return rt.refreshNotificationMessage(messageID, true, true, preserveUpdateNo...)
 }
 
 func (rt *RuntimeSession) AutoRefreshNotificationMessage(messageID string, preserveUpdateNo ...int) error {
@@ -3360,9 +3398,12 @@ func (rt *RuntimeSession) HandleOutput(chunk []byte) {
 	if len(rt.output) > maxOutputBytes {
 		rt.output = rt.output[len(rt.output)-maxOutputBytes:]
 	}
-	rt.roundReply = append(rt.roundReply, cp...)
-	if len(rt.roundReply) > maxRoundBytes {
-		rt.roundReply = rt.roundReply[len(rt.roundReply)-maxRoundBytes:]
+	controlOutput := rt.controlInputActive
+	if !controlOutput {
+		rt.roundReply = append(rt.roundReply, cp...)
+		if len(rt.roundReply) > maxRoundBytes {
+			rt.roundReply = rt.roundReply[len(rt.roundReply)-maxRoundBytes:]
+		}
 	}
 	rt.session.HistorySize += int64(len(cp))
 	rt.session.UpdatedAt = time.Now().UTC()
@@ -3373,7 +3414,7 @@ func (rt *RuntimeSession) HandleOutput(chunk []byte) {
 	// that tail repaint, but do not reopen the completed round or re-arm the idle
 	// completion fallback. A submitted input clears hookCompletedCurrentRound.
 	completedHookRound := rt.agentTurnHookVerified && rt.hookCompletedCurrentRound && rt.session.Status == StatusWaiting
-	if renderable && !completedHookRound {
+	if renderable && !completedHookRound && !controlOutput {
 		previousStatus := rt.session.Status
 		rt.session.Status = StatusRunning
 		rt.stateVersion++

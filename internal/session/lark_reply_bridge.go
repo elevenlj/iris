@@ -65,6 +65,7 @@ type LarkReplyBridge struct {
 var structuredInputEnterDelay = 200 * time.Millisecond
 var structuredInputEnterSequence = "\r"
 var structuredInputNumericOnlyRE = regexp.MustCompile(`^\d+$`)
+var workspaceSwitchToastDelay = 2 * time.Second
 
 const larkProcessingReactionEmoji = "THINKING"
 const defaultLarkSessionChatPrefix = "Iris · "
@@ -470,12 +471,16 @@ func (b *LarkReplyBridge) handleCardWorkspaceSelect(ctx context.Context, value m
 	if !ok {
 		return larkCardToast("warning", "会话不在线"), nil
 	}
+	if workspaceSwitchToastDelay > 0 {
+		time.Sleep(workspaceSwitchToastDelay)
+	}
+	updateNo, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value["update_no"])))
 	go func() {
-		if err := rt.RefreshNotificationMessage(openMessageID, 0); err != nil {
+		if err := rt.RefreshNotificationControlsPreservingContent(openMessageID, updateNo); err != nil {
 			log.Printf("lark card workspace patch failed session=%s: %v", sessionID, err)
 		}
 	}()
-	return larkCardToast("info", "已切换目录："+updated.LastCWD), nil
+	return larkCardToast("info", "已成功切换目录："+updated.LastCWD), nil
 }
 
 func (b *LarkReplyBridge) handleCardTerminalSelect(ctx context.Context, value map[string]interface{}, optionID string, openMessageID string, openChatID string, operatorOpenID string) (*callback.CardActionTriggerResponse, error) {

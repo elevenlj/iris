@@ -115,7 +115,7 @@ func TestRestartAgentCancelsRelaunchWhenExitCannotBeConfirmed(t *testing.T) {
 	}
 }
 
-func TestRestartAgentResumesExactAidenCodexSession(t *testing.T) {
+func TestRestartAgentStartsFreshAidenCodexSession(t *testing.T) {
 	terminal := newControlledForegroundTerminal()
 	threadID := "019f5153-6e7f-7742-9f61-3ffe1530d61c"
 	startCommand := "aiden x codex --dangerously-bypass-approvals-and-sandbox"
@@ -138,10 +138,10 @@ func TestRestartAgentResumesExactAidenCodexSession(t *testing.T) {
 	<-terminal.started
 	close(terminal.release)
 	waitForAgentRestartWrites(t, terminal, 1)
-	if writes := terminal.snapshotWrites(); len(writes) != 1 || writes[0] != resumeCommand+"\r" {
+	if writes := terminal.snapshotWrites(); len(writes) != 1 || writes[0] != startCommand+"\r" {
 		t.Fatalf("restart writes = %#v", writes)
 	}
-	if got := rt.Snapshot(); got.LastAgentStartCommand != startCommand || got.LastAgentResumeCommand != resumeCommand || got.LastAgentKind != "codex" {
+	if got := rt.Snapshot(); got.LastAgentStartCommand != startCommand || got.LastAgentResumeCommand == resumeCommand || !strings.Contains(got.LastAgentResumeCommand, "resume") || !strings.Contains(got.LastAgentResumeCommand, "--last") || got.LastAgentKind != "codex" {
 		t.Fatalf("restart state = %#v", got)
 	}
 }

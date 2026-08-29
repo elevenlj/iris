@@ -2291,11 +2291,29 @@ func TestLarkReplyBridgeWorkspaceSelectionRequiresDeveloperModeAndUsesConfigured
 	if _, _, err := manager.UpdateDeveloperMode(context.Background(), sess.ID, true); err != nil {
 		t.Fatal(err)
 	}
+	before := launcher.terminals[0].writes()
 	resp, err = bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp == nil || resp.Toast == nil || !strings.Contains(resp.Toast.Content, "已切换目录") {
+	if resp == nil || resp.Toast == nil || resp.Toast.Content != "当前任务正在进行中，无法切换目录" {
+		t.Fatalf("running workspace switch should be rejected: %#v", resp)
+	}
+	if writes := launcher.terminals[0].writes(); writes != before {
+		t.Fatalf("running workspace switch wrote terminal input: %q", writes)
+	}
+	rt := manager.sessions[sess.ID]
+	rt.mu.Lock()
+	rt.session.Status = StatusWaiting
+	rt.mu.Unlock()
+	oldDelay := workspaceSwitchToastDelay
+	workspaceSwitchToastDelay = 0
+	t.Cleanup(func() { workspaceSwitchToastDelay = oldDelay })
+	resp, err = bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || !strings.Contains(resp.Toast.Content, "已成功切换目录") {
 		t.Fatalf("ordinary members should be able to use visible workspace selector: %#v", resp)
 	}
 	updated, ok, err := manager.GetSession(context.Background(), sess.ID)
@@ -2304,6 +2322,73 @@ func TestLarkReplyBridgeWorkspaceSelectionRequiresDeveloperModeAndUsesConfigured
 	}
 	if writes := launcher.terminals[0].writes(); !strings.Contains(writes, "/cd "+workspace+"\r") {
 		t.Fatalf("Codex workspace command was not submitted: %q", writes)
+	}
+	rt.HandleOutput([]byte("Codex repainted after /cd"))
+	rt.mu.Lock()
+	status := rt.session.Status
+	controlInputActive := rt.controlInputActive
+	roundReplyLen := len(rt.roundReply)
+	lastInputText := rt.lastInputText
+	rt.mu.Unlock()
+	if status != StatusWaiting || !controlInputActive || roundReplyLen != 0 || lastInputText != "" {
+		t.Fatalf("workspace control output changed notification round: status=%s active=%v round=%d input=%q", status, controlInputActive, roundReplyLen, lastInputText)
+	}
+	rt.MarkStructuredInputActivity("下一项真实任务")
+	rt.mu.Lock()
+	controlInputActive = rt.controlInputActive
+	rt.mu.Unlock()
+	if controlInputActive {
+		t.Fatal("real input should end workspace control notification suppression")
+	}
+}
+
+func TestLarkReplyBridgeWorkspaceSelectionPreservesCardContent(t *testing.T) {
+	launcher := &recordingLauncher{}
+	notifier := &recordingNotifier{messageID: "bot-card"}
+	manager := NewManager(nil, launcher, WithNotifier(notifier))
+	workspace := t.TempDir()
+	manager.SetAgentConfig(AgentConfig{Kind: "codex", Command: "codex"}, []WorkspaceOption{{Label: "项目", Value: workspace}})
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	sess, err := manager.CreateSession(context.Background(), "Iris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := manager.sessions[sess.ID]
+	rt.mu.Lock()
+	rt.session.Status = StatusWaiting
+	rt.session.NotifyOnWaiting = true
+	rt.session.DeveloperModeEnabled = true
+	rt.lastNotifiedMessageID = "bot-card"
+	rt.lastNotifiedContent = "原卡片正文"
+	rt.lastNotifiedRoundHash = notifyContentHash(rt.lastNotifiedContent)
+	rt.lastTerminalAgentContext = &TerminalAgentContext{Directory: "~/old", Model: "gpt-5.6", Reasoning: "High"}
+	rt.mu.Unlock()
+	oldDelay := workspaceSwitchToastDelay
+	workspaceSwitchToastDelay = 0
+	t.Cleanup(func() { workspaceSwitchToastDelay = oldDelay })
+
+	action := &callback.CallBackAction{Option: workspace, Value: map[string]interface{}{
+		"iris_action": "workspace_select",
+		"session_id":  sess.ID,
+		"update_no":   3,
+	}}
+	resp, err := bridge.handleCardAction(context.Background(), action, "bot-card", "", "ou-member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || !strings.Contains(resp.Toast.Content, "已成功切换目录") {
+		t.Fatalf("workspace switch response = %#v", resp)
+	}
+	notes := waitForNotifierNotes(t, notifier, 1)
+	if len(notes) != 1 || notes[0].Content != "原卡片正文" {
+		t.Fatalf("workspace controls refresh changed card content: %#v", notes)
+	}
+	contextPath := ""
+	if notes[0].AgentContext != nil {
+		contextPath, _ = resolveShellCWD("", "", notes[0].AgentContext.Directory)
+	}
+	if contextPath != workspace {
+		t.Fatalf("workspace controls refresh context = %#v, want %q", notes[0].AgentContext, workspace)
 	}
 }
 
@@ -2322,7 +2407,11 @@ func TestLarkReplyBridgeWorkspaceSelectionSupportsCustomAidenCodex(t *testing.T)
 	rt.session.LastAgentKind = "custom"
 	rt.session.LastAgentStartCommand = "aiden x codex"
 	rt.session.DeveloperModeEnabled = true
+	rt.session.Status = StatusWaiting
 	rt.mu.Unlock()
+	oldDelay := workspaceSwitchToastDelay
+	workspaceSwitchToastDelay = 0
+	t.Cleanup(func() { workspaceSwitchToastDelay = oldDelay })
 
 	note := rt.decorateWaitingNotification(WaitingNotification{SessionID: sess.ID, Name: sess.Name, Content: "处理中"})
 	content, err := larkNotificationCardContent(note, "ou-owner", false)
@@ -2341,7 +2430,7 @@ func TestLarkReplyBridgeWorkspaceSelectionSupportsCustomAidenCodex(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp == nil || resp.Toast == nil || !strings.Contains(resp.Toast.Content, "已切换目录") {
+	if resp == nil || resp.Toast == nil || !strings.Contains(resp.Toast.Content, "已成功切换目录") {
 		t.Fatalf("custom aiden x codex should switch workspace: %#v", resp)
 	}
 	if writes := launcher.terminals[0].writes(); !strings.Contains(writes, "/cd "+workspace+"\r") {
