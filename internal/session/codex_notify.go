@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -77,6 +78,7 @@ func ensureCodexNotifyConfig(path, executable string) error {
 	} else if isLegacyCodexNotify(current) {
 		forward = append([]string(nil), current[1:]...)
 	}
+	forward = removeDuplicateManagedPreviousNotify(forward)
 	managed, err := managedCodexNotify(executable, forward)
 	if err != nil {
 		return err
@@ -106,6 +108,24 @@ func ensureCodexNotifyConfig(path, executable string) error {
 		return nil
 	}
 	return writeFileAtomically(path, updated, mode)
+}
+
+func removeDuplicateManagedPreviousNotify(command []string) []string {
+	for i := 0; i+1 < len(command); i++ {
+		if command[i] != "--previous-notify" {
+			continue
+		}
+		var previous []string
+		if json.Unmarshal([]byte(command[i+1]), &previous) != nil || !isManagedCodexNotify(previous) {
+			continue
+		}
+		forward, err := managedCodexNotifyForward(previous)
+		withoutPrevious := append(append([]string(nil), command[:i]...), command[i+2:]...)
+		if err == nil && slices.Equal(forward, withoutPrevious) {
+			return withoutPrevious
+		}
+	}
+	return command
 }
 
 func managedCodexNotify(executable string, forward []string) ([]string, error) {

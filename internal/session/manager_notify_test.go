@@ -22,14 +22,6 @@ func setTrustedLegacyRoundFixture(rt *RuntimeSession, baseline string, input str
 	rt.SetVisibleSnapshot(current)
 }
 
-func settleAgentTurnForTest(rt *RuntimeSession) {
-	rt.mu.Lock()
-	version := rt.stateVersion
-	rt.stopNotifyStableTimerLocked()
-	rt.mu.Unlock()
-	rt.notifyAfterStable(version)
-}
-
 func TestWaitingNotificationRequiresReplyContent(t *testing.T) {
 	rt := &RuntimeSession{
 		manager: NewManager(nil, nil),
@@ -69,27 +61,22 @@ func TestCompleteAgentTurnUsesAuthenticatedHookWithIdleFallback(t *testing.T) {
 	if err != nil || !accepted {
 		t.Fatalf("authenticated hook result accepted=%v err=%v", accepted, err)
 	}
-	if got.Status != StatusRunning || rt.Snapshot().Status != StatusRunning || !rt.agentTurnHookVerified {
-		t.Fatalf("hook should wait for terminal silence, session=%#v verified=%v", got, rt.agentTurnHookVerified)
+	if got.Status != StatusWaiting || rt.Snapshot().Status != StatusWaiting || !rt.agentTurnHookVerified {
+		t.Fatalf("hook should complete the Codex turn, session=%#v verified=%v", got, rt.agentTurnHookVerified)
 	}
 	if !strings.Contains(got.LastAgentResumeCommand, "019f5153-6e7f-7742-9f61-3ffe1530d61c") || strings.Contains(got.LastAgentResumeCommand, "--last") {
 		t.Fatalf("hook should pin Codex recovery to the reported session id, got %q", got.LastAgentResumeCommand)
 	}
 
 	rt.HandleOutput([]byte("completed-turn TUI repaint"))
-	if got := rt.Snapshot().Status; got != StatusRunning {
-		t.Fatalf("completed-turn TUI repaint must keep the round running, got %q", got)
+	if got := rt.Snapshot().Status; got != StatusWaiting {
+		t.Fatalf("completed-turn TUI repaint must not reopen the round, got %q", got)
 	}
 	rt.mu.Lock()
 	timer := rt.notifyStableTimer
 	rt.mu.Unlock()
-	if timer == nil {
-		t.Fatal("completed-turn TUI repaint must re-arm the idle completion fallback")
-	}
-
-	settleAgentTurnForTest(rt)
-	if got := rt.Snapshot().Status; got != StatusWaiting {
-		t.Fatalf("terminal silence should complete the round, got %q", got)
+	if timer != nil {
+		t.Fatal("completed-turn TUI repaint must not re-arm the idle completion fallback")
 	}
 
 	rt.mu.Lock()
@@ -149,10 +136,6 @@ func TestHookCompletionTipIsClaimedOncePerRound(t *testing.T) {
 	if _, accepted, err := manager.CompleteAgentTurn(context.Background(), rt.session.ID, "hook-token", "", "本轮最终回复"); err != nil || !accepted {
 		t.Fatalf("hook completion accepted=%v err=%v", accepted, err)
 	}
-	if got := notifier.count(); got != 0 || rt.Snapshot().Status != StatusRunning {
-		t.Fatalf("Hook must not update the card before terminal silence, cards=%d status=%s", got, rt.Snapshot().Status)
-	}
-	settleAgentTurnForTest(rt)
 	first := waitForNotifierNotes(t, notifier, 1)
 	if first[0].SuppressUpdateTip {
 		t.Fatal("the Hook completion write should be allowed to send the first completion tip")

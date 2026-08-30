@@ -3877,15 +3877,15 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSes
 	if newAssistantMessage {
 		rt.hookLastAssistantMessage = lastAssistantMessage
 	}
-	if rt.hookCompletedCurrentRound && !newAssistantMessage {
-		s := rt.session
-		rt.mu.Unlock()
-		if pinnedRecovery {
-			_ = rt.manager.persist(ctx, s)
-		}
-		return s, false, nil
-	}
 	if rt.session.Status == StatusWaiting {
+		if !newAssistantMessage {
+			s := rt.session
+			rt.mu.Unlock()
+			if pinnedRecovery {
+				_ = rt.manager.persist(ctx, s)
+			}
+			return s, false, nil
+		}
 		rt.agentTurnHookVerified = true
 		rt.stopNotifyTimerLocked()
 		rt.stopNotifyStableTimerLocked()
@@ -3902,13 +3902,21 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSes
 		return s, true, nil
 	}
 	rt.agentTurnHookVerified = true
-	rt.hookCompletedCurrentRound = true
-	rt.hookCompletionTipClaimed = false
+	if !rt.hookCompletedCurrentRound {
+		rt.hookCompletedCurrentRound = true
+		rt.hookCompletionTipClaimed = false
+	}
 	rt.stopNotifyTimerLocked()
-	rt.resetAgentIdleCompletionTimerLocked()
+	rt.stopNotifyStableTimerLocked()
+	rt.session.Status = StatusWaiting
+	rt.session.UpdatedAt = time.Now().UTC()
+	rt.stateVersion++
+	rt.notifyVersion++
+	version := rt.notifyVersion
 	s := rt.session
 	rt.mu.Unlock()
 	_ = rt.manager.persist(ctx, s)
+	go rt.notifyIfStillWaitingImmediately(version)
 	return s, true, nil
 }
 
