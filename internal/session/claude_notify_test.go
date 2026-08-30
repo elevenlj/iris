@@ -164,8 +164,12 @@ func TestCompleteAgentTurnSupportsClaudeAndPinsResume(t *testing.T) {
 	if err != nil || !accepted {
 		t.Fatalf("Claude completion accepted=%v err=%v", accepted, err)
 	}
-	if got.Status != StatusWaiting || !rt.agentTurnHookVerified {
+	if got.Status != StatusRunning || !rt.agentTurnHookVerified {
 		t.Fatalf("Claude completion state = %#v", got)
+	}
+	settleAgentTurnForTest(rt)
+	if got := rt.Snapshot(); got.Status != StatusWaiting {
+		t.Fatalf("Claude terminal silence state = %#v", got)
 	}
 	resumeArgs := shellFields(got.LastAgentResumeCommand)
 	if !containsAdjacentArgs(resumeArgs, "--resume", claudeSessionID) || slicesContain(resumeArgs, "--continue") {
@@ -189,8 +193,12 @@ func TestCompleteAgentTurnSupportsNativeAiden(t *testing.T) {
 	}
 	manager.sessions[rt.session.ID] = rt
 	got, accepted, err := manager.CompleteAgentTurn(context.Background(), rt.session.ID, "hook-token", "aiden-session", "完成")
-	if err != nil || !accepted || got.Status != StatusWaiting || !rt.agentTurnHookVerified {
+	if err != nil || !accepted || got.Status != StatusRunning || !rt.agentTurnHookVerified {
 		t.Fatalf("Aiden completion accepted=%v err=%v state=%#v", accepted, err, got)
+	}
+	settleAgentTurnForTest(rt)
+	if got := rt.Snapshot(); got.Status != StatusWaiting {
+		t.Fatalf("Aiden terminal silence state = %#v", got)
 	}
 }
 
