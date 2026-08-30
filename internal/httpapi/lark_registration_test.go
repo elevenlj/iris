@@ -47,6 +47,7 @@ func TestLarkRegistrationBeginFormRequestsMessageAndCardCapabilities(t *testing.
 		"im:chat:read",
 		"im:chat:update",
 		"im:chat.members:read",
+		"im:chat.members:write_only",
 		"im:chat.members:bot_access",
 		"cardkit:card:read",
 		"cardkit:card:write",

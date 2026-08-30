@@ -51,7 +51,7 @@ Iris 启动时会自动安装并维护 Codex `notify`、Claude Code `Stop` Hook�
 设置页支持扫码创建或配置飞书自建应用。联系人助理流程需要机器人具备消息、群聊、卡片和用户基本信息权限，其中包括：
 
 - 消息接收与发送
-- 群聊创建与成员管理
+- 群聊创建与成员管理（包括 `im:chat.members:write_only`，用于删除会话时将机器人移出群聊）
 - 卡片读取、写入和回调
 - `contact:user.base:readonly`
 
