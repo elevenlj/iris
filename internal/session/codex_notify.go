@@ -462,24 +462,24 @@ func RunCodexNotify(args []string) error {
 	if event.Type != "agent-turn-complete" {
 		return nil
 	}
-	if isCodexTitleGenerationMessage(event.LastAssistantMessage) {
+	if isCodexInternalMetadataMessage(event.LastAssistantMessage) {
 		return nil
 	}
 	return postAgentTurnCompleted([]byte(payload))
 }
 
-// isCodexTitleGenerationMessage identifies Codex's internal conversation-title response.
-func isCodexTitleGenerationMessage(message string) bool {
+// isCodexInternalMetadataMessage identifies Codex's internal title and conversation-recap responses.
+func isCodexInternalMetadataMessage(message string) bool {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(strings.TrimSpace(message)), &fields); err != nil || len(fields) != 1 {
 		return false
 	}
-	title, ok := fields["title"]
+	value, ok := fields["title"]
 	if !ok {
-		return false
+		value, ok = fields["recap"]
 	}
-	var value string
-	return json.Unmarshal(title, &value) == nil
+	var text string
+	return ok && json.Unmarshal(value, &text) == nil
 }
 
 func postAgentTurnCompleted(payload []byte) error {
