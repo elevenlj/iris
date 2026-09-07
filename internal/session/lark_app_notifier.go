@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,8 @@ const (
 	larkAPIRetryDelay               = 120 * time.Millisecond
 	larkCustomShortcutButtonsPerRow = 3
 )
+
+var larkMarkdownImagePattern = regexp.MustCompile(`!\[([^\]\r\n]*)\]\(\s*(?:<[^>\r\n]+>|[^)\r\n]+)\s*\)`)
 
 type LarkAppNotifier struct {
 	appID            string
@@ -414,6 +417,9 @@ func larkTerminalMarkdownTextWithMerge(content string, allowWrappedLineMerge boo
 			if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
 				lines = append(lines, "")
 			}
+		}
+		if !inCodeFence {
+			line = larkMarkdownImagePattern.ReplaceAllString(line, "$1（图片未随卡片发送）")
 		}
 		lines = append(lines, line)
 		trimmed := strings.TrimSpace(line)

@@ -2136,6 +2136,14 @@ func TestLarkTerminalMarkdownTextUsesHardBreaksOutsideCodeFences(t *testing.T) {
 	}
 }
 
+func TestLarkTerminalMarkdownTextRemovesImagesOutsideCodeFences(t *testing.T) {
+	got := larkTerminalMarkdownText("授权链接：https://example.com\n![二维码](</private/tmp/auth.png>)\n```md\n![示例](/tmp/example.png)\n```")
+	want := "授权链接：https://example.com  \n二维码（图片未随卡片发送）  \n```md\n![示例](/tmp/example.png)\n```"
+	if got != want {
+		t.Fatalf("markdown images = %q, want %q", got, want)
+	}
+}
+
 func TestLarkTerminalMarkdownTextPreservesCodeCommandsWhenMergingWrappedLines(t *testing.T) {
 	SetLarkNotifyMergeWrappedLines(true)
 	t.Cleanup(func() { SetLarkNotifyMergeWrappedLines(false) })
