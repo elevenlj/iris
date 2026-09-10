@@ -2471,7 +2471,7 @@ func TestLarkReplyBridgeDeveloperModeToggleIsOwnerOnly(t *testing.T) {
 	}
 }
 
-func TestLarkReplyBridgeWorkspaceSelectionRequiresDeveloperModeAndUsesConfiguredPath(t *testing.T) {
+func TestLarkReplyBridgeWorkspaceSelectionUsesConfiguredPath(t *testing.T) {
 	launcher := &recordingLauncher{}
 	manager := NewManager(nil, launcher)
 	workspace := t.TempDir()
@@ -2485,18 +2485,8 @@ func TestLarkReplyBridgeWorkspaceSelectionRequiresDeveloperModeAndUsesConfigured
 		"iris_action": "workspace_select",
 		"session_id":  sess.ID,
 	}}
-	resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp == nil || resp.Toast == nil || resp.Toast.Content != "请先开启开发者模式" {
-		t.Fatalf("workspace selection should be hidden behind developer mode: %#v", resp)
-	}
-	if _, _, err := manager.UpdateDeveloperMode(context.Background(), sess.ID, true); err != nil {
-		t.Fatal(err)
-	}
 	before := launcher.terminals[0].writes()
-	resp, err = bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
+	resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2561,7 +2551,7 @@ func TestLarkReplyBridgeWorkspaceSelectionPreservesCardContent(t *testing.T) {
 	rt.mu.Lock()
 	rt.session.Status = StatusWaiting
 	rt.session.NotifyOnWaiting = true
-	rt.session.DeveloperModeEnabled = true
+	rt.session.DeveloperModeEnabled = false
 	rt.lastNotifiedMessageID = "bot-card"
 	rt.lastNotifiedContent = "原卡片正文"
 	rt.lastNotifiedRoundHash = notifyContentHash(rt.lastNotifiedContent)

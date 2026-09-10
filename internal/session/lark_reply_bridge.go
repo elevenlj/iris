@@ -538,9 +538,6 @@ func (b *LarkReplyBridge) handleCardWorkspaceSelect(ctx context.Context, value m
 	if blocked != nil {
 		return blocked, nil
 	}
-	if !rt.Snapshot().DeveloperModeEnabled {
-		return larkCardToast("warning", "请先开启开发者模式"), nil
-	}
 	updated, ok, err := b.manager.SwitchWorkspace(ctx, sessionID, strings.TrimSpace(option))
 	if err != nil {
 		return larkCardToast("warning", err.Error()), nil
@@ -552,7 +549,14 @@ func (b *LarkReplyBridge) handleCardWorkspaceSelect(ctx context.Context, value m
 		time.Sleep(workspaceSwitchToastDelay)
 	}
 	updateNo, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value["update_no"])))
+	rt.mu.Lock()
+	startupCard := strings.TrimSpace(openMessageID) != "" && strings.TrimSpace(openMessageID) == rt.startupNotificationMessageID
+	rt.mu.Unlock()
 	go func() {
+		if startupCard {
+			rt.completeStartupNotification()
+			return
+		}
 		if err := rt.RefreshNotificationControlsPreservingContent(openMessageID, updateNo); err != nil {
 			log.Printf("lark card workspace patch failed session=%s: %v", sessionID, err)
 		}

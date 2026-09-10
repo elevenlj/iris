@@ -159,6 +159,14 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		if !note.StartupComplete && !note.Disabled {
 			elements = append(elements, larkFlowShortcutActionElement(larkRestartAgentButtonColumn(note.SessionID)))
 		}
+		if note.StartupComplete && !note.StartupFailed {
+			if contextElement := larkTerminalAgentContextElement(note.AgentContext); contextElement != nil {
+				elements = append(elements, map[string]any{"tag": "hr"}, contextElement)
+			}
+			if workspaceElement := larkWorkspaceSelectElement(note.SessionID, note.WorkspaceOptions, note.AgentContext); workspaceElement != nil {
+				elements = append(elements, workspaceElement)
+			}
+		}
 	} else {
 		var interactionElement map[string]any
 		if note.DeveloperModeEnabled && !note.Disabled && !note.Running {
@@ -458,12 +466,12 @@ func startsLarkNotifyInputPrompt(line string) bool {
 }
 
 func larkTerminalAgentContextElement(context *TerminalAgentContext) map[string]any {
-	if context == nil || strings.TrimSpace(context.Directory) == "" || strings.TrimSpace(context.Model) == "" {
+	if context == nil || strings.TrimSpace(context.Directory) == "" {
 		return nil
 	}
-	parts := []string{
-		"目录：" + truncateLarkInteractionText(context.Directory, 140),
-		"模型：" + truncateLarkInteractionText(context.Model, 80),
+	parts := []string{"目录：" + truncateLarkInteractionText(context.Directory, 140)}
+	if model := strings.TrimSpace(context.Model); model != "" {
+		parts = append(parts, "模型："+truncateLarkInteractionText(model, 80))
 	}
 	if reasoning := strings.TrimSpace(context.Reasoning); reasoning != "" {
 		parts = append(parts, "Reasoning："+truncateLarkInteractionText(reasoning, 40))

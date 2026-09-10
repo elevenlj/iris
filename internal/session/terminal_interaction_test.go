@@ -454,11 +454,15 @@ func TestLarkNotificationCardRendersDedicatedStartupInputForm(t *testing.T) {
 		Content:         StartupCompletePlaceholder,
 		Startup:         true,
 		StartupComplete: true,
+		AgentContext:    &TerminalAgentContext{Directory: "/tmp/project"},
+		WorkspaceOptions: []WorkspaceOption{
+			{Label: "项目", Value: "/tmp/project", Default: true},
+		},
 	}, "ou_1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(completed, `"content":"Iris（启动完成）"`) || strings.Contains(completed, `"iris_action":"startup_submit"`) {
+	if !strings.Contains(completed, `"content":"Iris（启动完成）"`) || !strings.Contains(completed, `"content":"目录：/tmp/project"`) || !strings.Contains(completed, `"iris_action":"workspace_select"`) || strings.Contains(completed, `"iris_action":"startup_submit"`) {
 		t.Fatalf("completed startup card should be frozen: %s", completed)
 	}
 }

@@ -1923,6 +1923,10 @@ func (rt *RuntimeSession) finishStartupNotification(content string, failed bool)
 		rt.mu.Unlock()
 		return
 	}
+	agentContext := rt.notificationAgentContextLocked()
+	if agentContext == nil && strings.TrimSpace(rt.session.LastCWD) != "" {
+		agentContext = &TerminalAgentContext{Directory: compactTerminalDirectory(rt.session.LastCWD)}
+	}
 	n := WaitingNotification{
 		SessionID:           rt.session.ID,
 		Name:                rt.session.Name,
@@ -1937,6 +1941,7 @@ func (rt *RuntimeSession) finishStartupNotification(content string, failed bool)
 		StartupFailed:       failed,
 		SnapshotSource:      "startup:complete",
 		NotificationVersion: rt.notificationPatchVersion,
+		AgentContext:        agentContext,
 	}
 	rt.mu.Unlock()
 
