@@ -2144,6 +2144,18 @@ func TestLarkTerminalMarkdownTextRemovesImagesOutsideCodeFences(t *testing.T) {
 	}
 }
 
+func TestLarkTerminalMarkdownTextFlattensTablesWithoutDroppingSurroundingText(t *testing.T) {
+	got := larkTerminalMarkdownText("消息承载：\n\n| 字段 | 含义 |\n|---|---|\n| QueryMessageID | 被丢弃的轮次 |\n\n**3. 后续方案**\n\n正文保留。")
+	for _, want := range []string{"字段 | 含义", "QueryMessageID | 被丢弃的轮次", "**3. 后续方案**", "正文保留。"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("flattened table lost %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "|---|---|") {
+		t.Fatalf("table separator should be removed: %q", got)
+	}
+}
+
 func TestLarkTerminalMarkdownTextPreservesCodeCommandsWhenMergingWrappedLines(t *testing.T) {
 	SetLarkNotifyMergeWrappedLines(true)
 	t.Cleanup(func() { SetLarkNotifyMergeWrappedLines(false) })

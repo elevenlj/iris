@@ -25,7 +25,11 @@ const (
 	larkCustomShortcutButtonsPerRow = 3
 )
 
-var larkMarkdownImagePattern = regexp.MustCompile(`!\[([^\]\r\n]*)\]\(\s*(?:<[^>\r\n]+>|[^)\r\n]+)\s*\)`)
+var (
+	larkMarkdownImagePattern          = regexp.MustCompile(`!\[([^\]\r\n]*)\]\(\s*(?:<[^>\r\n]+>|[^)\r\n]+)\s*\)`)
+	larkMarkdownTableRowPattern       = regexp.MustCompile(`^\s*\|(.+)\|\s*$`)
+	larkMarkdownTableSeparatorPattern = regexp.MustCompile(`^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$`)
+)
 
 type LarkAppNotifier struct {
 	appID            string
@@ -419,6 +423,12 @@ func larkTerminalMarkdownTextWithMerge(content string, allowWrappedLineMerge boo
 			}
 		}
 		if !inCodeFence {
+			if larkMarkdownTableSeparatorPattern.MatchString(line) {
+				continue
+			}
+			if match := larkMarkdownTableRowPattern.FindStringSubmatch(line); match != nil {
+				line = strings.TrimSpace(match[1])
+			}
 			line = larkMarkdownImagePattern.ReplaceAllString(line, "$1（图片未随卡片发送）")
 		}
 		lines = append(lines, line)
