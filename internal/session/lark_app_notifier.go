@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -152,7 +153,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		elements = append(elements, map[string]any{"tag": "markdown", "content": "<at id=" + mentionID + "></at>"})
 	}
 	if note.Startup {
-		elements = append(elements, larkTerminalTextElement(note.Content, note.SnapshotSource))
+		elements = append(elements, larkTerminalTextElements(note.Content, note.SnapshotSource)...)
 		if note.StartupInputEnabled && !note.StartupComplete && !note.Disabled {
 			elements = append(elements, larkStartupInputFormElement(note.SessionID))
 		}
@@ -173,7 +174,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 			interactionElement = larkTerminalInteractionElement(note.SessionID, note.Interaction)
 		}
 		if interactionElement == nil {
-			elements = append(elements, larkTerminalTextElement(note.Content, note.SnapshotSource))
+			elements = append(elements, larkTerminalTextElements(note.Content, note.SnapshotSource)...)
 		} else {
 			if note.Interaction.Kind == TerminalInteractionCodexResume {
 				elements = append(elements, larkTerminalInteractionHeadingElement("选择要恢复的会话"))
@@ -403,15 +404,39 @@ func normalizeLarkCustomShortcuts(shortcuts []LarkCustomShortcut) []LarkCustomSh
 	return out
 }
 
-func larkTerminalTextElement(content string, snapshotSource ...string) map[string]any {
+func larkTerminalTextElements(content string, snapshotSource ...string) []map[string]any {
 	preserveOriginalMarkdown := false
 	if len(snapshotSource) > 0 {
 		preserveOriginalMarkdown = strings.Contains(snapshotSource[0], "hook:last_assistant_message")
 	}
-	return map[string]any{
-		"tag":     "markdown",
-		"content": larkTerminalMarkdownTextWithMerge(content, !preserveOriginalMarkdown),
+	plain := larkTerminalPlainTextWithMerge(content, !preserveOriginalMarkdown)
+	sourceLines := strings.Split(plain, "\n")
+	elements := make([]map[string]any, 0, 3)
+	textStart, tableCount := 0, 0
+	inCodeFence := false
+	for i := 0; i < len(sourceLines); {
+		if isMarkdownCodeFenceLine(strings.TrimSpace(sourceLines[i])) {
+			inCodeFence = !inCodeFence
+			i++
+			continue
+		}
+		headers, rows, consumed := parseLarkMarkdownTable(sourceLines[i:])
+		if inCodeFence || consumed == 0 || len(headers) > 50 || tableCount == 5 {
+			i++
+			continue
+		}
+		if text := strings.Join(sourceLines[textStart:i], "\n"); strings.TrimSpace(text) != "" {
+			elements = append(elements, map[string]any{"tag": "markdown", "content": larkTerminalMarkdownTextWithMerge(text, false)})
+		}
+		elements = append(elements, larkMarkdownTableElement(headers, rows))
+		tableCount++
+		i += consumed
+		textStart = i
 	}
+	if text := strings.Join(sourceLines[textStart:], "\n"); strings.TrimSpace(text) != "" || len(elements) == 0 {
+		elements = append(elements, map[string]any{"tag": "markdown", "content": larkTerminalMarkdownTextWithMerge(text, false)})
+	}
+	return elements
 }
 
 func larkTerminalMarkdownText(content string) string {
@@ -467,22 +492,12 @@ func larkTerminalMarkdownTextWithMerge(content string, allowWrappedLineMerge boo
 }
 
 func larkMarkdownTableBlock(lines []string) ([]string, int) {
-	if len(lines) < 3 || !larkMarkdownTableSeparatorPattern.MatchString(lines[1]) {
+	headers, rows, consumed := parseLarkMarkdownTable(lines)
+	if consumed == 0 {
 		return nil, 0
 	}
-	headerMatch := larkMarkdownTableRowPattern.FindStringSubmatch(lines[0])
-	if headerMatch == nil {
-		return nil, 0
-	}
-	headers := strings.Split(headerMatch[1], "|")
 	formatted := make([]string, 0)
-	consumed := 2
-	for consumed < len(lines) {
-		rowMatch := larkMarkdownTableRowPattern.FindStringSubmatch(lines[consumed])
-		if rowMatch == nil {
-			break
-		}
-		cells := strings.Split(rowMatch[1], "|")
+	for _, cells := range rows {
 		if len(formatted) > 0 {
 			formatted = append(formatted, "")
 		}
@@ -499,12 +514,63 @@ func larkMarkdownTableBlock(lines []string) ([]string, int) {
 				formatted = append(formatted, cell)
 			}
 		}
-		consumed++
-	}
-	if consumed == 2 {
-		return nil, 0
 	}
 	return formatted, consumed
+}
+
+func parseLarkMarkdownTable(lines []string) ([]string, [][]string, int) {
+	if len(lines) < 3 || !larkMarkdownTableSeparatorPattern.MatchString(lines[1]) {
+		return nil, nil, 0
+	}
+	headerMatch := larkMarkdownTableRowPattern.FindStringSubmatch(lines[0])
+	if headerMatch == nil {
+		return nil, nil, 0
+	}
+	headers := strings.Split(headerMatch[1], "|")
+	rows := make([][]string, 0)
+	consumed := 2
+	for consumed < len(lines) {
+		rowMatch := larkMarkdownTableRowPattern.FindStringSubmatch(lines[consumed])
+		if rowMatch == nil {
+			break
+		}
+		rows = append(rows, strings.Split(rowMatch[1], "|"))
+		consumed++
+	}
+	if len(rows) == 0 {
+		return nil, nil, 0
+	}
+	return headers, rows, consumed
+}
+
+func larkMarkdownTableElement(headers []string, rows [][]string) map[string]any {
+	columns := make([]map[string]any, len(headers))
+	for i, header := range headers {
+		columns[i] = map[string]any{
+			"name": "col_" + strconv.Itoa(i), "display_name": strings.Trim(strings.TrimSpace(header), "*_`"),
+			"data_type": "lark_md", "width": "auto", "vertical_align": "top",
+		}
+	}
+	tableRows := make([]map[string]any, len(rows))
+	for i, cells := range rows {
+		tableRows[i] = make(map[string]any, len(headers))
+		for j := range headers {
+			cell := ""
+			if j < len(cells) {
+				cell = strings.TrimSpace(larkMarkdownImagePattern.ReplaceAllString(cells[j], "$1（图片未随卡片发送）"))
+			}
+			tableRows[i]["col_"+strconv.Itoa(j)] = cell
+		}
+	}
+	pageSize := len(rows)
+	if pageSize > 10 {
+		pageSize = 10
+	}
+	return map[string]any{
+		"tag": "table", "columns": columns, "rows": tableRows, "page_size": pageSize,
+		"row_height": "auto", "row_max_height": "999px", "freeze_first_column": len(headers) > 2,
+		"header_style": map[string]any{"bold": true, "background_style": "grey", "lines": 1},
+	}
 }
 
 func startsLarkNotifyInputPrompt(line string) bool {
