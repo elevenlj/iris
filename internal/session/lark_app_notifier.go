@@ -422,7 +422,8 @@ func larkTerminalMarkdownTextWithMerge(content string, allowWrappedLineMerge boo
 	sourceLines := strings.Split(larkTerminalPlainTextWithMerge(content, allowWrappedLineMerge), "\n")
 	lines := make([]string, 0, len(sourceLines))
 	inCodeFence := false
-	for _, line := range sourceLines {
+	for i := 0; i < len(sourceLines); i++ {
+		line := sourceLines[i]
 		startsTopLevelBlock := !inCodeFence && (startsLarkNotifyMarkerBlock(line) || startsLarkNotifyInputPrompt(line))
 		if startsTopLevelBlock {
 			line = strings.TrimLeftFunc(line, unicode.IsSpace)
@@ -431,6 +432,11 @@ func larkTerminalMarkdownTextWithMerge(content string, allowWrappedLineMerge boo
 			}
 		}
 		if !inCodeFence {
+			if table, consumed := larkMarkdownTableBlock(sourceLines[i:]); consumed > 0 {
+				lines = append(lines, table...)
+				i += consumed - 1
+				continue
+			}
 			if larkMarkdownTableSeparatorPattern.MatchString(line) {
 				continue
 			}
@@ -458,6 +464,47 @@ func larkTerminalMarkdownTextWithMerge(content string, allowWrappedLineMerge boo
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func larkMarkdownTableBlock(lines []string) ([]string, int) {
+	if len(lines) < 3 || !larkMarkdownTableSeparatorPattern.MatchString(lines[1]) {
+		return nil, 0
+	}
+	headerMatch := larkMarkdownTableRowPattern.FindStringSubmatch(lines[0])
+	if headerMatch == nil {
+		return nil, 0
+	}
+	headers := strings.Split(headerMatch[1], "|")
+	formatted := make([]string, 0)
+	consumed := 2
+	for consumed < len(lines) {
+		rowMatch := larkMarkdownTableRowPattern.FindStringSubmatch(lines[consumed])
+		if rowMatch == nil {
+			break
+		}
+		cells := strings.Split(rowMatch[1], "|")
+		if len(formatted) > 0 {
+			formatted = append(formatted, "")
+		}
+		for i, cell := range cells {
+			cell = strings.TrimSpace(larkMarkdownImagePattern.ReplaceAllString(cell, "$1（图片未随卡片发送）"))
+			if cell == "" {
+				continue
+			}
+			if i == 0 {
+				formatted = append(formatted, "**"+cell+"**")
+			} else if i < len(headers) && strings.TrimSpace(headers[i]) != "" {
+				formatted = append(formatted, "**"+strings.TrimSpace(headers[i])+"：** "+cell)
+			} else {
+				formatted = append(formatted, cell)
+			}
+		}
+		consumed++
+	}
+	if consumed == 2 {
+		return nil, 0
+	}
+	return formatted, consumed
 }
 
 func startsLarkNotifyInputPrompt(line string) bool {

@@ -2144,15 +2144,15 @@ func TestLarkTerminalMarkdownTextRemovesImagesOutsideCodeFences(t *testing.T) {
 	}
 }
 
-func TestLarkTerminalMarkdownTextFlattensTablesWithoutDroppingSurroundingText(t *testing.T) {
-	got := larkTerminalMarkdownText("消息承载：\n\n| 字段 | 含义 |\n|---|---|\n| QueryMessageID | 被丢弃的轮次 |\n\n**3. 后续方案**\n\n正文保留。")
-	for _, want := range []string{"字段 | 含义", "QueryMessageID | 被丢弃的轮次", "**3. 后续方案**", "正文保留。"} {
+func TestLarkTerminalMarkdownTextFormatsTablesWithoutDroppingSurroundingText(t *testing.T) {
+	got := larkTerminalMarkdownText("Iris 的优势：\n\n| 优势 | Iris 当前能力 | 相比 Botmux |\n|---|---|---|\n| 一个机器人管理多个 Agent | 同一会话切换 Agent | 配置更少 |\n| 联系人接待 | 自动创建并复用专属群 | 更像个人助理 |\n\n**3. 后续方案**\n\n正文保留。")
+	for _, want := range []string{"**一个机器人管理多个 Agent**", "**Iris 当前能力：** 同一会话切换 Agent", "**相比 Botmux：** 配置更少", "**联系人接待**", "**3. 后续方案**", "正文保留。"} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("flattened table lost %q: %q", want, got)
+			t.Fatalf("formatted table lost %q: %q", want, got)
 		}
 	}
-	if strings.Contains(got, "|---|---|") {
-		t.Fatalf("table separator should be removed: %q", got)
+	if strings.Contains(got, "|") {
+		t.Fatalf("formatted table should not contain pipe separators: %q", got)
 	}
 }
 
