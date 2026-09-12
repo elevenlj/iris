@@ -392,7 +392,19 @@ func TestMigrateAgentDefinitionsResetsBuiltinCommand(t *testing.T) {
 	}
 }
 
+func withAgentExecutables(t *testing.T, names ...string) {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+}
+
 func TestValidateAgentDefinitionsDoesNotAllowBuiltinOverrides(t *testing.T) {
+	withAgentExecutables(t, "codex")
 	agents, selected, err := validateAgentDefinitions([]session.AgentConfig{{ID: "codex", Name: "Changed", Kind: "custom", Command: "other"}}, "codex")
 	if err != nil {
 		t.Fatal(err)
@@ -403,6 +415,7 @@ func TestValidateAgentDefinitionsDoesNotAllowBuiltinOverrides(t *testing.T) {
 }
 
 func TestValidateAgentDefinitionsRecognizesAidenBuiltins(t *testing.T) {
+	withAgentExecutables(t, "aiden", "codex", "claude")
 	for _, test := range []struct {
 		id      string
 		name    string
@@ -592,6 +605,7 @@ func TestConfigDirMissingFileDoesNotFallBackToDefaultConfig(t *testing.T) {
 }
 
 func TestAppConfigServiceUpdatesRuntimeConfigAndPersists(t *testing.T) {
+	withAgentExecutables(t, "codex")
 	t.Cleanup(func() { session.SetLarkNotifyMergeWrappedLines(false) })
 	path := filepath.Join(t.TempDir(), "config.local.json")
 	cfg := Config{
