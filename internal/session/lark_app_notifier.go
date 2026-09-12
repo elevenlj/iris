@@ -57,24 +57,26 @@ type LarkAppNotifier struct {
 }
 
 type larkCardState struct {
-	mu      sync.Mutex
-	latest  map[string]WaitingNotification
-	retired map[string]bool
-	pending map[string]WaitingNotification
+	mu       sync.Mutex
+	latest   map[string]WaitingNotification
+	retired  map[string]bool
+	recalled map[string]bool
+	pending  map[string]WaitingNotification
 }
 
 func (n *LarkAppNotifier) cardState() *larkCardState {
 	n.cardsMu.Lock()
 	defer n.cardsMu.Unlock()
 	if n.cards == nil {
-		n.cards = &larkCardState{latest: map[string]WaitingNotification{}, retired: map[string]bool{}, pending: map[string]WaitingNotification{}}
+		n.cards = &larkCardState{latest: map[string]WaitingNotification{}, retired: map[string]bool{}, recalled: map[string]bool{}, pending: map[string]WaitingNotification{}}
 		if n.cardsPath != "" {
 			data, err := os.ReadFile(n.cardsPath)
 			if err == nil {
 				var saved struct {
-					Latest  map[string]WaitingNotification
-					Retired map[string]bool
-					Pending map[string]WaitingNotification
+					Latest   map[string]WaitingNotification
+					Retired  map[string]bool
+					Recalled map[string]bool
+					Pending  map[string]WaitingNotification
 				}
 				if err := json.Unmarshal(data, &saved); err != nil {
 					log.Printf("load card controls state: %v", err)
@@ -84,6 +86,9 @@ func (n *LarkAppNotifier) cardState() *larkCardState {
 					}
 					if saved.Retired != nil {
 						n.cards.retired = saved.Retired
+					}
+					if saved.Recalled != nil {
+						n.cards.recalled = saved.Recalled
 					}
 					if saved.Pending != nil {
 						n.cards.pending = saved.Pending
@@ -100,7 +105,7 @@ func (n *LarkAppNotifier) persistCards(state *larkCardState) {
 	if n.cardsPath == "" {
 		return
 	}
-	data, err := json.Marshal(map[string]any{"Latest": state.latest, "Retired": state.retired, "Pending": state.pending})
+	data, err := json.Marshal(map[string]any{"Latest": state.latest, "Retired": state.retired, "Recalled": state.recalled, "Pending": state.pending})
 	if err == nil {
 		err = writeFileAtomically(n.cardsPath, data, 0600)
 	}
@@ -205,6 +210,9 @@ func (n *LarkAppNotifier) NotifyWaiting(note WaitingNotification) (WaitingNotifi
 	defer state.mu.Unlock()
 	key := note.SessionID + "\x00" + note.ChatID
 	previous := state.latest[key]
+	if state.recalled[note.MessageID] {
+		return WaitingNotificationResult{MessageID: note.MessageID, Updated: true}, nil
+	}
 	if state.retired[note.MessageID] {
 		note.Disabled = true
 		note.SuppressUpdateTip = true
@@ -221,12 +229,27 @@ func (n *LarkAppNotifier) NotifyWaiting(note WaitingNotification) (WaitingNotifi
 			previous.SuppressUpdateTip = true
 			state.retired[previous.MessageID] = true
 			state.pending[previous.MessageID] = previous
+			// A running marker can already have been cleared by the new input.
+			// Only recall our empty placeholder, never an answer or a startup card.
+			if !previous.Startup && previous.UpdateNo == 0 && previous.Content == RunningNotificationPlaceholder {
+				state.recalled[previous.MessageID] = true
+			}
 		}
+	} else if note.MessageID != "" && note.MessageID == previous.MessageID && !state.retired[note.MessageID] {
+		// Freezing the current card can also deliver its final body before the
+		// next card arrives. Retain that body when deciding whether to recall it.
+		state.latest[key] = note
 	}
 	// A failed retirement never retries creation of a card already delivered.
 	n.persistCards(state)
 	for id, old := range state.pending {
-		if _, err := n.writeWaiting(old); err != nil {
+		var err error
+		if state.recalled[id] {
+			err = n.recallMessage(id)
+		} else {
+			_, err = n.writeWaiting(old)
+		}
+		if err != nil {
 			log.Printf("retire old card failed message=%s: %v", id, err)
 		} else {
 			delete(state.pending, id)
@@ -1242,6 +1265,9 @@ func (n *LarkAppNotifier) UpdateWaitingRunning(note WaitingNotification, running
 	state := n.cardState()
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	if state.recalled[note.MessageID] {
+		return nil
+	}
 	if state.retired[note.MessageID] {
 		note.Disabled = true
 	}
@@ -1336,6 +1362,41 @@ func (n *LarkAppNotifier) sendUpdateTip(messageID string, chatID string, updateN
 		return fmt.Errorf("lark completion tip message API returned code %d: %s", resp.Code, resp.Msg)
 	}
 	return nil
+}
+
+func (n *LarkAppNotifier) recallMessage(messageID string) error {
+	req := larkim.NewDeleteMessageReqBuilder().MessageId(messageID).Build()
+	return retryLarkVoid(func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		token := n.tenantTokenSnapshot()
+		call := func(token string) (*larkim.DeleteMessageResp, error) {
+			if token == "" {
+				return n.client.Im.V1.Message.Delete(ctx, req)
+			}
+			if n.uncachedClient == nil {
+				return nil, errors.New("lark uncached client is not configured")
+			}
+			return n.uncachedClient.Im.V1.Message.Delete(ctx, req, larkcore.WithTenantAccessToken(token))
+		}
+		resp, err := call(token)
+		if err == nil && resp != nil && invalidLarkAccessTokenCode(resp.Code) {
+			token, err = n.refreshTenantToken(token)
+			if err == nil {
+				resp, err = call(token)
+			}
+		}
+		if err != nil {
+			return err
+		}
+		if resp == nil {
+			return errors.New("empty lark recall message response")
+		}
+		if !resp.Success() && resp.Code != 230011 { // Already recalled: safe after a lost response/restart.
+			return fmt.Errorf("lark recall message API returned code %d: %s", resp.Code, resp.Msg)
+		}
+		return nil
+	})
 }
 
 func (n *LarkAppNotifier) patchMessage(req *larkim.PatchMessageReq) (*larkim.PatchMessageResp, error) {

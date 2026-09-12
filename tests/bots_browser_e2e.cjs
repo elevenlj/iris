@@ -7,6 +7,7 @@ const base=process.env.IRIS_TEST_URL;
  const browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
  try{
   const page=await browser.newPage({viewport:{width:1440,height:1000}});
+  page.setDefaultTimeout(15000);
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(base);
   await page.locator('#auth-password').fill('iris-browser-password');
@@ -69,8 +70,26 @@ const base=process.env.IRIS_TEST_URL;
   await page.locator('#bot-existing').click();
   assert(await page.locator('#bot-app-id').isVisible());
   await page.locator('#bot-cancel').click();
-  const design=await browser.newPage();
+  const design=await browser.newPage({viewport:{width:1440,height:1000}});
+  design.setDefaultTimeout(15000);
   await design.goto(pathToFileURL(path.join(__dirname,'../docs/robots-prototype.html')).href);
+  const sameStyle=async(actual,expected,props)=>{
+   for(const prop of props)assert.equal(await page.locator(actual).evaluate((e,p)=>getComputedStyle(e)[p],prop),await design.locator(expected).evaluate((e,p)=>getComputedStyle(e)[p],prop),actual+' differs from approved design: '+prop);
+  };
+  await page.locator('#config-open').click();await design.locator('#global').click();
+  await page.locator('[data-config-target="config-security"]').click();await design.locator('[data-panel="config-security"]').click();
+  await sameStyle('#config-dialog','#global-dialog',['width','height','backgroundColor','borderRadius','boxShadow','color']);
+  await sameStyle('.config-tab.active','[data-panel="config-security"]',['backgroundColor','color','borderRadius','fontWeight','padding']);
+  await sameStyle('#config-security h2','#global-dialog #config-security h2',['fontSize','color']);
+  await sameStyle('#config-save','#global-dialog>.actions .primary',['backgroundColor','color','borderRadius','padding']);
+  await sameStyle('#cfg-auto-start-enabled','#global-dialog #cfg-auto-start-enabled',['accentColor']);
+  await page.screenshot({path:'/tmp/iris-multi-bot-global-settings.png'});
+  await page.locator('#config-cancel').click();await design.locator('#global-cancel').click();
+  await page.locator('#bot-settings').click();await design.locator('#settings').click();
+  await sameStyle('#bot-dialog','#editor',['width','backgroundColor','borderRadius','padding','boxShadow','color']);
+  await sameStyle('#bot-name','#name-input',['backgroundColor','color','borderRadius','borderColor','padding']);
+  await sameStyle('#bot-save','#save',['backgroundColor','color','borderRadius','padding']);
+  await page.locator('#bot-cancel').click();await design.locator('[data-close="editor"]').click();
   for(const width of [1440,1024,760,390]){
    await page.setViewportSize({width,height:1000});
    await design.setViewportSize({width,height:1000});
@@ -93,6 +112,12 @@ const base=process.env.IRIS_TEST_URL;
    await page.locator('#bot-dialog').waitFor({state:'visible'});
    const dialog=await page.locator('#bot-dialog').boundingBox();assert(dialog.x>=0&&dialog.x+dialog.width<=width,'dialog overflow');
    await page.locator('#bot-cancel').click();
+   await page.locator('#config-open').click();
+   for(const panel of ['config-session','config-security','config-workspaces']){
+    await page.locator(`[data-config-target="${panel}"]`).click();
+    assert(await page.locator('#config-dialog').evaluate(e=>e.scrollWidth<=e.clientWidth),'settings horizontal overflow: '+width+' '+panel);
+   }
+   await page.locator('#config-cancel').click();
   }
   await design.close();
   await page.setViewportSize({width:1440,height:1000});

@@ -7,8 +7,8 @@
   --line: #e3e5dc;
   --line-strong: #dfe5d8;
   --terminal: #1f2521;
-  --accent: #b3541c;
-  --accent-dark: #8c3d16;
+  --accent: #42694c;
+  --accent-dark: #3f6046;
   --danger: #b24c55;
   --ok: #6d9b57;
   --card: #ead6d6;
@@ -30,12 +30,12 @@
 #bot-dialog h2 { font-size:21px; margin:0 0 8px; }
 #bot-dialog label { display:block; margin-top:20px; font-size:12px; }
 #bot-dialog #bot-app-fields label { margin-top:12px; }
-#bot-dialog label input, #bot-dialog label select { display:block; margin-top:8px; border-radius:8px; }
+#bot-dialog label input, #bot-dialog label select { display:block; margin-top:8px; }
 .bot-create-methods { display:flex; flex-wrap:wrap; gap:10px; margin-top:24px; }
 .bot-app-heading { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin-top:24px; border-top:1px solid var(--line); }
 .bot-app-heading a { font-size:12px; color:#42694c; }
 .bot-app-heading h3 { font-size:13px; }
-#bot-app-name { background:rgba(0,0,0,.04); }
+#bot-app-name { background:#f1f2ed; color:#747d70; }
 #bot-error { color:var(--danger); margin-top:16px; white-space:pre-wrap; overflow-wrap:anywhere; }
 
 * {
@@ -68,7 +68,7 @@ select {
   min-width: 0;
   font: inherit;
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.48);
+  background: #fafbf8;
   border: 1px solid var(--line-strong);
   border-radius: 7px;
 }
@@ -97,6 +97,7 @@ textarea,
 select {
   width: 100%;
   padding: 11px;
+  color:#374333;
 }
 
 textarea {
@@ -184,7 +185,7 @@ textarea {
 }
 
 .session.active {
-  border-color: var(--accent);
+  border-color: #b3541c;
   box-shadow: 0 0 0 2px rgba(179, 84, 28, 0.16);
 }
 
@@ -330,17 +331,17 @@ textarea {
 
 dialog {
   width: min(420px, calc(100vw - 32px));
-  border: 1px solid var(--line-strong);
+  border: 1px solid #e0e5d9;
   border-radius: 16px;
   padding:28px;
   background: #fff;
-  color: var(--ink);
-  box-shadow: 0 24px 60px rgba(31, 24, 18, 0.24);
+  color: #303b2e;
+  box-shadow: 0 25px 90px #17221c30;
 }
 
 .config-dialog {
   width: min(850px, calc(100vw - 32px));
-  max-height:90vh;
+  height:min(780px,90vh);
   overflow:auto;
 }
 
@@ -357,12 +358,13 @@ dialog {
 }
 
 dialog::backdrop {
-  background: rgba(40, 28, 18, 0.32);
+  background: #1b281d55;
+  backdrop-filter: blur(3px);
 }
 
 .dialog-title {
   font-weight: 700;
-  font-size: 18px;
+  font-size: 21px;
 }
 
 .dialog-actions {
@@ -370,7 +372,12 @@ dialog::backdrop {
   justify-content: flex-end;
   gap: 10px;
   flex-wrap: wrap;
+  margin-top:28px;
 }
+
+.dialog-actions button { border:0; background:none; padding:10px 17px; }
+#bot-save, #config-save, #auth-submit { background:#466a4b; color:#fff; }
+.config-dialog .dialog-actions { position:sticky; bottom:-28px; padding:15px 0; background:#fff; border-top:1px solid var(--line); }
 
 .onboarding-body {
   padding: 24px;
@@ -430,7 +437,7 @@ dialog::backdrop {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 14px;
+  margin-bottom: 8px;
 }
 
 .config-subtitle {
@@ -440,33 +447,30 @@ dialog::backdrop {
 }
 
 .config-tabs {
-  margin-bottom: 14px;
+  margin-bottom: 20px;
+  padding:18px 0;
+  border-bottom:1px solid var(--line);
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .config-tab {
-  padding: 9px 14px;
-  border-radius: 18px;
-  background: #f7f0e4;
-  color: var(--muted);
-  border-color: var(--line);
-  font-weight: 700;
+  padding: 9px 13px;
+  border-radius: 7px;
+  background: none;
+  color: var(--ink);
+  border:0;
+  font-weight: 400;
 }
 
 .config-tab.active {
-  color: white;
-  background: var(--accent);
-  border-color: var(--accent);
+  color: #42694c;
+  background: #e3ecdd;
 }
 
 .config-sections {
-  max-height: min(70vh, 760px);
-  overflow: auto;
-  padding-right: 4px;
   display: grid;
-  gap: 14px;
 }
 
 .config-panel {
@@ -478,17 +482,17 @@ dialog::backdrop {
 }
 
 .config-section {
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.28);
-  padding: 14px;
+  min-width:0;
 }
 
 .config-section h2 {
-  margin: 0 0 12px;
-  font-size: 15px;
-  color: var(--accent-dark);
+  margin: 0 0 20px;
+  font-size: 17px;
+  color: inherit;
 }
+
+.config-section strong { font-size:13px; }
+.config-section button { padding:8px 12px; border:1px solid #d9dfd2; background:#fafbf7; }
 
 .section-title-row {
   margin-bottom: 12px;
@@ -781,16 +785,15 @@ dialog::backdrop {
 }
 
 .agent-preset {
-  max-width: 760px;
   margin-bottom: 0;
-  padding: 20px;
-  gap: 16px;
-  background: rgba(255, 253, 248, 0.72);
+  padding: 0;
+  border:0;
+  gap: 12px;
+  background: none;
 }
 
 .agent-preset-heading {
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--line);
+  padding-bottom: 0;
 }
 
 .agent-preset-controls {
@@ -826,10 +829,10 @@ dialog::backdrop {
   grid-template-columns: minmax(140px, 0.35fr) minmax(260px, 1fr) auto;
   gap: 10px;
   align-items: end;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.34);
+  border-radius: 9px;
+  background: none;
 }
 
 .agent-option-row label {
@@ -849,19 +852,14 @@ dialog::backdrop {
 }
 
 .security-password-card {
-  width: min(100%, 760px);
-  margin-top: 18px;
-  padding: 20px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(255, 253, 248, 0.72);
+  width: 100%;
+  margin-top: 20px;
   display: grid;
   gap: 16px;
 }
 
 .security-password-heading {
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--line);
+  padding-bottom: 0;
 }
 
 .security-password-heading p {
@@ -879,7 +877,8 @@ dialog::backdrop {
 .security-password-fields label {
   display: grid;
   gap: 7px;
-  font-weight: 650;
+  font-size:12px;
+  font-weight: 400;
 }
 
 .security-current-password {
@@ -913,14 +912,12 @@ dialog::backdrop {
 }
 
 .security-password-actions button {
-  color: white;
-  border-color: transparent;
-  background: var(--accent);
-  font-weight: 700;
+  color: inherit;
+  font-weight: 400;
 }
 
 .security-password-actions button:hover {
-  background: var(--accent-dark);
+  border-color: var(--accent);
 }
 
 .security-warning {
@@ -1016,10 +1013,10 @@ dialog::backdrop {
   grid-template-columns: minmax(120px, 0.35fr) minmax(260px, 1fr) auto;
   gap: 10px;
   align-items: end;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.34);
+  border-radius: 9px;
+  background: none;
 }
 
 .workspace-option-row label {
@@ -1247,7 +1244,7 @@ dialog::backdrop {
 .config-check input {
   width: 18px;
   height: 18px;
-  accent-color: var(--accent);
+  accent-color: #466a4b;
 }
 
 .config-wide {
