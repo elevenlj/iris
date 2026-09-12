@@ -2797,7 +2797,7 @@ func TestLarkReplyBridgeRestartAgentReadsGroupContextAfterComposerReady(t *testi
 		time.Sleep(10 * time.Millisecond)
 	}
 	parts := launcher.terminals[0].writeParts()
-	if len(parts) < before+4 || parts[before] != "\x03\x03" || parts[before+1] != expectedStartCommand+"\r" || parts[before+2] != larkRestartAgentContextPrompt || parts[before+3] != "\r" {
+	if len(parts) < before+4 || parts[before] != "\x03\x03" || parts[before+1] != expectedStartCommand+"\r" || parts[before+2] != larkAgentContextPrompt || parts[before+3] != "\r" {
 		t.Fatalf("restart context writes = %#v", parts)
 	}
 	notes := notifier.notes()
@@ -2819,6 +2819,18 @@ func TestLarkReplyBridgeRestartAgentReadsGroupContextAfterComposerReady(t *testi
 }
 
 func TestLarkReplyBridgeAgentSelectSwitchesToAvailableYoloCommand(t *testing.T) {
+	oldTimeout := agentRestartContextTimeout
+	oldPoll := agentRestartReadyPollInterval
+	oldEnterDelay := structuredInputEnterDelay
+	agentRestartContextTimeout = 2 * time.Second
+	agentRestartReadyPollInterval = time.Millisecond
+	structuredInputEnterDelay = 0
+	t.Cleanup(func() {
+		agentRestartContextTimeout = oldTimeout
+		agentRestartReadyPollInterval = oldPoll
+		structuredInputEnterDelay = oldEnterDelay
+	})
+
 	launcher := &recordingLauncher{}
 	manager := NewManager(nil, launcher)
 	manager.SetAgentConfig(AgentConfig{Kind: "codex", Command: CodexAgentCommand}, nil)
@@ -2845,6 +2857,22 @@ func TestLarkReplyBridgeAgentSelectSwitchesToAvailableYoloCommand(t *testing.T) 
 	if _, _, err := manager.UpdateDeveloperMode(context.Background(), sess.ID, true); err != nil {
 		t.Fatal(err)
 	}
+	rt := manager.sessions[sess.ID]
+	rt.mu.Lock()
+	rt.session.LarkChatID = "oc-group"
+	rt.mu.Unlock()
+	subscriber, cancel := rt.Subscribe()
+	t.Cleanup(cancel)
+	var outputOnce sync.Once
+	go func() {
+		for event := range subscriber {
+			if event.Type != RuntimeEventSnapshotRequest {
+				continue
+			}
+			outputOnce.Do(func() { rt.HandleOutput([]byte("switched Claude output")) })
+			rt.SetVisibleSnapshotResponseFrom("Claude Code\n❯ Ask Claude anything", "browser:buffer;continuity_version=2;render_epoch=3;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=1", event.RequestID, subscriber)
+		}
+	}()
 	before := len(launcher.terminals[0].writeParts())
 	resp, err = bridge.handleCardAction(context.Background(), action, "", "", "ou-member")
 	if err != nil {
@@ -2854,11 +2882,11 @@ func TestLarkReplyBridgeAgentSelectSwitchesToAvailableYoloCommand(t *testing.T) 
 		t.Fatalf("Agent selection response = %#v", resp)
 	}
 	deadline := time.Now().Add(3 * time.Second)
-	for len(launcher.terminals[0].writeParts()) < before+2 && time.Now().Before(deadline) {
+	for len(launcher.terminals[0].writeParts()) < before+4 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	parts := launcher.terminals[0].writeParts()
-	if len(parts) < before+2 || parts[before] != "\x03\x03" || parts[before+1] != ClaudeAgentCommand+"\r" {
+	if len(parts) < before+4 || parts[before] != "\x03\x03" || parts[before+1] != ClaudeAgentCommand+"\r" || parts[before+2] != larkAgentContextPrompt || parts[before+3] != "\r" {
 		t.Fatalf("Agent switch writes = %#v", parts)
 	}
 	updated := manager.sessions[sess.ID].Snapshot()

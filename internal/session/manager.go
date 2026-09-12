@@ -1541,14 +1541,14 @@ func (rt *RuntimeSession) restartAgent(options agentRestartOptions) error {
 }
 
 func (rt *RuntimeSession) SwitchAgent(optionID string) (AgentOption, error) {
-	return rt.switchAgent(optionID, false, "")
+	return rt.switchAgent(optionID, false, "", "")
 }
 
-func (rt *RuntimeSession) SwitchAgentWithLarkNotification(optionID, mentionOpenID string) (AgentOption, error) {
-	return rt.switchAgent(optionID, true, strings.TrimSpace(mentionOpenID))
+func (rt *RuntimeSession) SwitchAgentWithLarkNotification(optionID, followUpPrompt, mentionOpenID string) (AgentOption, error) {
+	return rt.switchAgent(optionID, true, strings.TrimSpace(mentionOpenID), strings.TrimSpace(followUpPrompt))
 }
 
-func (rt *RuntimeSession) switchAgent(optionID string, createStartupNotification bool, startupMentionOpenID string) (AgentOption, error) {
+func (rt *RuntimeSession) switchAgent(optionID string, createStartupNotification bool, startupMentionOpenID, followUpPrompt string) (AgentOption, error) {
 	if rt == nil || rt.manager == nil {
 		return AgentOption{}, errors.New("会话不在线")
 	}
@@ -1578,7 +1578,11 @@ func (rt *RuntimeSession) switchAgent(optionID string, createStartupNotification
 	if createStartupNotification {
 		rt.beginStartupNotification(startupMentionOpenID)
 	}
-	if err := rt.restartAgentAfterConfirmedExit(terminal, option.Command, option.ID, option.Kind, option.Command, "", nil); err != nil {
+	var followUp *agentRestartFollowUp
+	if followUpPrompt != "" {
+		followUp = &agentRestartFollowUp{prompt: followUpPrompt, mentionOpenID: startupMentionOpenID}
+	}
+	if err := rt.restartAgentAfterConfirmedExit(terminal, option.Command, option.ID, option.Kind, option.Command, "", followUp); err != nil {
 		return AgentOption{}, err
 	}
 	return option, nil

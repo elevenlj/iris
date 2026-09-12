@@ -71,7 +71,7 @@ var workspaceSwitchToastDelay = 2 * time.Second
 const larkProcessingReactionEmoji = "THINKING"
 const defaultLarkSessionChatPrefix = "Iris · "
 const larkDisabledCardToastContent = "已失效，请点击最新卡片的按钮"
-const larkRestartAgentContextPrompt = "请使用 iris-feishu-context 读取当前飞书群最近的消息，仅用于了解重启前的对话背景。不要识别、恢复或继续任何未完成任务；完成上下文了解后，等待用户的新输入。"
+const larkAgentContextPrompt = "请使用 iris-feishu-context 读取当前飞书群最近的消息，仅用于了解当前会话已有的对话背景。不要识别、恢复或继续任何未完成任务；完成上下文了解后，等待用户的新输入。"
 const maxLarkReferencedItems = 20
 const maxLarkReferencedTextRunes = 12000
 const maxLarkReferencedAttachments = 10
@@ -464,7 +464,7 @@ func (b *LarkReplyBridge) handleCardRestartAgent(value map[string]interface{}, o
 	}
 	followUpPrompt := ""
 	if hasLarkContext {
-		followUpPrompt = larkRestartAgentContextPrompt
+		followUpPrompt = larkAgentContextPrompt
 	}
 	err := rt.RestartAgentWithLarkNotification(followUpPrompt, mentionOpenID)
 	if err != nil {
@@ -483,14 +483,19 @@ func (b *LarkReplyBridge) handleCardAgentSelect(value map[string]interface{}, op
 	if blocked != nil {
 		return blocked, nil
 	}
-	if !rt.Snapshot().DeveloperModeEnabled {
+	sess := rt.Snapshot()
+	if !sess.DeveloperModeEnabled {
 		return larkCardToast("warning", "请先开启开发者模式"), nil
 	}
 	mentionOpenID := strings.TrimSpace(operatorOpenID)
 	if mentionOpenID == "" {
 		mentionOpenID = rt.NotificationMentionOpenID()
 	}
-	selected, err := rt.SwitchAgentWithLarkNotification(strings.TrimSpace(option), mentionOpenID)
+	followUpPrompt := ""
+	if strings.TrimSpace(sess.LarkChatID) != "" {
+		followUpPrompt = larkAgentContextPrompt
+	}
+	selected, err := rt.SwitchAgentWithLarkNotification(strings.TrimSpace(option), followUpPrompt, mentionOpenID)
 	if err != nil {
 		return larkCardToast("warning", err.Error()), nil
 	}
