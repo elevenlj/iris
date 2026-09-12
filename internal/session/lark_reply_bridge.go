@@ -1040,7 +1040,7 @@ func (b *LarkReplyBridge) prepareAssistantRoute(ctx context.Context, routeCtx la
 	developerOpenID := strings.TrimSpace(b.developerOpenID)
 	fetchDisplayName := b.fetchUserDisplayName
 	b.mu.Unlock()
-	if developerOpenID == "" || strings.TrimSpace(routeCtx.SenderOpenID) == developerOpenID || b.routeContextMentionsBot(ctx, routeCtx) || !routeContextMentionsOpenID(routeCtx, developerOpenID) {
+	if developerOpenID == "" || b.routeContextMentionsBot(ctx, routeCtx) || !routeContextMentionsOpenID(routeCtx, developerOpenID) {
 		return routeCtx
 	}
 	sessionID := b.mentionModeSessionID(ctx, routeCtx, incoming)

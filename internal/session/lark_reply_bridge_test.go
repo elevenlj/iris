@@ -834,6 +834,12 @@ func TestLarkReplyBridgeAssistantMode(t *testing.T) {
 	if got := manager.sessions[sess.ID].NotificationAssistantName(); got != "申晗" {
 		t.Fatalf("assistant display name=%q, want 申晗", got)
 	}
+	self := larkRouteContext{ChatType: "group", ChatID: "oc-group", SenderOpenID: "ou-owner", Mentions: []*larkim.MentionEvent{
+		{Id: &larkim.UserId{OpenId: strPtr("ou-owner")}},
+	}}
+	if got := bridge.prepareAssistantRoute(context.Background(), self, larkIncomingMessage{Text: "自己测试"}); got.AssistantName != "申晗" {
+		t.Fatalf("developer self-mention should trigger assistant mode: %#v", got)
+	}
 	both := larkRouteContext{ChatType: "group", ChatID: "oc-group", SenderOpenID: "ou-user", Mentions: []*larkim.MentionEvent{
 		{Id: &larkim.UserId{OpenId: strPtr("ou-owner")}}, {Id: &larkim.UserId{OpenId: strPtr("ou-bot")}},
 	}}
