@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -204,8 +205,37 @@ func stopRuntime(record runtimeRecord) error {
 	return fmt.Errorf("端口 %s 的 Iris 未在 5 秒内退出", record.Port)
 }
 
+var launchRuntimeProcess = func(record runtimeRecord) error {
+	cmd := exec.Command(record.Executable, "--no-open", "--port", record.Port, "--config-dir", record.ConfigDir)
+	configureDetachedCommand(cmd)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	return cmd.Process.Release()
+}
+
+func restartRuntime(dataDir string, record runtimeRecord) error {
+	if err := launchRuntimeProcess(record); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	client := &http.Client{Timeout: 250 * time.Millisecond}
+	for time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+		b, err := os.ReadFile(runtimeRecordPath(dataDir, record.Port))
+		if err != nil {
+			continue
+		}
+		var current runtimeRecord
+		if json.Unmarshal(b, &current) == nil && current.InstanceID != record.InstanceID && probeRuntime(client, current) == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("端口 %s 的 Iris 未在 5 秒内重新启动", record.Port)
+}
+
 func handleServiceCommand(args []string, in io.Reader, out io.Writer, dataDir string, interactive bool) (bool, error) {
-	if len(args) == 0 || (args[0] != "status" && args[0] != "stop") {
+	if len(args) == 0 || (args[0] != "status" && args[0] != "stop" && args[0] != "restart") {
 		return false, nil
 	}
 	command := args[0]
@@ -222,7 +252,7 @@ func handleServiceCommand(args []string, in io.Reader, out io.Writer, dataDir st
 		return true, nil
 	}
 	if len(args) > 1 {
-		return true, errors.New("用法：iris stop [端口|all]")
+		return true, fmt.Errorf("用法：iris %s [端口|all]", command)
 	}
 	records, err := listActiveRuntimeRecords(dataDir)
 	if err != nil {
@@ -238,13 +268,13 @@ func handleServiceCommand(args []string, in io.Reader, out io.Writer, dataDir st
 	} else if len(records) == 1 {
 		selector = records[0].Port
 	} else if interactive {
-		selector, err = promptRuntimeSelection(in, out, records)
+		selector, err = promptRuntimeSelection(in, out, records, command)
 		if err != nil {
 			return true, err
 		}
 	} else {
 		printRuntimeStatus(out, records, autoStartPort(dataDir))
-		return true, errors.New("发现多个 Iris 服务，请执行 iris stop <端口|all>")
+		return true, fmt.Errorf("发现多个 Iris 服务，请执行 iris %s <端口|all>", command)
 	}
 	targets, err := selectRuntimeRecords(records, selector)
 	if err != nil {
@@ -254,13 +284,24 @@ func handleServiceCommand(args []string, in io.Reader, out io.Writer, dataDir st
 		if err := stopRuntime(record); err != nil {
 			return true, err
 		}
-		fmt.Fprintf(out, "已停止端口 %s 的 Iris 服务。\n", record.Port)
+		if command == "restart" {
+			if err := restartRuntime(dataDir, record); err != nil {
+				return true, fmt.Errorf("重新启动端口 %s 失败：%w", record.Port, err)
+			}
+			fmt.Fprintf(out, "已重新启动端口 %s 的 Iris 服务。\n", record.Port)
+		} else {
+			fmt.Fprintf(out, "已停止端口 %s 的 Iris 服务。\n", record.Port)
+		}
 	}
 	return true, nil
 }
 
-func promptRuntimeSelection(in io.Reader, out io.Writer, records []runtimeRecord) (string, error) {
-	fmt.Fprintln(out, "请选择要停止的 Iris 服务：")
+func promptRuntimeSelection(in io.Reader, out io.Writer, records []runtimeRecord, command string) (string, error) {
+	action := "停止"
+	if command == "restart" {
+		action = "重启"
+	}
+	fmt.Fprintf(out, "请选择要%s的 Iris 服务：\n", action)
 	for i, record := range records {
 		fmt.Fprintf(out, "%d. %s\n", i+1, record.Port)
 	}

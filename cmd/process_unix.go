@@ -13,7 +13,7 @@ func interruptSignals() []os.Signal {
 	return []os.Signal{os.Interrupt, syscall.SIGTERM}
 }
 
-func configureHeadlessCommand(cmd *exec.Cmd) {
+func configureDetachedCommand(cmd *exec.Cmd) {
 	if cmd != nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}

@@ -50,9 +50,12 @@ iris status
 iris stop
 iris stop 8080
 iris stop all
+iris restart
+iris restart 8080
+iris restart all
 ```
 
-同时运行多个服务时，直接执行 `iris stop` 会按端口显示选择列表。配置页默认开启登录后自动启动；关闭后不影响当前服务，只是不再于下次登录时启动。
+同时运行多个服务时，直接执行 `iris stop` 或 `iris restart` 会按端口显示选择列表。配置页默认开启登录后自动启动；关闭后不影响当前服务，只是不再于下次登录时启动。
 
 Iris 启动成功后会自动打开本机配置页。首次使用先进入独立的密码设置页，完成密码确认后才能进入配置台；之后在设置页配置飞书应用、开发者 open_id、工作目录和自定义快捷键。
 

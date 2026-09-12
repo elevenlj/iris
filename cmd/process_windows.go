@@ -11,7 +11,7 @@ func interruptSignals() []os.Signal {
 	return []os.Signal{os.Interrupt}
 }
 
-func configureHeadlessCommand(cmd *exec.Cmd) {
+func configureDetachedCommand(cmd *exec.Cmd) {
 }
 
 func terminateHeadlessProcess(cmd *exec.Cmd) {

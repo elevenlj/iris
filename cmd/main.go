@@ -1248,7 +1248,7 @@ func (m *headlessBrowserManager) Ensure(sessionID string) {
 	pageURL := "http://localhost:" + m.port + "/?session=" + url.QueryEscape(sessionID) + "&headless=1"
 	cmd := exec.Command(chrome, headlessChromeArgs(profile, pageURL)...)
 	cmd.Stderr = log.Writer()
-	configureHeadlessCommand(cmd)
+	configureDetachedCommand(cmd)
 	if err := cmd.Start(); err != nil {
 		_ = os.RemoveAll(profile)
 		log.Printf("headless browser start failed: %v", err)

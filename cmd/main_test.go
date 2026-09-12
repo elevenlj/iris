@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -249,6 +251,59 @@ func TestRuntimeRegistryDiscoversAndStopsExactInstance(t *testing.T) {
 	}
 	if err := stopRuntime(records[0]); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHandleServiceCommandRestartsExactInstance(t *testing.T) {
+	stopping := false
+	instanceID := "instance-1"
+	token := "secret"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(runtimeControlHeader) != token || stopping {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method == http.MethodDelete {
+			stopping = true
+			_, _ = w.Write([]byte(`{"stopping":true}`))
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"instance_id":%q}`, instanceID)
+	}))
+	defer server.Close()
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, port, err := net.SplitHostPort(parsed.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+	record := runtimeRecord{InstanceID: "instance-1", Token: "secret", Port: port, Executable: "/opt/iris", ConfigDir: "/data/iris"}
+	if err := registerRuntimeRecord(dataDir, record); err != nil {
+		t.Fatal(err)
+	}
+	originalLaunch := launchRuntimeProcess
+	t.Cleanup(func() { launchRuntimeProcess = originalLaunch })
+	var launched runtimeRecord
+	launchRuntimeProcess = func(record runtimeRecord) error {
+		launched = record
+		instanceID = "instance-2"
+		token = "new-secret"
+		stopping = false
+		return registerRuntimeRecord(dataDir, runtimeRecord{InstanceID: instanceID, Token: token, Port: port})
+	}
+	var output bytes.Buffer
+	handled, err := handleServiceCommand([]string{"restart", port}, strings.NewReader(""), &output, dataDir, false)
+	if err != nil || !handled {
+		t.Fatalf("restart handled=%v err=%v", handled, err)
+	}
+	if launched.Port != port || launched.Executable != "/opt/iris" || launched.ConfigDir != "/data/iris" {
+		t.Fatalf("launched record = %#v", launched)
+	}
+	if !strings.Contains(output.String(), "已重新启动端口 "+port) {
+		t.Fatalf("restart output = %q", output.String())
 	}
 }
 
