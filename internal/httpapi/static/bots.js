@@ -1,6 +1,7 @@
 let irisBots = [];
 let editingBotID = "";
 let botSavePending = false;
+let botCreationBlocked = false;
 
 async function loadBots() {
   irisBots = await api('/api/bots');
@@ -27,10 +28,18 @@ function botError(error) { botStatus(error.message || String(error), 'error'); }
 function setBotPending(pending) {
   botSavePending = pending;
   for (const id of ['bot-scan','bot-link','bot-connect','bot-select-app','bot-existing','bot-save','bot-cancel','bot-name','bot-agent','bot-directory']) $(id).disabled = pending;
+  $('bot-scan').disabled = pending || botCreationBlocked;
   if (!pending) {
     $('bot-error').classList.remove('pending');
     $('bot-error').setAttribute('aria-busy','false');
   }
+}
+
+function showManualBotFields(manual) {
+  $('bot-app-fields').hidden = !manual;
+  $('bot-save').hidden = !manual;
+  $('bot-link-fields').hidden = true;
+  botStatus('');
 }
 
 async function openBotEditor(edit) {
@@ -53,6 +62,7 @@ async function openBotEditor(edit) {
   botStatus('');
   $('bot-created-app').hidden = true;
   $('bot-link-fields').hidden = true;
+  botCreationBlocked = false;
   setBotPending(false);
   $('bot-save').textContent = edit ? '保存' : '创建';
   $('bot-save').hidden = !edit;
@@ -106,6 +116,7 @@ async function streamBotSetup(bot, receive) {
 
 async function listExistingBots() {
   if (botSavePending) return;
+  showManualBotFields(false);
   setBotPending(true);
   botStatus('正在检查登录状态…', 'pending');
   let apps;
@@ -129,18 +140,19 @@ async function listExistingBots() {
 }
 
 async function createBot(connect = false) {
-  if (botSavePending) return;
+  if (botSavePending || (!connect && botCreationBlocked)) return;
+  if (!connect) showManualBotFields(false);
   const bot = readBot();
   bot.app_id = connect ? $('bot-select-app').value : '';
   if (connect && !bot.app_id) throw new Error('请选择已有应用');
   setBotPending(true);
   botStatus('正在检查登录状态…', 'pending');
-  let createdApp = false;
   try {
     let resultID = '';
     const receive = event => {
       if (event.app_id && /^cli_[a-zA-Z0-9]+$/.test(event.app_id)) {
-        createdApp = true;
+        // Preserve this guard across creation-method switches after a failure.
+        botCreationBlocked = true;
         $('bot-created-app').href = larkAppConsoleURL(event.app_id);
         $('bot-created-app').textContent = connect ? '查看应用 ↗' : '查看已创建的应用 ↗';
         $('bot-created-app').hidden = false;
@@ -157,8 +169,6 @@ async function createBot(connect = false) {
     location.assign(resultID === 'default' ? '/' : `/bots/${encodeURIComponent(resultID)}/`);
   } finally {
     setBotPending(false);
-    // An app already exists; do not offer a second create after a later failure.
-    $('bot-scan').disabled = createdApp;
   }
 }
 
@@ -183,7 +193,7 @@ $('bot-connect').onclick = () => {
   if (!$('bot-name').value.trim()) $('bot-name').value = $('bot-select-app').selectedOptions[0]?.dataset.name || '';
   createBot(true).catch(botError);
 };
-$('bot-existing').onclick = () => {$('bot-app-fields').hidden = false;$('bot-save').hidden = false;$('bot-create-methods').hidden = true;$('bot-link-fields').hidden = true};
+$('bot-existing').onclick = () => {if (!botSavePending) showManualBotFields(true)};
 $('bot-cancel').onclick = () => {if (!botSavePending) $('bot-dialog').close()};
 $('bot-dialog').addEventListener('cancel', event => {if (botSavePending) event.preventDefault()});
 $('bot-app-id').oninput = () => {$('bot-app-name').value='';updateBotConsole()};
