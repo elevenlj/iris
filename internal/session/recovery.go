@@ -636,6 +636,10 @@ func codexHomeIsLegacy(home string) bool {
 }
 
 func (m *Manager) prepareCodexRecovery(sess Session) (Session, error) {
+	if id := strings.ToLower(strings.TrimSpace(sess.LastAgentID)); id == "codex" || id == "aiden-codex" {
+		sess.LastAgentStartCommand = ensureCodexInlineMode(sess.LastAgentStartCommand)
+		sess.LastAgentResumeCommand = ensureCodexInlineMode(sess.LastAgentResumeCommand)
+	}
 	if strings.TrimSpace(sess.LastAgentKind) != "codex" || strings.TrimSpace(sess.LastAgentResumeCommand) == "" {
 		return sess, nil
 	}
@@ -666,6 +670,14 @@ func (m *Manager) prepareCodexRecovery(sess Session) (Session, error) {
 	}
 	sess.LastAgentHome = defaultHome
 	return sess, nil
+}
+
+func ensureCodexInlineMode(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" || hasAnyArg(shellFields(command), "--no-alt-screen") {
+		return command
+	}
+	return command + " --no-alt-screen"
 }
 
 type codexSessionMeta struct {

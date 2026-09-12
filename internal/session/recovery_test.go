@@ -51,6 +51,22 @@ func TestRecoveryRecordsCodexResumeCommandWithFlags(t *testing.T) {
 	}
 }
 
+func TestPrepareCodexRecoveryEnablesInlineTerminal(t *testing.T) {
+	m := NewManager(nil, nil)
+	sess, err := m.prepareCodexRecovery(Session{
+		LastAgentID:            "codex",
+		LastAgentKind:          "codex",
+		LastAgentStartCommand:  "codex --dangerously-bypass-approvals-and-sandbox",
+		LastAgentResumeCommand: "codex resume 019f5153-6e7f-7742-9f61-3ffe1530d61c --dangerously-bypass-approvals-and-sandbox",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sess.LastAgentStartCommand, "--no-alt-screen") || !strings.Contains(sess.LastAgentResumeCommand, "--no-alt-screen") {
+		t.Fatalf("Codex commands did not enable inline terminal: %#v", sess)
+	}
+}
+
 func TestRecoveryRecordsClaudeResumeCommandWithHome(t *testing.T) {
 	base := filepath.Join(t.TempDir(), "sessions")
 	manager := NewManager(nil, nil, WithRecoveryBaseDir(base))

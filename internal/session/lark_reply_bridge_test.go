@@ -396,7 +396,7 @@ func TestLarkReplyBridgeDirectContactCreatesAndReusesAssistantGroup(t *testing.T
 	if sess.Name != "小林和Eleven的会话" {
 		t.Fatalf("contact session name = %q", sess.Name)
 	}
-	if got := launcher.terminals[0].writes(); !strings.Contains(got, "codex --dangerously-bypass-approvals-and-sandbox\r") {
+	if got := launcher.terminals[0].writes(); !strings.Contains(got, CodexAgentCommand+"\r") {
 		t.Fatalf("configured Agent should start in the terminal: %q", got)
 	}
 	bridge.mu.Lock()

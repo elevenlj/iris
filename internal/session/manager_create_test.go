@@ -29,7 +29,7 @@ func TestCreateSessionAlwaysStartsConfiguredAgentInDefaultWorkspace(t *testing.T
 	manager := NewManager(nil, launcher)
 	manager.SetDefaultWorkspaceDir(workspace)
 	customWorkspace := t.TempDir()
-	manager.SetAgentConfig(AgentConfig{Kind: "codex", Command: "codex --dangerously-bypass-approvals-and-sandbox"}, []WorkspaceOption{
+	manager.SetAgentConfig(AgentConfig{Kind: "codex", Command: CodexAgentCommand}, []WorkspaceOption{
 		{Label: "主项目", Value: customWorkspace, Default: true},
 	})
 
@@ -38,7 +38,7 @@ func TestCreateSessionAlwaysStartsConfiguredAgentInDefaultWorkspace(t *testing.T
 		t.Fatal(err)
 	}
 	writes := launcher.terminals[0].writes()
-	if !strings.Contains(writes, "mkdir -p "+shellQuote(workspace)+"\r") || !strings.Contains(writes, "cd "+shellQuote(workspace)+"\r") || !strings.Contains(writes, "codex --dangerously-bypass-approvals-and-sandbox\r") {
+	if !strings.Contains(writes, "mkdir -p "+shellQuote(workspace)+"\r") || !strings.Contains(writes, "cd "+shellQuote(workspace)+"\r") || !strings.Contains(writes, CodexAgentCommand+"\r") {
 		t.Fatalf("configured workspace and Agent were not started: %q", writes)
 	}
 	if strings.Contains(writes, customWorkspace) {

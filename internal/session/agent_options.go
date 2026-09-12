@@ -5,10 +5,10 @@ import (
 )
 
 const (
-	CodexAgentCommand       = "codex --dangerously-bypass-approvals-and-sandbox"
+	CodexAgentCommand       = "codex --dangerously-bypass-approvals-and-sandbox --no-alt-screen"
 	ClaudeAgentCommand      = "claude --dangerously-skip-permissions"
 	AidenAgentCommand       = "aiden --permission-mode bypassPermissions"
-	AidenCodexAgentCommand  = "aiden x codex --dangerously-bypass-approvals-and-sandbox"
+	AidenCodexAgentCommand  = "aiden x codex --dangerously-bypass-approvals-and-sandbox --no-alt-screen"
 	AidenClaudeAgentCommand = "aiden x claude --dangerously-skip-permissions"
 )
 
