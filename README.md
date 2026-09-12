@@ -89,12 +89,14 @@ iris --reset-settings-password
 
 ## 运行数据
 
-默认数据目录：
+默认端口 `8080` 的数据目录：
 
 - `~/.iris/conf/config.local.json`
 - `~/.iris/iris.db`
 - `~/.iris/data/uploads/`
 - `~/.iris/log/iris.log`
+
+其他端口会自动隔离到 `~/.iris/instances/<端口>/`。例如 `iris -p 8081` 不会与 `iris -p 8080` 共用配置、数据库、上传文件、会话恢复数据或日志；`IRIS_HOME` 可修改实例目录的根路径。
 
 迁移旧部署时仍可读取旧版环境变量，但新配置统一使用 `IRIS_HOME` 和 `IRIS_CONFIG_DIR`。
 

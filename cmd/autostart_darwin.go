@@ -22,7 +22,7 @@ func installAutoStart(spec autoStartSpec) error {
 	if err != nil {
 		return err
 	}
-	logPath := filepath.Join(spec.DataDir, "log", "autostart.log")
+	logPath := filepath.Join(instanceDataDir(spec.DataDir, spec.Port), "log", "autostart.log")
 	args := []string{spec.Binary, "--no-open", "--port", spec.Port, "--config-dir", spec.ConfigDir}
 	argXML := ""
 	for _, arg := range args {

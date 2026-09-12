@@ -138,10 +138,16 @@ func run() error {
 		fmt.Println("Iris Agent hooks and Feishu context skills installed.")
 		return nil
 	}
-	if _, err := enterRuntimeDir(); err != nil {
+	controlDir := defaultDataDir()
+	requestedPort := opts.Port
+	if requestedPort == "" {
+		requestedPort = strings.TrimSpace(os.Getenv("PORT"))
+	}
+	dataDir := instanceDataDir(controlDir, requestedPort)
+	if _, err := enterRuntimeDir(dataDir); err != nil {
 		return err
 	}
-	configPath := configPathFromDir(opts.ConfigDir)
+	configPath := configPathForDataDir(opts.ConfigDir, dataDir)
 	if err := ensureConfigFile(configPath); err != nil {
 		return err
 	}
@@ -170,7 +176,6 @@ func run() error {
 	if opts.Port != "" {
 		cfg.Port = opts.Port
 	}
-	dataDir := dataDirFromConfigDir(opts.ConfigDir)
 	dbPath := env("AGENT_MONITOR_DB", dbPathInDataDir(dataDir))
 	uploadsDir := env("AGENT_MONITOR_UPLOADS_DIR", uploadsDirInDataDir(dataDir))
 	logDir := env("AGENT_MONITOR_LOG_DIR", logDirInDataDir(dataDir))
@@ -281,18 +286,18 @@ func run() error {
 		default:
 		}
 	})
-	if err := registerRuntimeRecord(dataDir, record); err != nil {
+	if err := registerRuntimeRecord(controlDir, record); err != nil {
 		_ = listener.Close()
 		return err
 	}
-	defer unregisterRuntimeRecord(dataDir, record)
-	autoStart := autoStartSpec{Binary: record.Executable, Port: actualPort, ConfigDir: filepath.Dir(configPath), DataDir: dataDir}
-	configSvc.autoStart = func(enabled bool) error { return setAutoStart(dataDir, enabled, autoStart) }
+	defer unregisterRuntimeRecord(controlDir, record)
+	autoStart := autoStartSpec{Binary: record.Executable, Port: actualPort, ConfigDir: filepath.Dir(configPath), DataDir: controlDir}
+	configSvc.autoStart = func(enabled bool) error { return setAutoStart(controlDir, enabled, autoStart) }
 	if cfg.AutoStartEnabled {
-		if err := ensureAutoStart(dataDir, autoStart); err != nil {
+		if err := ensureAutoStart(controlDir, autoStart); err != nil {
 			log.Printf("failed to enable automatic startup: %v", err)
 		}
-	} else if err := setAutoStart(dataDir, false, autoStart); err != nil {
+	} else if err := setAutoStart(controlDir, false, autoStart); err != nil {
 		log.Printf("failed to disable automatic startup: %v", err)
 	}
 	errCh := make(chan error, 1)
@@ -790,6 +795,13 @@ func configPathFromDir(dir string) string {
 	return filepath.Join(dir, "config.local.json")
 }
 
+func configPathForDataDir(dir, dataDir string) string {
+	if strings.TrimSpace(dir) != "" || strings.TrimSpace(os.Getenv("IRIS_CONFIG_DIR")) != "" || strings.TrimSpace(os.Getenv("EASY_TERMINAL_CONFIG_DIR")) != "" {
+		return configPathFromDir(dir)
+	}
+	return filepath.Join(dataDir, "conf", "config.local.json")
+}
+
 func defaultConfigDir() string {
 	if dir := strings.TrimSpace(os.Getenv("IRIS_CONFIG_DIR")); dir != "" {
 		return dir
@@ -824,8 +836,15 @@ func logDirInDataDir(dir string) string {
 	return filepath.Join(dir, "log")
 }
 
-func dataDirFromConfigDir(_ string) string {
-	return defaultDataDir()
+func instanceDataDir(baseDir, port string) string {
+	port = strings.TrimSpace(port)
+	if port == "" || port == "8080" {
+		return baseDir
+	}
+	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+		return baseDir
+	}
+	return filepath.Join(baseDir, "instances", port)
 }
 
 func defaultDataDir() string {
@@ -841,8 +860,7 @@ func defaultDataDir() string {
 	return ".iris"
 }
 
-func enterRuntimeDir() (string, error) {
-	dir := defaultDataDir()
+func enterRuntimeDir(dir string) (string, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return "", err
