@@ -328,6 +328,7 @@ func TestMigrateAgentDefinitionsResetsBuiltinCommand(t *testing.T) {
 	}
 	for id, want := range map[string]string{
 		"aiden":        session.AidenAgentCommand,
+		"aiden-codex":  session.AidenCodexAgentCommand,
 		"aiden-claude": session.AidenClaudeAgentCommand,
 	} {
 		if got := agentConfigByID(cfg.Agents, id).Command; got != want {
@@ -354,6 +355,7 @@ func TestValidateAgentDefinitionsRecognizesAidenBuiltins(t *testing.T) {
 		command string
 	}{
 		{id: "aiden", name: "Aiden", kind: "aiden", command: session.AidenAgentCommand},
+		{id: "aiden-codex", name: "Aiden X Codex", kind: "aiden-codex", command: session.AidenCodexAgentCommand},
 		{id: "aiden-claude", name: "Aiden X Claude Code", kind: "aiden-claude", command: session.AidenClaudeAgentCommand},
 	} {
 		agents, selected, err := validateAgentDefinitions([]session.AgentConfig{{ID: test.id, Name: "Changed", Kind: "custom", Command: "other"}}, test.id)

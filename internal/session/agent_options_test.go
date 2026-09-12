@@ -25,6 +25,7 @@ func TestDetectAvailableAgentOptionsIncludesCompatibleAidenModesAndCustom(t *tes
 		{ID: "codex", Label: "Codex", Kind: "codex", Command: CodexAgentCommand},
 		{ID: "claude", Label: "Claude Code", Kind: "claude", Command: ClaudeAgentCommand},
 		{ID: "aiden", Label: "Aiden", Kind: "aiden", Command: AidenAgentCommand},
+		{ID: "aiden-codex", Label: "Aiden X Codex", Kind: "aiden-codex", Command: AidenCodexAgentCommand},
 		{ID: "aiden-claude", Label: "Aiden X Claude Code", Kind: "aiden-claude", Command: AidenClaudeAgentCommand},
 		{ID: "custom-plan", Label: "方案助手", Kind: "custom", Command: "my-agent --full-access"},
 		{ID: "custom-review", Label: "审查助手", Kind: "custom", Command: "review-agent"},
@@ -41,15 +42,18 @@ func TestDetectAvailableAgentOptionsExcludesMissingBuiltins(t *testing.T) {
 	}
 }
 
-func TestDetectAvailableAgentOptionsRequiresAidenAndClaudeForAidenClaude(t *testing.T) {
+func TestDetectAvailableAgentOptionsRequiresAidenAndWrappedAgent(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		installed fakeAgentExecutableFinder
 		wantIDs   []string
 	}{
 		{name: "aiden only", installed: fakeAgentExecutableFinder{"aiden": true}, wantIDs: []string{"aiden"}},
+		{name: "codex only", installed: fakeAgentExecutableFinder{"codex": true}, wantIDs: []string{"codex"}},
 		{name: "claude only", installed: fakeAgentExecutableFinder{"claude": true}, wantIDs: []string{"claude"}},
-		{name: "both", installed: fakeAgentExecutableFinder{"aiden": true, "claude": true}, wantIDs: []string{"claude", "aiden", "aiden-claude"}},
+		{name: "aiden and codex", installed: fakeAgentExecutableFinder{"aiden": true, "codex": true}, wantIDs: []string{"codex", "aiden", "aiden-codex"}},
+		{name: "aiden and claude", installed: fakeAgentExecutableFinder{"aiden": true, "claude": true}, wantIDs: []string{"claude", "aiden", "aiden-claude"}},
+		{name: "all", installed: fakeAgentExecutableFinder{"aiden": true, "codex": true, "claude": true}, wantIDs: []string{"codex", "claude", "aiden", "aiden-codex", "aiden-claude"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got := detectAvailableAgentOptions(nil, test.installed)

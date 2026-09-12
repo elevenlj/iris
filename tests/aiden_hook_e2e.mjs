@@ -57,6 +57,7 @@ try {
 
   const scenarios = [
     { mode: "native", name: "Aiden", prefix: [], flags: ["--permission-mode", "agentFull"] },
+    { mode: "codex", name: "Aiden X Codex", prefix: ["x", "codex", "--model", process.env.AIDEN_CODEX_MODEL || "gpt-5.6-sol"], flags: ["--dangerously-bypass-approvals-and-sandbox"] },
     { mode: "claude", name: "Aiden X Claude Code", prefix: ["x", "claude"], flags: ["--dangerously-skip-permissions"] },
   ].filter((scenario) => !process.env.AIDEN_E2E_MODE || scenario.mode === process.env.AIDEN_E2E_MODE);
   for (const scenario of scenarios) {
@@ -73,39 +74,40 @@ try {
     };
 
     const startHook = waitForHook(sessionKey);
-    const start = await run(aiden, [
-      ...scenario.prefix,
-      "--print",
-      ...(scenario.mode === "native" ? ["--settings", settingsPath] : []),
-      ...scenario.flags,
-      `记住暗号 ${secret}，只回复 ${startMarker}。`,
+    const start = await run(aiden, scenario.mode === "codex" ? [
+      ...scenario.prefix, "exec", ...scenario.flags, `记住暗号 ${secret}，只回复 ${startMarker}。`,
+    ] : [
+      ...scenario.prefix, "--print", ...(scenario.mode === "native" ? ["--settings", settingsPath] : []),
+      ...scenario.flags, `记住暗号 ${secret}，只回复 ${startMarker}。`,
     ], env);
     assert.equal(start.code, 0, `${scenario.name} start failed\n${start.stderr}`);
     assert.ok(start.stdout.includes(startMarker), start.stdout);
     const firstPayload = await withTimeout(startHook, `${scenario.name} start hook`);
-    assert.equal(firstPayload.hook_event_name, "Stop");
-    assert.ok(firstPayload.session_id, JSON.stringify(firstPayload));
-    if (scenario.prefix.length > 0) assert.ok(firstPayload.last_assistant_message.includes(startMarker));
+    if (scenario.mode === "codex") assert.equal(firstPayload.type, "agent-turn-complete");
+    else assert.equal(firstPayload.hook_event_name, "Stop");
+    const firstSessionID = firstPayload.session_id || firstPayload["thread-id"];
+    assert.ok(firstSessionID, JSON.stringify(firstPayload));
+    if (scenario.prefix.length > 0) assert.ok((firstPayload.last_assistant_message || firstPayload["last-assistant-message"]).includes(startMarker));
 
     const resumeHook = waitForHook(sessionKey);
-    const resumed = await run(aiden, [
-      ...scenario.prefix,
-      "--print",
-      "--resume",
-      firstPayload.session_id,
-      ...(scenario.mode === "native" ? ["--settings", settingsPath] : []),
-      ...scenario.flags,
+    const resumed = await run(aiden, scenario.mode === "codex" ? [
+      ...scenario.prefix, "exec", "resume", firstSessionID, ...scenario.flags,
       `回复上一轮记住的暗号，并追加 ${resumeMarker}。`,
+    ] : [
+      ...scenario.prefix, "--print", "--resume", firstSessionID,
+      ...(scenario.mode === "native" ? ["--settings", settingsPath] : []),
+      ...scenario.flags, `回复上一轮记住的暗号，并追加 ${resumeMarker}。`,
     ], env);
     assert.equal(resumed.code, 0, `${scenario.name} resume failed\n${resumed.stderr}`);
     assert.ok(resumed.stdout.includes(secret) && resumed.stdout.includes(resumeMarker), resumed.stdout);
     const secondPayload = await withTimeout(resumeHook, `${scenario.name} resume hook`);
-    assert.ok(secondPayload.session_id, JSON.stringify(secondPayload));
+    const secondSessionID = secondPayload.session_id || secondPayload["thread-id"];
+    assert.ok(secondSessionID, JSON.stringify(secondPayload));
     if (scenario.prefix.length > 0) {
-      assert.equal(secondPayload.session_id, firstPayload.session_id);
-      assert.ok(secondPayload.last_assistant_message.includes(resumeMarker));
+      assert.equal(secondSessionID, firstSessionID);
+      assert.ok((secondPayload.last_assistant_message || secondPayload["last-assistant-message"]).includes(resumeMarker));
     }
-    console.log(`${scenario.name} start, Stop hook, and resume ok`);
+    console.log(`${scenario.name} start, completion hook, and resume ok`);
   }
 } finally {
   waiters.clear();

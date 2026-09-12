@@ -201,20 +201,22 @@ func checkAgentCommand(cfg RuntimeConfig) EnvironmentCheckStep {
 	if executable == "" {
 		return EnvironmentCheckStep{ID: "agent_command", Name: "Agent 启动命令", Status: "warning", Message: "命令已配置，但组合命令需要启动会话后验证"}
 	}
+	available := findEnvironmentExecutable(executable) != ""
 	if filepath.IsAbs(executable) {
-		if info, err := os.Stat(executable); err == nil && isEnvironmentExecutableFile(info) {
-			if aidenXAgent(command) == "claude" && findEnvironmentExecutable("claude") == "" {
-				return EnvironmentCheckStep{ID: "agent_command", Name: "Agent 启动命令", Status: "error", Message: "Aiden X Claude Code 还需要安装 Claude Code"}
-			}
-			return EnvironmentCheckStep{ID: "agent_command", Name: "Agent 启动命令", Status: "ok", Message: "启动命令可用"}
-		}
-	} else if findEnvironmentExecutable(executable) != "" {
-		if aidenXAgent(command) == "claude" && findEnvironmentExecutable("claude") == "" {
-			return EnvironmentCheckStep{ID: "agent_command", Name: "Agent 启动命令", Status: "error", Message: "Aiden X Claude Code 还需要安装 Claude Code"}
-		}
-		return EnvironmentCheckStep{ID: "agent_command", Name: "Agent 启动命令", Status: "ok", Message: "启动命令可用"}
+		info, err := os.Stat(executable)
+		available = err == nil && isEnvironmentExecutableFile(info)
 	}
-	return EnvironmentCheckStep{ID: "agent_command", Name: "Agent 启动命令", Status: "error", Message: "找不到已配置的 Agent 启动命令"}
+	if !available {
+		return EnvironmentCheckStep{ID: "agent_command", Name: "Agent 启动命令", Status: "error", Message: "找不到已配置的 Agent 启动命令"}
+	}
+	if dependency := aidenXAgent(command); (dependency == "codex" || dependency == "claude") && findEnvironmentExecutable(dependency) == "" {
+		name := "Codex"
+		if dependency == "claude" {
+			name = "Claude Code"
+		}
+		return EnvironmentCheckStep{ID: "agent_command", Name: "Agent 启动命令", Status: "error", Message: "Aiden X " + name + " 还需要安装 " + name}
+	}
+	return EnvironmentCheckStep{ID: "agent_command", Name: "Agent 启动命令", Status: "ok", Message: "启动命令可用"}
 }
 
 func checkAgentCompletionHook(cfg RuntimeConfig) *EnvironmentCheckStep {

@@ -96,6 +96,7 @@ func TestSwitchWorkspaceSubmitsCDToSupportedAgents(t *testing.T) {
 	}{
 		{name: "Claude Code", configKind: "claude", runtimeKind: "claude", command: ClaudeAgentCommand},
 		{name: "Aiden", configKind: "aiden", runtimeKind: "aiden", command: AidenAgentCommand},
+		{name: "Aiden X Codex", configKind: "aiden-codex", runtimeKind: "codex", command: AidenCodexAgentCommand},
 		{name: "Aiden X Claude Code", configKind: "aiden-claude", runtimeKind: "claude", command: AidenClaudeAgentCommand},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -128,6 +129,7 @@ func TestCreateSessionStartsAidenBuiltins(t *testing.T) {
 		runtimeKind string
 	}{
 		{kind: "aiden", command: AidenAgentCommand, runtimeKind: "aiden"},
+		{kind: "aiden-codex", command: AidenCodexAgentCommand, runtimeKind: "codex"},
 		{kind: "aiden-claude", command: AidenClaudeAgentCommand, runtimeKind: "claude"},
 	} {
 		t.Run(test.kind, func(t *testing.T) {

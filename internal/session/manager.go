@@ -165,6 +165,11 @@ func normalizeAgentConfig(agent AgentConfig) AgentConfig {
 		agent.Name = "Aiden"
 		agent.Command = AidenAgentCommand
 	}
+	if agent.Kind == "aiden-codex" {
+		agent.ID = "aiden-codex"
+		agent.Name = "Aiden X Codex"
+		agent.Command = AidenCodexAgentCommand
+	}
 	if agent.Kind == "aiden-claude" {
 		agent.ID = "aiden-claude"
 		agent.Name = "Aiden X Claude Code"
@@ -173,7 +178,7 @@ func normalizeAgentConfig(agent AgentConfig) AgentConfig {
 	if agent.Kind == "custom" && agent.Name == "" {
 		agent.Name = "自定义 Agent"
 	}
-	if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "aiden" && agent.Kind != "aiden-claude" && agent.Kind != "custom" {
+	if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "aiden" && agent.Kind != "aiden-codex" && agent.Kind != "aiden-claude" && agent.Kind != "custom" {
 		return AgentConfig{}
 	}
 	return agent
