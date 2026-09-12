@@ -218,7 +218,7 @@ func restartRuntime(dataDir string, record runtimeRecord) error {
 	if err := launchRuntimeProcess(record); err != nil {
 		return err
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	client := &http.Client{Timeout: 250 * time.Millisecond}
 	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
@@ -231,7 +231,7 @@ func restartRuntime(dataDir string, record runtimeRecord) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("端口 %s 的 Iris 未在 5 秒内重新启动", record.Port)
+	return fmt.Errorf("端口 %s 的 Iris 未在 30 秒内重新启动", record.Port)
 }
 
 func handleServiceCommand(args []string, in io.Reader, out io.Writer, dataDir string, interactive bool) (bool, error) {
