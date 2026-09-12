@@ -7,9 +7,41 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/elevenlj/iris/internal/session"
 )
+
+func TestRuntimeControlRequiresLocalTokenAndStops(t *testing.T) {
+	stopped := make(chan struct{}, 1)
+	srv := NewServer(nil, "")
+	srv.SetRuntimeControl("instance-1", "secret", "1.2.3", 42, func() { stopped <- struct{}{} })
+	server := httptest.NewServer(srv.Handler())
+	defer server.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/runtime", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unauthorized runtime status = %d", rec.Code)
+	}
+
+	req, _ = http.NewRequest(http.MethodDelete, server.URL+"/api/runtime", nil)
+	req.Header.Set("X-Iris-Control-Token", "secret")
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("runtime stop = %d", resp.StatusCode)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("runtime stop callback was not called")
+	}
+}
 
 type httpTestLarkProvider struct{}
 

@@ -59,6 +59,7 @@ var defaultLarkNotifyDropLineRules = session.LarkNotifyDropLineRules{
 
 type Config struct {
 	Port                            string                                `json:"port"`
+	AutoStartEnabled                bool                                  `json:"auto_start_enabled"`
 	LarkAppID                       string                                `json:"lark_app_id"`
 	LarkAppSecret                   string                                `json:"lark_app_secret"`
 	LarkNotifyReceiveID             string                                `json:"lark_notify_receive_id"`
@@ -110,6 +111,13 @@ func run() error {
 			log.Printf("Claude Stop callback failed: %v", err)
 		}
 		return nil
+	}
+	interactive := false
+	if info, err := os.Stdin.Stat(); err == nil {
+		interactive = info.Mode()&os.ModeCharDevice != 0
+	}
+	if handled, err := handleServiceCommand(os.Args[1:], os.Stdin, os.Stdout, defaultDataDir(), interactive); handled {
+		return err
 	}
 	opts, err := parseStartupOptions(os.Args[1:])
 	if err != nil {
@@ -260,11 +268,38 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	actualPort := listenerPort(listener.Addr(), cfg.Port)
+	record, err := newRuntimeRecord(actualPort, filepath.Dir(configPath))
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
+	shutdownCh := make(chan struct{}, 1)
+	srv.SetRuntimeControl(record.InstanceID, record.Token, record.Version, record.PID, func() {
+		select {
+		case shutdownCh <- struct{}{}:
+		default:
+		}
+	})
+	if err := registerRuntimeRecord(dataDir, record); err != nil {
+		_ = listener.Close()
+		return err
+	}
+	defer unregisterRuntimeRecord(dataDir, record)
+	autoStart := autoStartSpec{Binary: record.Executable, Port: actualPort, ConfigDir: filepath.Dir(configPath), DataDir: dataDir}
+	configSvc.autoStart = func(enabled bool) error { return setAutoStart(dataDir, enabled, autoStart) }
+	if cfg.AutoStartEnabled {
+		if err := ensureAutoStart(dataDir, autoStart); err != nil {
+			log.Printf("failed to enable automatic startup: %v", err)
+		}
+	} else if err := setAutoStart(dataDir, false, autoStart); err != nil {
+		log.Printf("failed to disable automatic startup: %v", err)
+	}
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- httpSrv.Serve(listener)
 	}()
-	if !envBool("IRIS_NO_OPEN", false) {
+	if !opts.NoOpen && !envBool("IRIS_NO_OPEN", false) {
 		go func() {
 			if err := openBrowserURL(startupBrowserURL(listener.Addr(), cfg.Port)); err != nil {
 				log.Printf("failed to open Iris page: %v", err)
@@ -282,14 +317,16 @@ func run() error {
 		return err
 	case sig := <-sigCh:
 		log.Printf("iris stopping on signal %s", sig)
-		headless.StopAll()
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		if err := httpSrv.Shutdown(ctx); err != nil {
-			return err
-		}
-		return nil
+	case <-shutdownCh:
+		log.Printf("iris stopping on local command")
 	}
+	headless.StopAll()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := httpSrv.Shutdown(ctx); err != nil {
+		return err
+	}
+	return nil
 }
 
 func migrateWaitingTransitionDefaults(cfg Config) (Config, bool) {
@@ -344,6 +381,7 @@ type startupOptions struct {
 	Version               bool
 	ResetSettingsPassword bool
 	InstallAgentHooks     bool
+	NoOpen                bool
 }
 
 func parseStartupOptions(args []string) (startupOptions, error) {
@@ -357,6 +395,7 @@ func parseStartupOptions(args []string) (startupOptions, error) {
 	fs.BoolVar(&opts.Version, "v", false, "print version")
 	fs.BoolVar(&opts.ResetSettingsPassword, "reset-settings-password", false, "reset the local settings password")
 	fs.BoolVar(&opts.InstallAgentHooks, "install-agent-hooks", false, "install Codex and Claude completion hooks")
+	fs.BoolVar(&opts.NoOpen, "no-open", false, "do not open the browser")
 	if err := fs.Parse(args); err != nil {
 		return startupOptions{}, err
 	}
@@ -665,6 +704,7 @@ func sameLarkNotifyDropLineRule(left, right session.LarkNotifyDropLineRule) bool
 func defaultConfig() Config {
 	return Config{
 		Port:                            "8080",
+		AutoStartEnabled:                true,
 		LarkMentionEnabled:              true,
 		LarkDefaultSessionName:          defaultLarkDefaultSessionName,
 		LarkSessionChatPrefix:           defaultLarkSessionChatPrefix,
@@ -769,11 +809,12 @@ func enterRuntimeDir() (string, error) {
 }
 
 type appConfigService struct {
-	mu      sync.Mutex
-	path    string
-	cfg     *Config
-	manager *session.Manager
-	bridge  *session.LarkReplyBridge
+	mu        sync.Mutex
+	path      string
+	cfg       *Config
+	manager   *session.Manager
+	bridge    *session.LarkReplyBridge
+	autoStart func(bool) error
 }
 
 func (s *appConfigService) RuntimeConfig() httpapi.RuntimeConfig {
@@ -888,11 +929,23 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 	cfg.AgentCommand = selectedAgent.Command
 	cfg.DefaultWorkspaceDir = defaultWorkspaceDir
 	cfg.WorkspaceOptions = workspaces
+	cfg.AutoStartEnabled = req.AutoStartEnabled
 	reconnectLark := oldCfg.LarkAppID != cfg.LarkAppID || oldCfg.LarkAppSecret != cfg.LarkAppSecret
+	if oldCfg.AutoStartEnabled != cfg.AutoStartEnabled && s.autoStart != nil {
+		if err := s.autoStart(cfg.AutoStartEnabled); err != nil {
+			return httpapi.RuntimeConfig{}, err
+		}
+	}
 	if err := applyRuntimeConfig(cfg, s.manager, s.bridge, reconnectLark); err != nil {
+		if oldCfg.AutoStartEnabled != cfg.AutoStartEnabled && s.autoStart != nil {
+			_ = s.autoStart(oldCfg.AutoStartEnabled)
+		}
 		return httpapi.RuntimeConfig{}, err
 	}
 	if err := writeConfigFile(s.path, cfg); err != nil {
+		if oldCfg.AutoStartEnabled != cfg.AutoStartEnabled && s.autoStart != nil {
+			_ = s.autoStart(oldCfg.AutoStartEnabled)
+		}
 		return httpapi.RuntimeConfig{}, err
 	}
 	*s.cfg = cfg
@@ -987,6 +1040,7 @@ func applyRuntimeConfig(cfg Config, manager *session.Manager, bridge *session.La
 func runtimeConfigFromConfig(cfg Config) httpapi.RuntimeConfig {
 	cfg, _ = migrateAgentDefinitions(cfg)
 	return httpapi.RuntimeConfig{
+		AutoStartEnabled:                cfg.AutoStartEnabled,
 		FastWaitingTransitionMs:         cfg.FastWaitingTransitionMs,
 		ConservativeWaitingTransitionMs: cfg.ConservativeWaitingTransitionMs,
 		LarkAutoRefreshIntervalMs:       cfg.LarkAutoRefreshIntervalMs,

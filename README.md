@@ -42,6 +42,17 @@ go run ./cmd --config-dir /data/iris
 IRIS_CONFIG_DIR=/data/iris go run ./cmd
 ```
 
+查看或停止本机运行中的 Iris 服务：
+
+```sh
+iris status
+iris stop
+iris stop 8080
+iris stop all
+```
+
+同时运行多个服务时，直接执行 `iris stop` 会按端口显示选择列表。配置页默认开启登录后自动启动；关闭后不影响当前服务，只是不再于下次登录时启动。
+
 Iris 启动成功后会自动打开本机配置页。首次使用先进入独立的密码设置页，完成密码确认后才能进入配置台；之后在设置页配置飞书应用、开发者 open_id、工作目录和自定义快捷键。
 
 Iris 启动时会自动安装并维护 Codex `notify`、Claude Code `Stop` Hook，以及两者用于识别当前飞书群的 Skill，保留用户已有配置。安装包也会在安装完成后执行同样的配置；如当时没有写入权限，首次启动会自动重试。可手动执行 `iris --install-agent-hooks` 重新安装。

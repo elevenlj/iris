@@ -3,11 +3,15 @@ package main
 import (
 	"encoding/json"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/elevenlj/iris/internal/httpapi"
 	"github.com/elevenlj/iris/internal/session"
@@ -77,6 +81,16 @@ func TestParseStartupOptionsInstallAgentHooks(t *testing.T) {
 	}
 	if !opts.InstallAgentHooks {
 		t.Fatal("expected Agent hook installation mode")
+	}
+}
+
+func TestParseStartupOptionsNoOpen(t *testing.T) {
+	opts, err := parseStartupOptions([]string{"--no-open"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.NoOpen {
+		t.Fatal("expected browser auto-open to be disabled")
 	}
 }
 
@@ -169,6 +183,72 @@ func TestLoadConfigUsesCurrentDefaultsWhenFieldsMissing(t *testing.T) {
 	}
 	if !cfg.LarkNotifyMergeWrappedLines {
 		t.Fatalf("merge wrapped lines should default to true")
+	}
+	if !cfg.AutoStartEnabled {
+		t.Fatal("automatic startup should default to true")
+	}
+}
+
+func TestLoadExistingConfigDefaultsAutomaticStartupToEnabled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.local.json")
+	if err := os.WriteFile(path, []byte(`{"port":"9090"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg := loadConfig(path); !cfg.AutoStartEnabled {
+		t.Fatal("existing config without auto_start_enabled should default to enabled")
+	}
+}
+
+func TestSelectRuntimeRecordsSupportsPortAndAll(t *testing.T) {
+	records := []runtimeRecord{{Port: "8080"}, {Port: "9090"}}
+	selected, err := selectRuntimeRecords(records, "9090")
+	if err != nil || len(selected) != 1 || selected[0].Port != "9090" {
+		t.Fatalf("port selection = %#v, %v", selected, err)
+	}
+	selected, err = selectRuntimeRecords(records, "all")
+	if err != nil || len(selected) != 2 {
+		t.Fatalf("all selection = %#v, %v", selected, err)
+	}
+}
+
+func TestRuntimeRegistryDiscoversAndStopsExactInstance(t *testing.T) {
+	stopping := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(runtimeControlHeader) != "secret" {
+			http.NotFound(w, r)
+			return
+		}
+		if stopping {
+			http.Error(w, "stopping", http.StatusServiceUnavailable)
+			return
+		}
+		if r.Method == http.MethodDelete {
+			stopping = true
+			_, _ = w.Write([]byte(`{"stopping":true}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"instance_id":"instance-1"}`))
+	}))
+	defer server.Close()
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, port, err := net.SplitHostPort(parsed.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+	record := runtimeRecord{InstanceID: "instance-1", Token: "secret", Port: port, StartedAt: time.Now().UTC()}
+	if err := registerRuntimeRecord(dataDir, record); err != nil {
+		t.Fatal(err)
+	}
+	records, err := listActiveRuntimeRecords(dataDir)
+	if err != nil || len(records) != 1 || records[0].Port != port {
+		t.Fatalf("active records = %#v, %v", records, err)
+	}
+	if err := stopRuntime(records[0]); err != nil {
+		t.Fatal(err)
 	}
 }
 

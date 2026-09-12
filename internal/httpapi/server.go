@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -33,6 +35,11 @@ type Server struct {
 	larkConfigTester   LarkConfigTester
 	environmentChecker EnvironmentChecker
 	mux                *http.ServeMux
+	runtimeInstanceID  string
+	runtimeToken       string
+	runtimeVersion     string
+	runtimePID         int
+	runtimeStop        func()
 }
 
 func NewServer(manager *session.Manager, uploadsDir string, config ...ConfigService) *Server {
@@ -56,6 +63,14 @@ func NewServer(manager *session.Manager, uploadsDir string, config ...ConfigServ
 
 func (s *Server) Handler() http.Handler { return s.mux }
 
+func (s *Server) SetRuntimeControl(instanceID, token, version string, pid int, stop func()) {
+	s.runtimeInstanceID = instanceID
+	s.runtimeToken = token
+	s.runtimeVersion = version
+	s.runtimePID = pid
+	s.runtimeStop = stop
+}
+
 func (s *Server) routes() {
 	s.mux.HandleFunc("/", s.handleStatic)
 	s.mux.HandleFunc("/api/sessions", s.handleSessions)
@@ -70,6 +85,32 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/lark-app-registration/qr", s.handleLarkAppRegistrationQR)
 	s.mux.HandleFunc("/api/settings/security/", s.handleSettingsSecurity)
 	s.mux.HandleFunc("/api/settings/security", s.handleSettingsSecurity)
+	s.mux.HandleFunc("/api/runtime", s.handleRuntime)
+}
+
+func (s *Server) handleRuntime(w http.ResponseWriter, r *http.Request) {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil || !net.ParseIP(host).IsLoopback() || s.runtimeToken == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Iris-Control-Token")), []byte(s.runtimeToken)) != 1 {
+		http.NotFound(w, r)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]any{
+			"instance_id": s.runtimeInstanceID,
+			"version":     s.runtimeVersion,
+			"pid":         s.runtimePID,
+		}, nil)
+	case http.MethodDelete:
+		if s.runtimeStop == nil {
+			http.NotFound(w, r)
+			return
+		}
+		s.runtimeStop()
+		writeJSON(w, http.StatusOK, map[string]bool{"stopping": true}, nil)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) handleEnvironmentCheck(w http.ResponseWriter, r *http.Request) {

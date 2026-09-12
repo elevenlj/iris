@@ -84,6 +84,7 @@
         <nav class="config-tabs" aria-label="配置分组">
           <button class="config-tab active" type="button" data-config-target="config-lark">飞书</button>
           <button class="config-tab" type="button" data-config-target="config-session">Agent</button>
+          <button class="config-tab" type="button" data-config-target="config-runtime">服务</button>
           <button class="config-tab" type="button" data-config-target="config-security">安全</button>
           <button class="config-tab" type="button" data-config-target="config-workspaces">工作目录</button>
           <button class="config-tab hidden" hidden type="button" data-config-target="config-notify">等待通知</button>
@@ -118,6 +119,16 @@
               </div>
               <button id="environment-check-start" type="button">开始检测</button>
               <div id="environment-check-result" class="environment-check-result" aria-live="polite"></div>
+            </div>
+          </section>
+          <section id="config-runtime" class="config-section config-panel">
+            <h2>服务</h2>
+            <div class="environment-check">
+              <div>
+                <strong>登录后自动启动</strong>
+                <p>默认开启。关闭后不影响当前运行的 Iris，下次登录系统时不再自动启动。</p>
+              </div>
+              <label class="config-check"><input id="cfg-auto-start-enabled" type="checkbox"><span>自动启动 Iris</span></label>
             </div>
           </section>
           <section id="config-session" class="config-section config-panel">

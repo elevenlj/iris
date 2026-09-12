@@ -256,6 +256,7 @@ const ids = [
   "cfg-lark-max-lines",
   "cfg-lark-fallback-tail-lines",
   "cfg-lark-merge-wrapped-lines",
+  "cfg-auto-start-enabled",
   "cfg-lark-app-id",
   "cfg-lark-app-secret",
   "cfg-lark-receive-id",
@@ -308,13 +309,13 @@ const helpTabs = ["help-start", "help-terminal"].map((targetID, index) => {
   tab.className = index === 0 ? "help-tab active" : "help-tab";
   return tab;
 });
-const configTabs = ["config-lark", "config-session", "config-security", "config-workspaces"].map((targetID, index) => {
+const configTabs = ["config-lark", "config-session", "config-runtime", "config-security", "config-workspaces"].map((targetID, index) => {
   const tab = new FakeElement("", "button");
   tab.dataset.configTarget = targetID;
   tab.className = index === 0 ? "config-tab active" : "config-tab";
   return tab;
 });
-const configPanels = ["config-lark", "config-session", "config-security", "config-workspaces"].map((id, index) => {
+const configPanels = ["config-lark", "config-session", "config-runtime", "config-security", "config-workspaces"].map((id, index) => {
   const panel = new FakeElement(id, "section");
   panel.className = index === 0 ? "config-panel active" : "config-panel";
   return panel;
@@ -447,6 +448,7 @@ const context = {
     }
     if (path === "/api/config" && !options.method) {
       return jsonResponse({
+        auto_start_enabled: true,
         fast_waiting_transition_ms: 300,
         conservative_waiting_transition_ms: 700,
         lark_auto_refresh_interval_ms: 5000,
@@ -580,6 +582,7 @@ assert.equal(app.standardTerminal.fontSize, 13);
 assert.equal(app.standardTerminal.lineHeight, 1.2);
 
 await app.loadConfig();
+assert.equal(elements["cfg-auto-start-enabled"].checked, true, "automatic startup should render enabled by default");
 await app.maybeShowOnboarding();
 assert.equal(elements["onboarding-dialog"].open, true, "first visit should require an Agent choice");
 elements["onboarding-agent-preset"].value = "codex";
@@ -602,7 +605,8 @@ assert.ok(configTabs[0].className.includes("active"), "previous should move back
 elements["config-next"].onclick();
 elements["config-next"].onclick();
 elements["config-next"].onclick();
-assert.ok(configTabs[3].className.includes("active"), "next should stop at the last config tab");
+elements["config-next"].onclick();
+assert.ok(configTabs[4].className.includes("active"), "next should stop at the last config tab");
 assert.equal(elements["config-next"].disabled, true, "next should be disabled on last config tab");
 await app.openConfigDialog("config-security");
 elements["settings-current-password"].value = "old-password";
@@ -1439,6 +1443,7 @@ assert.equal(patchedConfig.headless_snapshot_timeout_ms, 15000);
 assert.equal(patchedConfig.lark_notify_max_lines, 300);
 assert.equal(patchedConfig.lark_notify_fallback_tail_lines, 100);
 assert.equal(patchedConfig.lark_notify_merge_wrapped_lines, true);
+assert.equal(patchedConfig.auto_start_enabled, true);
 assert.equal(patchedConfig.lark_app_id, "new-app");
 assert.equal(patchedConfig.lark_mention_enabled, false);
 assert.equal(patchedConfig.lark_session_chat_prefix, "DEV ·");

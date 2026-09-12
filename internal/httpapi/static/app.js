@@ -36,7 +36,7 @@ const STANDARD_TERMINAL_LINE_HEIGHT = 1.2;
 const SNAPSHOT_CONTINUITY_VERSION = 2;
 const DEFAULT_SESSION_NAME = "默认会话";
 const DEFAULT_AGENT_PRESET_CODE = "999999";
-const CONFIG_TAB_IDS = ["config-lark", "config-session", "config-security", "config-workspaces"];
+const CONFIG_TAB_IDS = ["config-lark", "config-session", "config-runtime", "config-security", "config-workspaces"];
 const DROP_RULE_KINDS = [
   ["line", "行过滤"],
   ["block_head", "块首行过滤"],
@@ -951,6 +951,7 @@ function renderConfig() {
   $("cfg-lark-max-lines").value = cfg.lark_notify_max_lines;
   $("cfg-lark-fallback-tail-lines").value = cfg.lark_notify_fallback_tail_lines || 100;
   $("cfg-lark-merge-wrapped-lines").checked = Boolean(cfg.lark_notify_merge_wrapped_lines);
+  $("cfg-auto-start-enabled").checked = Boolean(cfg.auto_start_enabled);
   $("cfg-lark-app-id").value = cfg.lark_app_id || "";
   $("cfg-lark-app-secret").value = cfg.lark_app_secret || "";
   $("cfg-lark-receive-id").value = cfg.lark_notify_receive_id || "";
@@ -1091,6 +1092,7 @@ function readConfigForm() {
   const defaultAgent = agents.find((agent) => agent.id === defaultAgentID);
   if (!defaultAgent || !defaultAgent.command) throw new Error("必须配置一个 Agent");
   return {
+    auto_start_enabled: $("cfg-auto-start-enabled").checked,
     lark_app_id: $("cfg-lark-app-id").value.trim(),
     lark_app_secret: $("cfg-lark-app-secret").value,
     lark_notify_receive_id: $("cfg-lark-receive-id").value.trim(),
