@@ -160,7 +160,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		if note.StartupInputEnabled && !note.StartupComplete && !note.Disabled {
 			elements = append(elements, larkStartupInputFormElement(note.SessionID))
 		}
-		if !note.StartupComplete && !note.Disabled {
+		if !note.StartupComplete && !note.Disabled && !note.DeveloperModeEnabled {
 			elements = append(elements, larkFlowShortcutActionElement(larkRestartAgentButtonColumn(note.SessionID)))
 		}
 		if note.StartupComplete && !note.StartupFailed {
@@ -170,12 +170,12 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 			if workspaceElement := larkWorkspaceSelectElement(note.SessionID, note.WorkspaceOptions, note.AgentContext); workspaceElement != nil {
 				elements = append(elements, workspaceElement)
 			}
-			if !note.Disabled {
-				elements = append(elements, larkShortcutActionElements(note.SessionID, note.UpdateNo, note.MentionModeEnabled, note.AssistantModeEnabled, note.DeveloperModeEnabled, note.TerminalURL)...)
-				if shortcuts := normalizeLarkCustomShortcuts(customShortcuts); note.DeveloperModeEnabled && len(shortcuts) > 0 {
-					elements = append(elements, map[string]any{"tag": "hr"})
-					elements = append(elements, larkCustomShortcutActionElements(note.SessionID, shortcuts)...)
-				}
+		}
+		if !note.Disabled {
+			elements = append(elements, larkShortcutActionElements(note.SessionID, note.UpdateNo, note.MentionModeEnabled, note.AssistantModeEnabled, note.DeveloperModeEnabled, note.TerminalURL)...)
+			if shortcuts := normalizeLarkCustomShortcuts(customShortcuts); note.DeveloperModeEnabled && len(shortcuts) > 0 {
+				elements = append(elements, map[string]any{"tag": "hr"})
+				elements = append(elements, larkCustomShortcutActionElements(note.SessionID, shortcuts)...)
 			}
 		}
 	} else {

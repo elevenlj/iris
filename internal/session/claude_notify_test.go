@@ -184,7 +184,7 @@ func TestCompleteAgentTurnSupportsNativeAiden(t *testing.T) {
 			RecoveryKey:            "hook-token",
 			LastMode:               SessionModeAgent,
 			LastAgentKind:          "aiden",
-			LastAgentResumeCommand: "aiden --continue --permission-mode agentFull",
+			LastAgentResumeCommand: "aiden --continue --permission-mode bypassPermissions",
 		},
 	}
 	manager.sessions[rt.session.ID] = rt

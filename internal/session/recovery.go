@@ -23,6 +23,49 @@ func newRecoveryKey() string {
 	return strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
 }
 
+func newAgentSessionID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	key := hex.EncodeToString(b[:])
+	return key[:8] + "-" + key[8:12] + "-" + key[12:16] + "-" + key[16:20] + "-" + key[20:]
+}
+
+func newAidenAgentCommands(command string) (string, string) {
+	sessionID := newAgentSessionID()
+	argv := shellFields(command)
+	envEnd := 0
+	for envEnd < len(argv) && isShellEnvAssignment(argv[envEnd]) {
+		envEnd++
+	}
+	if sessionID == "" || envEnd >= len(argv) || shellCommandBase(argv[envEnd]) != "aiden" || (envEnd+1 < len(argv) && argv[envEnd+1] == "x") {
+		return command, ""
+	}
+	argv = append(argv[:envEnd+1], append([]string{"--session-id", sessionID}, argv[envEnd+1:]...)...)
+	start := joinShellCommand(argv[envEnd:])
+	if envEnd > 0 {
+		start = strings.TrimSpace(joinEnvAssignments(argv[:envEnd]) + " " + start)
+	}
+	resume, _ := pinAidenResumeCommand(start, sessionID)
+	return start, resume
+}
+
+func normalizeAidenRecoveryCommands(sess Session) Session {
+	if !strings.EqualFold(strings.TrimSpace(sess.LastAgentID), "aiden") && !strings.EqualFold(strings.TrimSpace(sess.LastAgentKind), "aiden") {
+		return sess
+	}
+	sess.LastAgentStartCommand = strings.ReplaceAll(sess.LastAgentStartCommand, "agentFull", "bypassPermissions")
+	sess.LastAgentResumeCommand = strings.ReplaceAll(sess.LastAgentResumeCommand, "agentFull", "bypassPermissions")
+	if claudeResumeSessionID(sess.LastAgentResumeCommand) != "" {
+		return sess
+	}
+	sess.LastAgentStartCommand, sess.LastAgentResumeCommand = newAidenAgentCommands(AidenAgentCommand)
+	return sess
+}
+
 func (rt *RuntimeSession) MarkAgentExitActivity() {
 	if rt == nil {
 		return
@@ -446,9 +489,29 @@ func resumableAgentInfo(kind string, command, args []string) (agentInfo, bool) {
 	if hasResumeLikeArg(args) {
 		return agentInfo{Kind: kind, ResumeCommand: joinShellCommand(append(append([]string(nil), command...), args...))}, true
 	}
+	if sessionID := agentStartSessionID(args); sessionID != "" {
+		start := joinShellCommand(append(append([]string(nil), command...), args...))
+		if resume, ok := pinResumableAgentCommand(start, sessionID, kind); ok {
+			return agentInfo{Kind: kind, ResumeCommand: resume}, true
+		}
+	}
 	flags := preserveCLIFlags(args)
 	resume := append(append(append([]string(nil), command...), "--continue"), flags...)
 	return agentInfo{Kind: kind, ResumeCommand: joinShellCommand(resume)}, true
+}
+
+func agentStartSessionID(args []string) string {
+	for index, arg := range args {
+		if arg == "--session-id" && index+1 < len(args) && validCodexThreadID(args[index+1]) {
+			return args[index+1]
+		}
+		if strings.HasPrefix(arg, "--session-id=") {
+			if id := strings.TrimPrefix(arg, "--session-id="); validCodexThreadID(id) {
+				return id
+			}
+		}
+	}
+	return ""
 }
 
 func genericAgentInfo(kind, command string, args []string) (agentInfo, bool) {
@@ -482,7 +545,7 @@ func preserveCLIFlags(args []string) []string {
 
 func cliFlagTakesValue(arg string) bool {
 	switch arg {
-	case "-c", "--config", "-i", "--image", "-m", "--model", "-p", "--print", "--profile", "-s", "--sandbox", "-C", "--cd", "--add-dir", "-a", "--agent", "--ask-for-approval", "--local-provider", "--remote", "--remote-auth-token-env", "--permission-mode", "--model-reasoning-effort", "--output-style", "--settings", "--config-home", "--env":
+	case "-c", "--config", "-i", "--image", "-m", "--model", "-p", "--print", "--profile", "-s", "--sandbox", "-C", "--cd", "--add-dir", "-a", "--agent", "--ask-for-approval", "--local-provider", "--remote", "--remote-auth-token-env", "--permission-mode", "--model-reasoning-effort", "--output-style", "--settings", "--config-home", "--env", "--session-id":
 		return true
 	default:
 		return false
@@ -837,6 +900,19 @@ func pinResumableAgentCommand(command, sessionID, kind string) (string, bool) {
 				index++
 			}
 		case strings.HasPrefix(arg, "--resume="):
+			if !resumeSet {
+				args = append(args, "--resume", sessionID)
+				resumeSet = true
+			}
+		case arg == "--session-id":
+			if !resumeSet {
+				args = append(args, "--resume", sessionID)
+				resumeSet = true
+			}
+			if index+1 < len(argv) {
+				index++
+			}
+		case strings.HasPrefix(arg, "--session-id="):
 			if !resumeSet {
 				args = append(args, "--resume", sessionID)
 				resumeSet = true

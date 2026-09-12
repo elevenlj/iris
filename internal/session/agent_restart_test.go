@@ -297,14 +297,42 @@ func TestRestartAgentStartsFreshAidenSessions(t *testing.T) {
 			<-terminal.started
 			close(terminal.release)
 			waitForAgentRestartWrites(t, terminal, 1)
-			if writes := terminal.snapshotWrites(); len(writes) != 1 || writes[0] != test.command+"\r" {
+			writes := terminal.snapshotWrites()
+			if len(writes) != 1 {
+				t.Fatalf("restart writes = %#v", writes)
+			}
+			if test.agentID == "aiden" {
+				if !strings.Contains(writes[0], "--session-id") || !strings.Contains(writes[0], "bypassPermissions") || strings.Contains(writes[0], "--continue") {
+					t.Fatalf("Aiden restart command = %q", writes[0])
+				}
+			} else if writes[0] != test.command+"\r" {
 				t.Fatalf("restart writes = %#v", writes)
 			}
 			got := rt.Snapshot()
-			if got.LastAgentKind != test.runtimeKind || !strings.Contains(got.LastAgentResumeCommand, "--continue") {
+			if got.LastAgentKind != test.runtimeKind || (test.agentID == "aiden" && (!strings.Contains(got.LastAgentResumeCommand, "--resume") || strings.Contains(got.LastAgentResumeCommand, "--continue"))) || (test.agentID != "aiden" && !strings.Contains(got.LastAgentResumeCommand, "--continue")) {
 				t.Fatalf("restart state = %#v", got)
 			}
 		})
+	}
+}
+
+func TestRestartAgentResumesExactAidenSession(t *testing.T) {
+	terminal := newControlledForegroundTerminal()
+	sessionID := "019f5153-6e7f-7742-9f61-3ffe1530d61c"
+	resumeCommand := "aiden --resume " + sessionID + " --permission-mode bypassPermissions"
+	rt := &RuntimeSession{
+		terminal: terminal,
+		session: Session{ID: "sess-aiden-exact", Live: true, LastMode: SessionModeAgent, LastAgentID: "aiden", LastAgentKind: "aiden",
+			LastAgentStartCommand: AidenAgentCommand, LastAgentResumeCommand: resumeCommand},
+	}
+	if err := rt.RestartAgent(); err != nil {
+		t.Fatal(err)
+	}
+	<-terminal.started
+	close(terminal.release)
+	waitForAgentRestartWrites(t, terminal, 1)
+	if got := terminal.snapshotWrites()[0]; got != resumeCommand+"\r" {
+		t.Fatalf("restart command = %q", got)
 	}
 }
 

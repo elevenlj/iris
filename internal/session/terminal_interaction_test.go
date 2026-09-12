@@ -433,16 +433,18 @@ func TestLarkNotificationCardRendersStartupFallbackAsOrdinaryCard(t *testing.T) 
 
 func TestLarkNotificationCardRendersDedicatedStartupInputForm(t *testing.T) {
 	content, err := larkNotificationCardContent(WaitingNotification{
-		SessionID:           "sess-startup",
-		Name:                "Iris",
-		Content:             "Choose working directory\n1. Session\n2. Current",
-		Startup:             true,
-		StartupInputEnabled: true,
+		SessionID:            "sess-startup",
+		Name:                 "Iris",
+		Content:              "Choose working directory\n1. Session\n2. Current",
+		Startup:              true,
+		StartupInputEnabled:  true,
+		DeveloperModeEnabled: true,
+		TerminalURL:          "http://127.0.0.1:8080/?session=sess-startup",
 	}, "ou_1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{`"content":"Iris（启动中）"`, `"tag":"form"`, `"tag":"input"`, `"name":"iris_startup_input"`, `"form_action_type":"submit"`, `"iris_action":"startup_submit"`, `"content":"提交"`, `"iris_action":"restart_agent"`, `"content":"重启 Agent"`} {
+	for _, expected := range []string{`"content":"Iris（启动中）"`, `"tag":"form"`, `"tag":"input"`, `"name":"iris_startup_input"`, `"form_action_type":"submit"`, `"iris_action":"startup_submit"`, `"content":"提交"`, `"iris_action":"refresh"`, `"iris_action":"restart_agent"`, `"content":"Ctrl-C"`, `"content":"打开终端"`} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("startup card missing %s: %s", expected, content)
 		}

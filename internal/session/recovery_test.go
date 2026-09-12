@@ -96,7 +96,7 @@ func TestConfiguredAidenCommandsUseUnderlyingCompletionKind(t *testing.T) {
 		wantKind   string
 		wantResume string
 	}{
-		{command: "aiden --permission-mode agentFull", wantKind: "aiden", wantResume: "aiden --continue --permission-mode agentFull"},
+		{command: AidenAgentCommand, wantKind: "aiden", wantResume: "aiden --continue --permission-mode bypassPermissions"},
 		{command: "aiden x codex --dangerously-bypass-approvals-and-sandbox", wantKind: "codex", wantResume: "aiden x codex resume --last"},
 		{command: "aiden x claude --dangerously-skip-permissions", wantKind: "claude", wantResume: "aiden x claude --continue --dangerously-skip-permissions"},
 	}
@@ -313,9 +313,9 @@ func TestPinClaudeResumeCommand(t *testing.T) {
 
 func TestPinAidenResumeCommand(t *testing.T) {
 	sessionID := "019f5153-6e7f-7742-9f61-3ffe1530d61c"
-	got, ok := pinAidenResumeCommand("aiden --continue --permission-mode agentFull", sessionID)
+	got, ok := pinAidenResumeCommand("aiden --session-id "+sessionID+" --permission-mode bypassPermissions", sessionID)
 	args := shellFields(got)
-	if !ok || !containsAdjacentArgs(args, "--resume", sessionID) || slicesContain(args, "--continue") || strings.Join(args[:1], " ") != "aiden" {
+	if !ok || !containsAdjacentArgs(args, "--resume", sessionID) || slicesContain(args, "--continue") || slicesContain(args, "--session-id") || strings.Join(args[:1], " ") != "aiden" {
 		t.Fatalf("pinAidenResumeCommand() = %q, %v", got, ok)
 	}
 }

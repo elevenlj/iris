@@ -141,7 +141,12 @@ func TestCreateSessionStartsAidenBuiltins(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if writes := launcher.terminals[0].writes(); !strings.Contains(writes, test.command+"\r") {
+			writes := launcher.terminals[0].writes()
+			if test.kind == "aiden" {
+				if !strings.Contains(writes, "--session-id") || !strings.Contains(writes, "bypassPermissions") || strings.Contains(writes, "--continue") {
+					t.Fatalf("Aiden startup writes = %q", writes)
+				}
+			} else if !strings.Contains(writes, test.command+"\r") {
 				t.Fatalf("startup writes = %q, want %q", writes, test.command)
 			}
 			if sess.LastAgentKind != test.runtimeKind || sess.LastAgentID != test.kind {

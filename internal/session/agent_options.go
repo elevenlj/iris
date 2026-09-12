@@ -7,7 +7,7 @@ import (
 const (
 	CodexAgentCommand       = "codex --dangerously-bypass-approvals-and-sandbox"
 	ClaudeAgentCommand      = "claude --dangerously-skip-permissions"
-	AidenAgentCommand       = "aiden --permission-mode agentFull"
+	AidenAgentCommand       = "aiden --permission-mode bypassPermissions"
 	AidenCodexAgentCommand  = "aiden x codex --dangerously-bypass-approvals-and-sandbox"
 	AidenClaudeAgentCommand = "aiden x claude --dangerously-skip-permissions"
 )

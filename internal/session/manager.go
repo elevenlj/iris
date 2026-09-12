@@ -497,6 +497,9 @@ func (m *Manager) CreateSession(ctx context.Context, name string) (Session, erro
 	rt.runRecoveryEnvironmentSetup()
 	rt.runPreStartCommand()
 	if agent.Command != "" {
+		if agent.ID == "aiden" || agent.Kind == "aiden" {
+			agent.Command, _ = newAidenAgentCommands(agent.Command)
+		}
 		workspaceShellPath := m.defaultSessionWorkspaceShellPath()
 		_, _ = rt.terminal.Write([]byte("mkdir -p " + workspaceShellPath + "\r"))
 		rt.RecordShellCommandForRecovery("cd " + shellQuote(workspaceDir))
@@ -722,6 +725,11 @@ func (m *Manager) RecoverRuntime(ctx context.Context, id string) (*RuntimeSessio
 		log.Printf("codex recovery migration skipped session=%s: %v", sess.ID, err)
 	} else {
 		sess = migrated
+	}
+	hadExactAidenResume := claudeResumeSessionID(sess.LastAgentResumeCommand) != ""
+	sess = normalizeAidenRecoveryCommands(sess)
+	if (sess.LastAgentID == "aiden" || sess.LastAgentKind == "aiden") && !hadExactAidenResume {
+		sess.LastAgentResumeCommand = sess.LastAgentStartCommand
 	}
 	handle, err := m.launcher.Launch(context.Background())
 	if err != nil {
@@ -1546,6 +1554,12 @@ func (rt *RuntimeSession) restartAgent(options agentRestartOptions) error {
 	startCommand := strings.TrimSpace(rt.session.LastAgentStartCommand)
 	agentKind := strings.TrimSpace(rt.session.LastAgentKind)
 	agentID := strings.TrimSpace(rt.session.LastAgentID)
+	isAiden := agentID == "aiden" || agentKind == "aiden"
+	hadExactAidenResume := claudeResumeSessionID(rt.session.LastAgentResumeCommand) != ""
+	if isAiden {
+		rt.session = normalizeAidenRecoveryCommands(rt.session)
+		startCommand = strings.TrimSpace(rt.session.LastAgentStartCommand)
+	}
 	command := startCommand
 	if command == "" && rt.manager != nil {
 		agent, _ := rt.manager.AgentConfig()
@@ -1559,7 +1573,16 @@ func (rt *RuntimeSession) restartAgent(options agentRestartOptions) error {
 		return errors.New("当前会话没有可用的 Agent 启动命令")
 	}
 	resumeCommand := command
-	if info, ok := agentLaunchInfo(shellFields(command)); ok {
+	if isAiden {
+		resumeCommand = strings.TrimSpace(rt.session.LastAgentResumeCommand)
+	}
+	if isAiden && hadExactAidenResume && resumeCommand != "" {
+		command = resumeCommand
+	}
+	if resumeCommand == "" {
+		resumeCommand = command
+	}
+	if info, ok := agentLaunchInfo(shellFields(command)); ok && (!isAiden || strings.TrimSpace(resumeCommand) == strings.TrimSpace(command)) {
 		resumeCommand = info.ResumeCommand
 	}
 	rt.agentRestartPending = true
@@ -1616,7 +1639,11 @@ func (rt *RuntimeSession) switchAgent(optionID string, createStartupNotification
 	if followUpPrompt != "" {
 		followUp = &agentRestartFollowUp{prompt: followUpPrompt, mentionOpenID: startupMentionOpenID}
 	}
-	if err := rt.restartAgentAfterConfirmedExit(terminal, option.Command, option.ID, option.Kind, option.Command, "", followUp); err != nil {
+	command := option.Command
+	if option.ID == "aiden" || option.Kind == "aiden" {
+		command, _ = newAidenAgentCommands(command)
+	}
+	if err := rt.restartAgentAfterConfirmedExit(terminal, command, option.ID, option.Kind, command, "", followUp); err != nil {
 		return AgentOption{}, err
 	}
 	return option, nil
@@ -3275,6 +3302,9 @@ func (rt *RuntimeSession) NotifyInputRunningOnMessage(messageID string) {
 }
 
 func (rt *RuntimeSession) RefreshNotificationMessage(messageID string, preserveUpdateNo ...int) error {
+	if handled, err := rt.refreshStartupNotification(messageID, true, preserveUpdateNo...); handled {
+		return err
+	}
 	if err := rt.refreshNotificationMessage(messageID, true, false, preserveUpdateNo...); err != nil {
 		return err
 	}
@@ -3283,6 +3313,9 @@ func (rt *RuntimeSession) RefreshNotificationMessage(messageID string, preserveU
 }
 
 func (rt *RuntimeSession) RefreshNotificationControls(messageID string, preserveUpdateNo ...int) error {
+	if handled, err := rt.refreshStartupNotification(messageID, false, preserveUpdateNo...); handled {
+		return err
+	}
 	rt.mu.Lock()
 	preserveContent := strings.TrimSpace(rt.lastNotifiedContent) != ""
 	rt.mu.Unlock()
@@ -3290,7 +3323,68 @@ func (rt *RuntimeSession) RefreshNotificationControls(messageID string, preserve
 }
 
 func (rt *RuntimeSession) RefreshNotificationControlsPreservingContent(messageID string, preserveUpdateNo ...int) error {
+	if handled, err := rt.refreshStartupNotification(messageID, false, preserveUpdateNo...); handled {
+		return err
+	}
 	return rt.refreshNotificationMessage(messageID, true, true, preserveUpdateNo...)
+}
+
+func (rt *RuntimeSession) refreshStartupNotification(messageID string, refreshContent bool, preserveUpdateNo ...int) (bool, error) {
+	messageID = strings.TrimSpace(messageID)
+	rt.mu.Lock()
+	active := rt.startupNotifyMode == startupNotifyDiscard && messageID != "" && messageID == rt.startupNotificationMessageID &&
+		strings.TrimSpace(rt.startupNotificationContent) != StartupCompletePlaceholder && !rt.notificationMessageFrozenLocked(messageID)
+	rt.mu.Unlock()
+	if !active {
+		return false, nil
+	}
+	if refreshContent {
+		rt.requestFreshSnapshot(800*time.Millisecond, "startup_refresh")
+	}
+	rt.mu.Lock()
+	if rt.startupNotifyMode != startupNotifyDiscard || messageID != rt.startupNotificationMessageID || rt.notificationMessageFrozenLocked(messageID) {
+		rt.mu.Unlock()
+		return true, errors.New("notification message is frozen")
+	}
+	content := rt.startupNotificationContent
+	if refreshContent {
+		if fresh := strings.TrimSpace(pickLarkStartupFallbackContent(rt.visibleSnapshot)); fresh != "" {
+			content = fresh
+		}
+	}
+	updateNo := rt.startupNotificationUpdateNo + 1
+	if len(preserveUpdateNo) > 0 && preserveUpdateNo[0] > 0 {
+		updateNo = preserveUpdateNo[0]
+	}
+	note := WaitingNotification{
+		SessionID:           rt.session.ID,
+		Name:                rt.session.Name,
+		Content:             content,
+		MessageID:           messageID,
+		ChatID:              rt.session.LarkChatID,
+		MentionOpenID:       rt.startupNotificationMentionOpenID,
+		UpdateNo:            updateNo,
+		SuppressUpdateTip:   true,
+		Startup:             true,
+		StartupInputEnabled: true,
+		SnapshotSource:      "startup:refresh",
+	}
+	rt.mu.Unlock()
+
+	rt.notificationPatchMu.Lock()
+	result, err := rt.notifyWaitingWithRetry(note)
+	rt.notificationPatchMu.Unlock()
+	if err != nil {
+		return true, err
+	}
+	rt.mu.Lock()
+	rt.startupNotificationContent = note.Content
+	rt.startupNotificationHash = notifyContentHash(note.Content)
+	if result.Updated {
+		rt.startupNotificationUpdateNo = note.UpdateNo
+	}
+	rt.mu.Unlock()
+	return true, nil
 }
 
 func (rt *RuntimeSession) AutoRefreshNotificationMessage(messageID string, preserveUpdateNo ...int) error {

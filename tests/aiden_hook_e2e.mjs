@@ -38,13 +38,11 @@ try {
     server.listen(0, "127.0.0.1", resolve);
   });
   const address = server.address();
-  const settingsPath = path.join(tmp, "settings.json");
   const settings = JSON.stringify({
     hooks: {
       Stop: [{ hooks: [{ type: "command", command: `${shellQuote(iris)} --claude-stop`, timeout: 5 }] }],
     },
   });
-  await fs.writeFile(settingsPath, settings);
   const claudeHome = path.join(tmp, "claude_home");
   await fs.mkdir(claudeHome);
   await fs.writeFile(path.join(claudeHome, "settings.json"), settings);
@@ -56,11 +54,12 @@ try {
   }
 
   const scenarios = [
-    { mode: "native", name: "Aiden", prefix: [], flags: ["--permission-mode", "agentFull"] },
+    { mode: "native", name: "Aiden", prefix: [], flags: ["--permission-mode", "bypassPermissions"] },
     { mode: "codex", name: "Aiden X Codex", prefix: ["x", "codex", "--model", process.env.AIDEN_CODEX_MODEL || "gpt-5.6-sol"], flags: ["--dangerously-bypass-approvals-and-sandbox"] },
     { mode: "claude", name: "Aiden X Claude Code", prefix: ["x", "claude"], flags: ["--dangerously-skip-permissions"] },
   ].filter((scenario) => !process.env.AIDEN_E2E_MODE || scenario.mode === process.env.AIDEN_E2E_MODE);
   for (const scenario of scenarios) {
+    const agentSessionID = crypto.randomUUID();
     const sessionKey = scenario.name.toLowerCase().replaceAll(" ", "-");
     const secret = `IRIS_${sessionKey.replaceAll("-", "_")}_SECRET`;
     const startMarker = `IRIS_${sessionKey.replaceAll("-", "_")}_START_OK`;
@@ -70,14 +69,14 @@ try {
       IRIS_API_URL: `http://127.0.0.1:${address.port}`,
       IRIS_SESSION_ID: sessionKey,
       IRIS_SESSION_TOKEN: `${sessionKey}-token`,
-      ...(scenario.mode === "claude" ? { CLAUDE_CONFIG_DIR: claudeHome } : {}),
+      ...(scenario.mode === "codex" ? {} : { CLAUDE_CONFIG_DIR: claudeHome }),
     };
 
     const startHook = waitForHook(sessionKey);
     const start = await run(aiden, scenario.mode === "codex" ? [
       ...scenario.prefix, "exec", ...scenario.flags, `记住暗号 ${secret}，只回复 ${startMarker}。`,
     ] : [
-      ...scenario.prefix, "--print", ...(scenario.mode === "native" ? ["--settings", settingsPath] : []),
+      ...scenario.prefix, "--print", ...(scenario.mode === "native" ? ["--session-id", agentSessionID] : []),
       ...scenario.flags, `记住暗号 ${secret}，只回复 ${startMarker}。`,
     ], env);
     assert.equal(start.code, 0, `${scenario.name} start failed\n${start.stderr}`);
@@ -87,6 +86,7 @@ try {
     else assert.equal(firstPayload.hook_event_name, "Stop");
     const firstSessionID = firstPayload.session_id || firstPayload["thread-id"];
     assert.ok(firstSessionID, JSON.stringify(firstPayload));
+    if (scenario.mode === "native") assert.equal(firstSessionID, agentSessionID);
     if (scenario.prefix.length > 0) assert.ok((firstPayload.last_assistant_message || firstPayload["last-assistant-message"]).includes(startMarker));
 
     const resumeHook = waitForHook(sessionKey);
@@ -95,7 +95,6 @@ try {
       `回复上一轮记住的暗号，并追加 ${resumeMarker}。`,
     ] : [
       ...scenario.prefix, "--print", "--resume", firstSessionID,
-      ...(scenario.mode === "native" ? ["--settings", settingsPath] : []),
       ...scenario.flags, `回复上一轮记住的暗号，并追加 ${resumeMarker}。`,
     ], env);
     assert.equal(resumed.code, 0, `${scenario.name} resume failed\n${resumed.stderr}`);

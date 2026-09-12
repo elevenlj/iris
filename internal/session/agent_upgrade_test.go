@@ -36,7 +36,7 @@ func TestStartupAgentUpgradeKindsIncludesSupportedBuiltinsAndCustomCommands(t *t
 		{Live: true, LastMode: SessionModeAgent, LastAgentKind: "custom", LastAgentStartCommand: "CLAUDE_CONFIG_DIR=/tmp/claude claude --continue"},
 		{Live: false, LastMode: SessionModeAgent, LastAgentKind: "claude", LastAgentStartCommand: "claude"},
 		{Live: true, LastMode: SessionModeAgent, LastAgentKind: "custom", LastAgentStartCommand: "other-agent"},
-		{Live: true, LastMode: SessionModeAgent, LastAgentKind: "aiden", LastAgentStartCommand: "aiden --permission-mode agentFull"},
+		{Live: true, LastMode: SessionModeAgent, LastAgentKind: "aiden", LastAgentStartCommand: AidenAgentCommand},
 	}
 	got := startupAgentUpgradeKinds(sessions, AgentConfig{Kind: "custom", Command: "other-agent"})
 	if want := []string{"aiden", "claude", "codex"}; !reflect.DeepEqual(got, want) {
