@@ -56,7 +56,7 @@ async function main() {
     await cdp.send("Runtime.enable");
     await cdp.send("Page.navigate", { url: `http://localhost:${port}` });
     await waitFor(() => evalExpr("document.readyState === 'complete' || document.readyState === 'interactive'"));
-    await waitFor(() => evalExpr("Boolean(window.irisApp && document.querySelector('#session-name'))"));
+    await waitFor(() => evalExpr("Boolean(window.irisApp && document.querySelector('#terminal'))"));
 
     await initializeIrisForCodexE2E();
 
@@ -168,11 +168,14 @@ async function runCodexPromptNotificationContentE2E() {
 }
 
 async function createSession(name) {
-  await evalExpr(`document.querySelector('#session-name').value = ${JSON.stringify(name)}; document.querySelector('#new-session').requestSubmit(); true`);
+  const response = await fetch(`http://localhost:${port}/api/sessions`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({name})});
+  assert(response.ok, "test session should be created through the API");
+  const session = await response.json();
+  await cdp.send("Page.navigate", {url: `http://localhost:${port}/?session=${encodeURIComponent(session.id)}`});
 }
 
 async function submitComposer(value) {
-  await evalExpr(`document.querySelector('#composer-input').value = ${JSON.stringify(value)}; document.querySelector('#composer button').click(); true`);
+  await evalExpr(`window.irisApp.queueTerminalInput(${JSON.stringify(value + "\r")}).then(() => true)`);
 }
 
 async function waitForTerminalSnapshot(text, timeoutMs = 10000) {

@@ -54,24 +54,16 @@ class FakeElement {
     };
   }
 
+  setAttribute(name, value) { this[name] = String(value); }
+
   set innerHTML(value) {
     this._innerHTML = value;
     this.children = [];
     this._bySelector = new Map();
-    if (value.includes("notify-input")) {
-      for (const selector of [
-        ".session-name",
-        ".notify-input",
-        ".notify-state",
-        ".delete-btn",
-        ".notify-row",
-        ".start-btn",
-      ]) {
-        const child = new FakeElement("", selector === ".notify-input" ? "input" : "div");
-        child.parent = this;
-        this._bySelector.set(selector, child);
+    if (value.includes("session-select")) {
+      for (const selector of [".session-name", ".session-select", ".delete-btn"]) {
+        this._bySelector.set(selector, new FakeElement("", "button"));
       }
-      this._bySelector.get(".notify-input").type = "checkbox";
     }
     if (value.includes("chip-close")) {
       const span = new FakeElement("", "span");
@@ -298,6 +290,14 @@ const ids = [
   "startup-json-toggle",
   "startup-json-preview",
   "active-title",
+  "session-header",
+  "session-count",
+  "session-context",
+  "session-feishu",
+  "session-status",
+  "session-agent",
+  "session-directory",
+  "terminal-shell",
   "terminal",
 ];
 const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement(id)]));
@@ -595,19 +595,8 @@ assert.equal(onboardingConfig.agent_kind, "codex");
 assert.equal(onboardingConfig.lark_default_session_name, "默认会话");
 await app.openConfigDialog();
 assert.ok(configTabs[3].className.includes("active"), "settings should start from Security tab");
-assert.equal(elements["config-prev"].disabled, false, "Agent tab precedes Security");
-assert.equal(elements["config-next"].disabled, false, "next should be enabled on first config tab");
-elements["config-next"].onclick();
-assert.ok(configTabs[4].className.includes("active"), "next should move to Workspaces");
-assert.equal(elements["config-prev"].disabled, false, "previous should be enabled after moving forward");
-elements["config-prev"].onclick();
-assert.ok(configTabs[3].className.includes("active"), "previous should move back to Security");
-elements["config-next"].onclick();
-elements["config-next"].onclick();
-elements["config-next"].onclick();
-elements["config-next"].onclick();
-assert.ok(configTabs[4].className.includes("active"), "next should stop at the last config tab");
-assert.equal(elements["config-next"].disabled, true, "next should be disabled on last config tab");
+configTabs[4].onclick();
+assert.ok(configTabs[4].className.includes("active"), "Workspaces tab should open");
 await app.openConfigDialog("config-security");
 elements["settings-current-password"].value = "old-password";
 elements["settings-new-password"].value = "new-password";
@@ -681,10 +670,6 @@ assert.equal(app.state.term.rows, 44, "headless terminal should follow backend r
 context.location.search = "";
 app.state.fit = null;
 
-elements["composer-input"].value = "echo button";
-elements.composer.requestSubmit();
-assert.deepEqual(sentMessages.pop(), { type: "submit", data: "echo button" });
-assert.equal(elements["composer-input"].value, "");
 
 app.state.term = {
   cols: 120,
@@ -1170,13 +1155,6 @@ assert.deepEqual(withoutSnapshotRenderMetadata(snapshotMessage), {
 terminalDOMRows = [];
 sentMessages.length = 0;
 
-elements["help-open"].onclick();
-assert.equal(elements["help-dialog"].open, true, "help dialog should open from topbar button");
-helpTabs[1].onclick();
-assert.ok(helpTabs[1].className.includes("active"), "clicked help tab should become active");
-assert.ok(helpPanels[1].className.includes("active"), "target help panel should become active");
-elements["help-close"].onclick();
-assert.equal(elements["help-dialog"].open, false, "help dialog should close");
 
 await Promise.resolve(elements["lark-register-start"].onclick());
 await Promise.resolve();
@@ -1185,29 +1163,6 @@ assert.equal(elements["lark-register-code"].textContent, "USER-1");
 assert.equal(elements["lark-register-link"].href, "https://open.feishu.cn/page/cli?user_code=USER-1");
 assert.ok(elements["lark-register-qr"].src.includes("/api/lark-app-registration/qr?text="));
 assert.equal(elements["lark-app-console-link"].href, "https://open.feishu.cn/app/app-id/auth");
-elements["composer-input"].value = "line one";
-let prevented = false;
-elements["composer-input"].onkeydown({
-  key: "Enter",
-  metaKey: false,
-  ctrlKey: false,
-  preventDefault() {
-    prevented = true;
-  },
-});
-assert.equal(prevented, false, "plain Enter should keep textarea newline behavior");
-assert.equal(sentMessages.length, 0, "plain Enter should not send");
-
-elements["composer-input"].value = "echo command-enter";
-elements["composer-input"].onkeydown({
-  key: "Enter",
-  metaKey: true,
-  ctrlKey: false,
-  preventDefault() {
-    prevented = true;
-  },
-});
-assert.deepEqual(sentMessages.pop(), { type: "submit", data: "echo command-enter" });
 
 let pastePrevented = false;
 await elements.terminal.dispatchEvent({
@@ -1238,18 +1193,22 @@ app.state.sessions = [{
   updated_at: new Date().toISOString(),
   notify_on_waiting: false,
   notifications_available: true,
+  lark_chat_id: "oc_current",
+  agent_name: "我的 Agent",
+  last_cwd: "/work/current",
 }];
 app.renderSessions();
+assert.equal(elements["session-count"].textContent, "1");
+assert.equal(elements["session-agent"].textContent, "我的 Agent");
+assert.equal(elements["session-directory"].textContent, "/work/current");
+assert.equal(elements["session-feishu"].href, "https://applink.feishu.cn/client/chat/open?openChatId=oc_current");
 const card = elements.sessions.children[0];
 assert.ok(card.className.includes("session-running"), "running session card should have running class");
 assert.equal(elements["active-title"].textContent, "A（running）", "active title should show the latest session status");
 app.state.sessions[0].status = "waiting";
 app.renderSessions();
 assert.equal(elements["active-title"].textContent, "A（waiting）", "session refresh should update the active title status");
-const notify = card.querySelector(".notify-input");
-notify.checked = true;
-await notify.onchange({ stopPropagation() {}, target: notify });
-assert.ok(fetchCalls.some((call) => call.path === "/api/sessions/sess-1" && call.options.method === "PATCH" && call.options.body.includes('"notify_on_waiting":true')));
+assert.equal(card.querySelector(".notify-input"), null, "notification checkbox must not exist");
 
 await app.loadConfig();
 elements["cfg-default-workspace-dir"].value = "/data00/home/lijun.eleven/bytebot_robot_biz";

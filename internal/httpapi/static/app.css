@@ -1,12 +1,12 @@
 :root {
   color-scheme: light;
-  --page: #f7f2e7;
-  --sidebar: #f3ecdf;
-  --ink: #34283d;
-  --muted: #7a6f75;
-  --line: #d7cfc4;
-  --line-strong: #c1b5aa;
-  --terminal: #12110f;
+  --page: #f5f5f0;
+  --sidebar: #fafbf7;
+  --ink: #30352f;
+  --muted: #81867d;
+  --line: #e3e5dc;
+  --line-strong: #dfe5d8;
+  --terminal: #1f2521;
   --accent: #b3541c;
   --accent-dark: #8c3d16;
   --danger: #b24c55;
@@ -20,18 +20,21 @@
 
 /* Bot navigation extends the existing terminal layout; session status colors stay unchanged. */
 .bot-title { display:flex; align-items:center; gap:4px; }
-.bot-title select { flex:1; min-width:0; border-radius:8px; }
+.bot-title select { flex:1; min-width:0; border-radius:7px; font-size:16px; font-weight:600; background:#fff; }
 .bot-title .bot-settings { flex:none; display:grid; place-items:center; width:44px; height:44px; padding:0; font-size:24px; border:0; background:none; }
 .sidebar .brand { font-style:italic; color:#42694c; }
 .sidebar .bot-add { border:0; background:none; text-align:left; padding:4px 0; color:#42694c; }
-.sidebar-footer .global-settings { display:flex; align-items:center; gap:8px; border:0; background:none; padding:8px 0; }
+.sidebar-footer .global-settings { display:flex; align-items:center; gap:10px; border:0; background:none; padding:17px 23px; width:100%; min-height:44px; text-align:left; color:#666e61; }
 .global-settings span { font-size:24px; line-height:1; }
 #bot-dialog { width:min(490px,calc(100vw - 32px)); max-height:90vh; overflow:auto; }
-#bot-dialog label { display:block; margin-top:18px; }
+#bot-dialog h2 { font-size:21px; margin:0 0 8px; }
+#bot-dialog label { display:block; margin-top:20px; font-size:12px; }
+#bot-dialog #bot-app-fields label { margin-top:12px; }
 #bot-dialog label input, #bot-dialog label select { display:block; margin-top:8px; border-radius:8px; }
 .bot-create-methods { display:flex; flex-wrap:wrap; gap:10px; margin-top:24px; }
 .bot-app-heading { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin-top:24px; border-top:1px solid var(--line); }
 .bot-app-heading a { font-size:12px; color:#42694c; }
+.bot-app-heading h3 { font-size:13px; }
 #bot-app-name { background:rgba(0,0,0,.04); }
 #bot-error { color:var(--danger); margin-top:16px; white-space:pre-wrap; overflow-wrap:anywhere; }
 
@@ -52,10 +55,10 @@ body {
 body {
   margin: 0;
   display: grid;
-  grid-template-columns: 340px 1fr;
+  grid-template-columns: 302px minmax(0, 1fr);
   background: var(--page);
   color: var(--ink);
-  font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font: 14px/1.45 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 button,
@@ -67,13 +70,13 @@ select {
   color: var(--ink);
   background: rgba(255, 255, 255, 0.48);
   border: 1px solid var(--line-strong);
-  border-radius: 18px;
+  border-radius: 7px;
 }
 
 button {
   cursor: pointer;
   padding: 10px 16px;
-  background: #f5f0e8;
+  background: #fafbf8;
 }
 
 button:hover {
@@ -85,7 +88,7 @@ input:focus-visible,
 textarea:focus-visible,
 select:focus-visible,
 a:focus-visible {
-  outline: 3px solid rgba(179, 84, 28, 0.3);
+  outline: 3px solid #98b39b;
   outline-offset: 2px;
 }
 
@@ -93,7 +96,7 @@ input,
 textarea,
 select {
   width: 100%;
-  padding: 12px 14px;
+  padding: 11px;
 }
 
 textarea {
@@ -103,12 +106,12 @@ textarea {
 .sidebar {
   height: 100vh;
   min-height: 100vh;
-  padding: 28px 26px;
+  padding: 30px 0 0;
   border-right: 1px solid var(--line);
-  background: linear-gradient(180deg, #f5efe5 0%, #f8f4ed 100%);
+  background: var(--sidebar);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 0;
   overflow: hidden;
 }
 
@@ -119,15 +122,16 @@ textarea {
 }
 
 .brand {
-  font-size: 34px;
+  font-size: 36px;
   line-height: 1;
   font-family: Georgia, "Times New Roman", serif;
-  margin-bottom: 16px;
+  margin: 0 23px 28px;
 }
 
 .sidebar-footer {
   margin-top: auto;
-  padding-top: 18px;
+  padding-top: 0;
+  border-top: 1px solid var(--line);
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -135,49 +139,37 @@ textarea {
   justify-content: flex-start;
 }
 
-.new-session {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 128px;
-  gap: 12px;
-}
-
-.new-session button {
-  color: white;
-  background: linear-gradient(180deg, #c86122, var(--accent-dark));
-  border-color: transparent;
-  font-weight: 700;
-}
 
 .search {
-  margin-top: 2px;
+  margin: 22px 18px 20px;
+  width: calc(100% - 36px);
+  padding: 10px 12px;
+  background: #f0f2eb;
 }
+.sidebar > .bot-title { margin:0 23px; }
+.sidebar > .bot-add { margin:10px 23px 0; font-size:11px; }
+.list-label { display:flex; justify-content:space-between; padding:0 23px 12px; font-size:11px; color:var(--muted); }
 
-.notify-row input {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--accent);
-}
 
 .sessions {
   display: grid;
   flex: 1 1 auto;
-  gap: 14px;
+  gap: 12px;
   align-content: start;
   min-height: 0;
-  margin-top: 12px;
-  padding-right: 4px;
+  margin-top: 0;
+  padding: 0 10px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
 }
 
 .session {
+  position: relative;
   border: 1px solid #d7acae;
   background: var(--card);
   border-radius: 18px;
   padding: 18px;
   display: grid;
-  gap: 10px;
   box-shadow: 0 10px 22px rgba(70, 45, 28, 0.08);
 }
 
@@ -200,10 +192,14 @@ textarea {
   display: flex;
   justify-content: space-between;
   gap: 10px;
+  padding-right: 40px;
 }
+.session-select { display:block; width:100%; padding:0; border:0; border-radius:0; background:none; text-align:left; }
+.session-select:hover { background:none; }
 
 .session-name {
-  font-weight: 700;
+  font-weight: 600;
+  font-size: 13px;
   overflow-wrap: anywhere;
 }
 
@@ -221,13 +217,23 @@ textarea {
 }
 
 .delete-btn {
-  color: var(--danger);
+  position:absolute;
+  top:12px;
+  right:12px;
+  padding:6px;
+  font-size:12px;
+  color:#7f3d3d;
 }
 
 .meta {
   color: var(--muted);
-  font-size: 14px;
+  font-size: 10px;
+  display:flex;
+  justify-content:space-between;
+  gap:8px;
+  margin-top:10px;
 }
+.meta .time { text-align:right; }
 
 .status-running {
   color: #5d8f4b;
@@ -237,22 +243,14 @@ textarea {
   color: #7f3d3d;
 }
 
-.notify-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--muted);
-  font-size: 14px;
-}
 
 .main {
   min-width: 0;
   min-height: 100vh;
   height: 100vh;
-  padding: 26px 28px 22px;
-  display: grid;
-  grid-template-rows: 34px minmax(420px, 1fr) auto auto;
-  gap: 14px;
+  padding: 30px 30px 18px;
+  display: flex;
+  flex-direction: column;
 }
 
 .topbar {
@@ -263,9 +261,10 @@ textarea {
 }
 
 #active-title {
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 28px;
-  color: #7e3435;
+  margin:0;
+  font-size:23px;
+  letter-spacing:-.5px;
+  font-weight:600;
   overflow-wrap: anywhere;
 }
 
@@ -299,14 +298,19 @@ textarea {
 }
 
 .terminal-shell {
+  flex:1;
   min-height: 0;
-  border-radius: 26px;
+  border-radius: 11px;
   background: var(--terminal);
-  border: 1px solid #2a2622;
+  border: 0;
   overflow: hidden;
-  padding: 12px 14px;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02), 0 18px 34px rgba(36, 25, 18, 0.16);
+  padding: 28px;
+  box-shadow: 0 8px 25px #2030220b;
 }
+.outline { border:1px solid #d9dfd2; border-radius:7px; padding:9px 12px; background:#fff; font-size:12px; white-space:nowrap; color:inherit; text-decoration:none; }
+.outline:hover { background:#edf2e9; }
+.session-context { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:19px 0 20px; font-size:11px; color:#7b8575; }
+.session-context .path { border-left:1px solid #d5dacd; padding-left:12px; font-family:monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
 
 #terminal {
   width: 100%;
@@ -323,99 +327,21 @@ textarea {
   font-variant-ligatures: none;
 }
 
-.quick-list {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 46px;
-  overflow-x: auto;
-}
-
-.quick-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  max-width: 240px;
-  min-height: 40px;
-  padding: 8px 12px 8px 16px;
-  border: 1px solid var(--line-strong);
-  border-radius: 18px;
-  background: var(--chip);
-  white-space: nowrap;
-}
-
-.quick-chip span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.chip-close,
-.add-quick {
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  display: inline-grid;
-  place-items: center;
-}
-
-.chip-close {
-  width: 24px;
-  height: 24px;
-  border: 0;
-  background: transparent;
-  color: #7d6868;
-}
-
-.add-quick {
-  border-style: dashed;
-  font-size: 24px;
-  color: var(--accent);
-}
-
-.composer {
-  position: relative;
-  display: block;
-}
-
-#composer-input {
-  min-height: 118px;
-  max-height: 220px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.34);
-  padding-right: 112px;
-  padding-bottom: 58px;
-}
-
-.composer-shortcut {
-  position: absolute;
-  left: 16px;
-  bottom: 18px;
-  color: var(--muted);
-  font-size: 13px;
-  pointer-events: none;
-}
-
-.composer button {
-  position: absolute;
-  right: 14px;
-  bottom: 14px;
-  color: white;
-  background: var(--accent);
-  border-color: transparent;
-  font-weight: 700;
-}
 
 dialog {
   width: min(420px, calc(100vw - 32px));
   border: 1px solid var(--line-strong);
-  border-radius: 18px;
-  background: #fbf7ef;
+  border-radius: 16px;
+  padding:28px;
+  background: #fff;
   color: var(--ink);
   box-shadow: 0 24px 60px rgba(31, 24, 18, 0.24);
 }
 
 .config-dialog {
-  width: min(980px, calc(100vw - 32px));
+  width: min(850px, calc(100vw - 32px));
+  max-height:90vh;
+  overflow:auto;
 }
 
 .help-dialog {
@@ -432,11 +358,6 @@ dialog {
 
 dialog::backdrop {
   background: rgba(40, 28, 18, 0.32);
-}
-
-#quick-form {
-  display: grid;
-  gap: 12px;
 }
 
 .dialog-title {
@@ -1519,7 +1440,19 @@ dialog::backdrop {
   margin-bottom: 0;
 }
 
-@media (max-width: 840px) {
+@media (min-width: 1550px) {
+  .main { padding:35px 45px 18px; }
+}
+@media (max-width: 1050px) {
+  body { grid-template-columns:265px minmax(0,1fr); }
+  .main { padding:25px 18px 18px; }
+  .terminal-shell { padding:18px; }
+}
+@media (min-width: 601px) and (max-width: 760px) {
+  body { grid-template-columns:205px minmax(0,1fr); }
+  .sidebar .brand { font-size:30px; }
+}
+@media (max-width: 600px) {
   body {
     grid-template-columns: 1fr;
   }
@@ -1545,7 +1478,6 @@ dialog::backdrop {
     min-height: 72vh;
     height: 100vh;
     padding: 18px;
-    grid-template-rows: auto minmax(360px, 1fr) auto auto;
   }
 
   .topbar {
@@ -1614,9 +1546,6 @@ dialog::backdrop {
     justify-content: flex-start;
   }
 
-  .composer {
-    display: block;
-  }
 
   .help-layout {
     grid-template-columns: 1fr;

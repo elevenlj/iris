@@ -39,6 +39,7 @@ type Session struct {
 	LastCWD                string    `json:"last_cwd,omitempty"`
 	LastPrevCWD            string    `json:"last_prev_cwd,omitempty"`
 	LastAgentID            string    `json:"last_agent_id,omitempty"`
+	AgentName              string    `json:"agent_name,omitempty"`
 	LastAgentKind          string    `json:"last_agent_kind,omitempty"`
 	LastAgentStartCommand  string    `json:"last_agent_start_command,omitempty"`
 	LastAgentResumeCommand string    `json:"last_agent_resume_command,omitempty"`

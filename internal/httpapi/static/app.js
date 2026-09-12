@@ -4,7 +4,6 @@ const state = {
   socket: null,
   term: null,
   fit: null,
-  quick: [],
   config: null,
   security: null,
   search: "",
@@ -36,7 +35,6 @@ const STANDARD_TERMINAL_LINE_HEIGHT = 1.2;
 const SNAPSHOT_CONTINUITY_VERSION = 2;
 const DEFAULT_SESSION_NAME = "默认会话";
 const DEFAULT_AGENT_PRESET_CODE = "999999";
-const CONFIG_TAB_IDS = ["config-session", "config-security", "config-workspaces"];
 const BOT_BASE = (location.pathname || "").match(/^\/bots\/[a-z0-9-]+/)?.[0] || "";
 const DROP_RULE_KINDS = [
   ["line", "行过滤"],
@@ -87,42 +85,25 @@ function visibleSessions() {
 
 function renderSessions() {
   $("sessions").innerHTML = "";
+  $("session-count").textContent = String(visibleSessions().length);
   for (const s of visibleSessions()) {
     const el = document.createElement("article");
     el.className = `session session-${s.status} ${state.active === s.id ? "active" : ""}`;
     const updated = new Date(s.updated_at).toLocaleString();
     el.innerHTML = `
-      <div class="session-head">
-        <div class="session-name"></div>
-        <div class="session-actions">
-          <button class="link-btn delete-btn" type="button">删除</button>
-        </div>
-      </div>
-      <div class="meta"><span class="status-${s.status}">${s.status}</span> · ${updated}</div>
-      <label class="notify-row">
-        <input class="notify-input" type="checkbox">
-        <span>通知</span>
-        <span class="notify-state"></span>
-      </label>
+      <button class="session-select" type="button" aria-pressed="${state.active === s.id}">
+      <span class="session-head"><span class="session-name"></span></span>
+      <span class="meta"><span class="status-${s.status}">${s.status}</span><span class="time">${updated}</span></span>
+      </button>
+      <button class="link-btn delete-btn" type="button">删除</button>
     `;
     el.querySelector(".session-name").textContent = s.name;
-    el.querySelector(".notify-input").checked = Boolean(s.notify_on_waiting);
-    el.querySelector(".notify-state").textContent = s.notifications_available ? (s.notify_on_waiting ? "已启用" : "未启用") : "不可用";
+    el.querySelector(".delete-btn").setAttribute("aria-label", `删除会话：${s.name}`);
     el.querySelector(".delete-btn").onclick = async (ev) => {
       ev.stopPropagation();
       await deleteSession(s.id);
     };
-    el.querySelector(".notify-row").onclick = (ev) => {
-      ev.stopPropagation();
-    };
-    el.querySelector(".notify-input").onclick = (ev) => {
-      ev.stopPropagation();
-    };
-    el.querySelector(".notify-input").onchange = async (ev) => {
-      ev.stopPropagation();
-      await setNotify(s.id, ev.target.checked);
-    };
-    el.onclick = () => selectSession(s.id);
+    el.querySelector(".session-select").onclick = () => selectSession(s.id);
     $("sessions").appendChild(el);
   }
   renderActiveTitle();
@@ -130,7 +111,20 @@ function renderSessions() {
 
 function renderActiveTitle() {
   const sess = currentSession();
-  $("active-title").textContent = sess ? `${sess.name}（${sess.status}）` : "请选择会话";
+  for (const id of ["session-header", "session-context", "terminal-shell"]) $(id).hidden = !sess;
+  $("active-title").textContent = sess ? `${sess.name}（${sess.status}）` : "";
+  const chatID = sess?.lark_chat_id || "";
+  $("session-feishu").hidden = !chatID;
+  $("session-feishu").href = chatID ? `https://applink.feishu.cn/client/chat/open?openChatId=${encodeURIComponent(chatID)}` : "";
+  $("session-status").textContent = sess?.status || "";
+  $("session-status").className = sess ? `status-${sess.status}` : "";
+  const labels = {codex: "Codex", claude: "Claude Code", aiden: "Aiden", "aiden-codex": "Aiden X Codex", "aiden-claude": "Aiden X Claude Code"};
+  const agent = state.config?.agents?.find(item => item.id === sess?.last_agent_id);
+  $("session-agent").textContent = sess?.agent_name || agent?.name || labels[sess?.last_agent_id] || labels[sess?.last_agent_kind] || sess?.last_agent_id || "";
+  $("session-agent").hidden = !$("session-agent").textContent;
+  $("session-directory").textContent = sess?.last_cwd || "";
+  $("session-directory").title = sess?.last_cwd || "";
+  $("session-directory").hidden = !sess?.last_cwd;
 }
 
 function currentSession() {
@@ -159,7 +153,7 @@ function initTerminal() {
     fontSize: STANDARD_TERMINAL_FONT_SIZE,
     lineHeight: STANDARD_TERMINAL_LINE_HEIGHT,
     letterSpacing: 0,
-    theme: { background: "#12110f", foreground: "#f4f1e8", cursor: "#f4f1e8" },
+    theme: { background: "#1f2521", foreground: "#c6d0c7", cursor: "#c6d0c7" },
   });
   state.fit = headless ? null : createFitAddon();
   if (state.fit) state.term.loadAddon(state.fit);
@@ -902,10 +896,6 @@ async function captureTerminalSnapshot(context, requireCurrent) {
   return snapshot;
 }
 
-async function loadQuick() {
-  state.quick = await api("/api/quick-commands");
-  renderQuick();
-}
 
 async function loadConfig() {
   state.config = await api("/api/config");
@@ -1000,29 +990,8 @@ function renderLarkPermissionGuide() {
 function setConfigTab(targetID) {
   document.querySelectorAll(".config-tab").forEach((item) => item.classList.toggle("active", item.dataset.configTarget === targetID));
   document.querySelectorAll(".config-panel").forEach((panel) => panel.classList.toggle("active", panel.id === targetID));
-  updateConfigStepButtons(targetID);
 }
 
-function activeConfigTabID() {
-  const active = Array.from(document.querySelectorAll(".config-tab")).find((tab) => /\bactive\b/.test(tab.className));
-  return active?.dataset.configTarget || CONFIG_TAB_IDS[0];
-}
-
-function updateConfigStepButtons(targetID = activeConfigTabID()) {
-  const index = CONFIG_TAB_IDS.indexOf(targetID);
-  const prev = $("config-prev");
-  const next = $("config-next");
-  if (!prev || !next) return;
-  prev.disabled = index <= 0;
-  next.disabled = index < 0 || index >= CONFIG_TAB_IDS.length - 1;
-}
-
-function moveConfigStep(delta) {
-  const index = CONFIG_TAB_IDS.indexOf(activeConfigTabID());
-  if (index < 0) return;
-  const nextIndex = Math.min(CONFIG_TAB_IDS.length - 1, Math.max(0, index + delta));
-  if (nextIndex !== index) setConfigTab(CONFIG_TAB_IDS[nextIndex]);
-}
 
 async function openConfigDialog(targetID = "config-security") {
   if (!state.config) await loadConfig();
@@ -1053,7 +1022,7 @@ async function ensureSettingsAccess(openSettings = true) {
 
 async function maybeShowOnboarding() {
   if (!state.config || state.config.onboarding_completed) return;
-  if ($("config-dialog").open || $("help-dialog").open) return;
+  if ($("config-dialog").open) return;
   $("onboarding-default-session-name").value = state.config.lark_default_session_name || DEFAULT_SESSION_NAME;
   $("onboarding-agent-custom-name").value = "";
   $("onboarding-agent-custom-command").value = "";
@@ -2257,38 +2226,6 @@ function toggleStartupJSONPreview() {
   if (!hidden) updateStartupJSONPreview();
 }
 
-function renderQuick() {
-  $("quick-list").innerHTML = "";
-  for (const q of state.quick) {
-    const chip = document.createElement("div");
-    chip.className = "quick-chip";
-    chip.title = q.text;
-    chip.innerHTML = `<span></span><button class="chip-close" type="button" title="删除">×</button>`;
-    chip.querySelector("span").textContent = q.text;
-    chip.onclick = () => {
-      $("composer-input").value = q.text;
-      $("composer-input").focus();
-    };
-    chip.querySelector(".chip-close").onclick = async (ev) => {
-      ev.stopPropagation();
-      await api(`/api/quick-commands/${q.id}`, { method: "DELETE" });
-      await loadQuick();
-    };
-    $("quick-list").appendChild(chip);
-  }
-  const add = document.createElement("button");
-  add.className = "add-quick";
-  add.type = "button";
-  add.title = "添加快捷命令";
-  add.textContent = "+";
-  add.onclick = () => $("quick-dialog").showModal();
-  $("quick-list").appendChild(add);
-}
-
-async function setNotify(id, enabled) {
-  await api(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify({ notify_on_waiting: enabled }) });
-  await loadSessions();
-}
 
 async function deleteSession(id) {
   await api(`/api/sessions/${id}`, { method: "DELETE" });
@@ -2296,59 +2233,17 @@ async function deleteSession(id) {
     state.active = null;
     if (state.socket) state.socket.close();
     if (state.term) state.term.clear();
-    $("active-title").textContent = "请选择会话";
+    renderActiveTitle();
   }
   await loadSessions();
 }
 
-$("new-session").onsubmit = async (ev) => {
-  ev.preventDefault();
-  const name = $("session-name").value.trim();
-  if (!name) return;
-  const s = await api("/api/sessions", { method: "POST", body: JSON.stringify({ name }) });
-  $("session-name").value = "";
-  await loadSessions();
-  selectSession(s.id);
-};
 
 $("session-search").oninput = (ev) => {
   state.search = ev.target.value;
   renderSessions();
 };
 
-$("composer").onsubmit = (ev) => {
-  ev.preventDefault();
-  sendComposer();
-};
-
-$("composer-input").onkeydown = (ev) => {
-  if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
-    ev.preventDefault();
-    sendComposer();
-  }
-};
-
-function sendComposer() {
-  const input = $("composer-input");
-  const text = input.value;
-  if (!text || !state.active) return;
-  sendWS({ type: "submit", data: text });
-  input.value = "";
-  input.focus();
-}
-
-$("quick-form").onsubmit = async (ev) => {
-  ev.preventDefault();
-  const text = $("quick-text").value.trim();
-  if (!text) return;
-  const name = text.length > 40 ? `${text.slice(0, 37)}...` : text;
-  await api("/api/quick-commands", { method: "POST", body: JSON.stringify({ name, text }) });
-  $("quick-text").value = "";
-  $("quick-dialog").close();
-  await loadQuick();
-};
-
-$("quick-cancel").onclick = () => $("quick-dialog").close();
 
 $("config-open").onclick = async () => {
   try {
@@ -2416,8 +2311,6 @@ $("config-cancel").onclick = () => {
   $("config-dialog").close();
 };
 
-$("config-prev").onclick = () => moveConfigStep(-1);
-$("config-next").onclick = () => moveConfigStep(1);
 
 $("config-form").onsubmit = async (ev) => {
   ev.preventDefault();
@@ -2580,16 +2473,6 @@ function stopLarkRegistrationPolling() {
   }
 }
 
-$("help-open").onclick = () => $("help-dialog").showModal();
-$("help-close").onclick = () => $("help-dialog").close();
-
-document.querySelectorAll(".help-tab").forEach((tab) => {
-  tab.onclick = () => {
-    const targetID = tab.dataset.helpTarget;
-    document.querySelectorAll(".help-tab").forEach((item) => item.classList.toggle("active", item === tab));
-    document.querySelectorAll(".help-panel").forEach((panel) => panel.classList.toggle("active", panel.id === targetID));
-  };
-});
 
 function clipboardImageFile(ev) {
   const files = [...(ev.clipboardData?.files || [])];
@@ -2612,13 +2495,8 @@ async function handleImagePaste(ev) {
   form.append("mime_type", file.type);
   const res = await api(`/api/sessions/${state.active}/uploads`, { method: "POST", body: form });
   const uploadedPathInput = ` ${res.path}`;
-  const target = ev.target;
-  if (target === $("composer-input")) {
-    $("composer-input").value += `${uploadedPathInput}\n`;
-  } else {
-    sendWS({ type: "input", data: `${uploadedPathInput} ` });
-    state.term?.focus?.();
-  }
+  sendWS({ type: "input", data: `${uploadedPathInput} ` });
+  state.term?.focus?.();
 }
 
 $("terminal").addEventListener("paste", handleImagePaste, true);
@@ -2653,15 +2531,12 @@ async function initializeIris() {
 
 setInterval(loadSessions, 3000);
 loadSessions().catch(console.error);
-loadQuick().catch(console.error);
 initializeIris().catch(console.error);
 
 if (typeof window !== "undefined") {
   window.irisApp = {
     state,
-    sendComposer,
     renderSessions,
-    setNotify,
     loadConfig,
     saveConfig,
     testLarkConfig,

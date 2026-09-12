@@ -70,46 +70,32 @@ try {
   await waitFor(() => fetchJSON(`http://localhost:${port}/api/sessions`).then((sessions) => sessions[0]?.status === "waiting"), 7000);
   await waitFor(() => evalExpr("document.querySelector('.session').className.includes('session-waiting')"), 7000);
 
-  await clickNotify();
-  const notifyResponse = await fetchJSON(`http://localhost:${port}/api/sessions`);
-  assert.equal(notifyResponse[0].notify_on_waiting, true, "notification toggle should PATCH notify_on_waiting=true");
+  assert.equal(await evalExpr("document.querySelectorAll('#composer, .notify-input, #quick-list').length"), 0);
 
-  await fillComposer("stty size");
-  await click("document.querySelector('#composer button').click()");
+  await sendTerminalCommand("stty size");
   await waitForOutput(`${browserTerminalSize.rows} ${browserTerminalSize.cols}`);
 
-  await fillComposer("echo BROWSER_BUTTON_E2E");
-  await click("document.querySelector('#composer button').click()");
+  await sendTerminalCommand("echo BROWSER_BUTTON_E2E");
   await waitForOutput("BROWSER_BUTTON_E2E");
   await waitForTerminalSnapshot("BROWSER_BUTTON_E2E");
 
-  await fillComposer("printf '中文快照_OK\\n'");
-  await click("document.querySelector('#composer button').click()");
+  await sendTerminalCommand("printf '中文快照_OK\\n'");
   await waitForOutput("中文快照_OK");
   const cjkSnapshot = await waitForTerminalSnapshot("中文快照_OK");
   assert.equal(cjkSnapshot.includes("\uFFFD"), false, "terminal snapshot should not contain replacement characters");
 
-  await fillComposer("for i in $(seq 1 50); do printf 'FULL_BUFFER_E2E_%02d\\n' \"$i\"; done");
-  await click("document.querySelector('#composer button').click()");
+  await sendTerminalCommand("for i in $(seq 1 50); do printf 'FULL_BUFFER_E2E_%02d\\n' \"$i\"; done");
   await waitForOutput("FULL_BUFFER_E2E_50");
   const fullBufferSnapshot = await waitForTerminalSnapshot("FULL_BUFFER_E2E_01");
   assert.ok(fullBufferSnapshot.includes("FULL_BUFFER_E2E_50"), "terminal snapshot should include full scrollback output");
 
   const activeSessionID = await evalExpr("window.irisApp.state.active");
   await cdp.send("Page.navigate", { url: `http://localhost:${port}/?session=${encodeURIComponent(activeSessionID)}` });
-  await waitFor(() => evalExpr("Boolean(window.irisApp && document.querySelector('#session-name'))"));
+  await waitFor(() => evalExpr("Boolean(window.irisApp && document.querySelector('#terminal'))"));
   await waitFor(() => evalExpr(`window.irisApp.state.active === ${JSON.stringify(activeSessionID)}`));
   await waitFor(() => evalExpr("window.irisApp.state.socket && window.irisApp.state.socket.readyState === WebSocket.OPEN"));
   const reconnectedSnapshot = await waitForTerminalSnapshot("中文快照_OK");
   assert.ok(reconnectedSnapshot.includes("BROWSER_BUTTON_E2E"), "browser reconnect should keep earlier terminal history");
-
-  await fillComposer("plain enter line");
-  await keydownComposer({ key: "Enter", metaKey: false, ctrlKey: false });
-  assert.equal(await evalExpr("document.querySelector('#composer-input').value"), "plain enter line", "plain Enter should not send");
-
-  await fillComposer("echo BROWSER_CMD_ENTER_E2E");
-  await keydownComposer({ key: "Enter", metaKey: true, ctrlKey: false });
-  await waitForOutput("BROWSER_CMD_ENTER_E2E");
 
   await runTUILikeSnapshotE2E();
 
@@ -121,13 +107,9 @@ try {
   await waitForOutput("/data/uploads/");
   await waitForOutput(".png");
 
-  await openQuickDialogAndAdd("pwd");
-  assert.equal(await evalExpr("document.querySelectorAll('.quick-chip').length"), 1, "quick command chip should be added");
-  assert.equal(await evalExpr("document.querySelector('.quick-chip span').textContent"), "pwd", "quick command chip should display command text");
-
   const headlessTarget = await createSessionViaAPI("headless-target");
   await cdp.send("Page.navigate", { url: `http://localhost:${port}/?session=${encodeURIComponent(headlessTarget.id)}` });
-  await waitFor(() => evalExpr("Boolean(window.irisApp && document.querySelector('#session-name'))"));
+  await waitFor(() => evalExpr("Boolean(window.irisApp && document.querySelector('#terminal'))"));
   await waitFor(() => evalExpr(`window.irisApp.state.active === ${JSON.stringify(headlessTarget.id)}`));
   await waitFor(() => evalExpr("window.irisApp.state.socket && window.irisApp.state.socket.readyState === WebSocket.OPEN"));
 
@@ -177,7 +159,8 @@ async function initializeIrisForE2E() {
 }
 
 async function createSession(name) {
-  await evalExpr(`document.querySelector('#session-name').value = ${JSON.stringify(name)}; document.querySelector('#new-session').requestSubmit(); true`);
+  const session = await createSessionViaAPI(name);
+  await cdp.send("Page.navigate", {url: `http://localhost:${port}/?session=${encodeURIComponent(session.id)}`});
 }
 
 async function createSessionViaAPI(name) {
@@ -190,27 +173,8 @@ async function createSessionViaAPI(name) {
   return res.json();
 }
 
-async function clickNotify() {
-  await waitFor(() => evalExpr("Boolean(document.querySelector('.notify-input'))"));
-  await click("document.querySelector('.notify-input').click()");
-  await waitFor(() => evalExpr("document.querySelector('.notify-input').checked === true"));
-}
-
-async function fillComposer(value) {
-  await evalExpr(`document.querySelector('#composer-input').value = ${JSON.stringify(value)}; true`);
-}
-
-async function keydownComposer(event) {
-  await evalExpr(`
-    document.querySelector('#composer-input').dispatchEvent(new KeyboardEvent('keydown', {
-      key: ${JSON.stringify(event.key)},
-      metaKey: ${Boolean(event.metaKey)},
-      ctrlKey: ${Boolean(event.ctrlKey)},
-      bubbles: true,
-      cancelable: true
-    }));
-    true
-  `);
+async function sendTerminalCommand(value) {
+  await evalExpr(`window.irisApp.queueTerminalInput(${JSON.stringify(value + "\r")}).then(() => true)`);
 }
 
 async function runTUILikeSnapshotE2E() {
@@ -233,8 +197,7 @@ async function runTUILikeSnapshotE2E() {
     `process.stdout.write(${JSON.stringify(screen1)})`,
     `setTimeout(() => process.stdout.write(${JSON.stringify(screen2)}), 120)`,
   ].join("; ");
-  await fillComposer(`node -e ${shellSingleQuote(script)}`);
-  await click("document.querySelector('#composer button').click()");
+  await sendTerminalCommand(`node -e ${shellSingleQuote(script)}`);
   const snapshot = await waitForTerminalLine("TUI_FINAL_READY");
   assertVisibleLinesInOrder(snapshot, [
     "Select Model and Effort",
@@ -322,17 +285,6 @@ async function waitForTerminalSize() {
     return size.cols >= 80 && size.rows >= 20;
   }, 8000);
   return size;
-}
-
-async function openQuickDialogAndAdd(text) {
-  await click("document.querySelector('.add-quick').click()");
-  await waitFor(() => evalExpr("document.querySelector('#quick-dialog').open === true"));
-  await evalExpr(`
-    document.querySelector('#quick-text').value = ${JSON.stringify(text)};
-    document.querySelector('#quick-form').requestSubmit();
-    true
-  `);
-  await waitFor(() => evalExpr("document.querySelectorAll('.quick-chip').length === 1"));
 }
 
 async function deleteActiveSession() {

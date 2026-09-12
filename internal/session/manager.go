@@ -713,6 +713,9 @@ func (m *Manager) ListSessions(ctx context.Context) ([]Session, error) {
 	available := m.notifier != nil && m.notifier.Available()
 	for i := range list {
 		list[i].NotificationsAvailable = available
+		if agent, ok := m.agentOption(list[i].LastAgentID); ok {
+			list[i].AgentName = agent.Label
+		}
 	}
 	return list, nil
 }

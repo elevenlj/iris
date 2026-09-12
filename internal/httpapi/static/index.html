@@ -12,30 +12,22 @@
       <div class="brand">iris</div>
       <div class="bot-title"><select id="bot-select" aria-label="选择机器人"></select><button id="bot-settings" class="bot-settings" type="button" aria-label="机器人设置"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 3-1 2 3 3-1 1-3 3-1 1-3-2-2 1-3-3-2-3 1-2-3Z"/><circle cx="12" cy="11" r="3"/></svg></button></div>
       <button id="bot-add" class="bot-add" type="button">＋ 添加机器人</button>
-      <form id="new-session" class="new-session" hidden>
-        <input id="session-name" aria-label="会话名称" placeholder="会话名称" autocomplete="off">
-        <button title="新建会话">新建会话</button>
-      </form>
       <input id="session-search" class="search" aria-label="搜索会话" placeholder="搜索会话" autocomplete="off">
+      <div class="list-label"><span>飞书会话</span><span id="session-count">0</span></div>
       <div id="sessions" class="sessions"></div>
       <div class="sidebar-footer">
         <button id="config-open" class="global-settings" type="button" aria-label="全局设置"><span aria-hidden="true">⚙</span> 全局设置</button>
       </div>
     </aside>
     <main class="main">
-      <header class="topbar">
-        <div id="active-title">请选择会话</div>
-        <button id="help-open" class="help-btn" type="button">帮助</button>
+      <header class="topbar" id="session-header" hidden>
+        <h2 id="active-title"></h2>
+        <a id="session-feishu" class="outline" target="_blank" rel="noopener noreferrer" hidden>↗ 在飞书中打开</a>
       </header>
-      <div class="terminal-shell">
+      <div id="session-context" class="session-context" hidden><span id="session-status"></span><span id="session-agent"></span><span id="session-directory" class="path"></span></div>
+      <div id="terminal-shell" class="terminal-shell" role="region" aria-label="会话终端" hidden>
         <div id="terminal"></div>
       </div>
-      <div id="quick-list" class="quick-list"></div>
-      <form id="composer" class="composer">
-        <textarea id="composer-input" aria-label="发送给 Agent 的内容" placeholder="输入要发送到终端的内容"></textarea>
-        <div class="composer-shortcut" aria-hidden="true">⌘/Ctrl + Enter 发送</div>
-        <button>发送</button>
-      </form>
     </main>
     <dialog id="bot-dialog" aria-labelledby="bot-dialog-title">
       <form id="bot-form">
@@ -57,16 +49,6 @@
         </section>
         <div id="bot-error" role="status"></div>
         <div class="dialog-actions"><button id="bot-cancel" type="button">取消</button><button id="bot-save" type="submit">创建</button></div>
-      </form>
-    </dialog>
-    <dialog id="quick-dialog">
-      <form id="quick-form" method="dialog">
-        <div class="dialog-title">添加快捷命令</div>
-        <textarea id="quick-text" aria-label="快捷命令" placeholder="输入命令"></textarea>
-        <div class="dialog-actions">
-          <button value="cancel" type="button" id="quick-cancel">取消</button>
-          <button value="default">添加</button>
-        </div>
       </form>
     </dialog>
     <dialog id="onboarding-dialog" class="onboarding-dialog" aria-labelledby="onboarding-title">
@@ -116,12 +98,10 @@
           <section id="config-security" class="config-section config-panel">
             <h2>安全</h2>
             <label class="config-check"><input id="cfg-auto-start-enabled" type="checkbox"><span>开机自启</span></label>
-            <p class="config-subtitle">定期更新访问密码，保护飞书凭证、Agent 和工作目录配置。</p>
             <div id="settings-security-warning" class="security-warning hidden" hidden>当前未设置访问密码。任何能访问本页面的人都可以修改飞书凭证和 Agent 命令，建议立即设置密码。</div>
             <div class="security-password-card">
               <div class="security-password-heading">
                 <strong>修改访问密码</strong>
-                <p>修改后，其他浏览器中的设置登录会立即失效。</p>
               </div>
               <div class="security-password-fields">
                 <label class="security-current-password"><span>当前密码</span><input id="settings-current-password" type="password" autocomplete="current-password" maxlength="256"></label>
@@ -138,7 +118,6 @@
             <div class="environment-check">
               <div>
                 <strong>环境检测</strong>
-                <p>一次性检查 Iris 当前所需环境。检测结果不会保存，也不会影响正常使用。</p>
               </div>
               <button id="environment-check-start" type="button">开始检测</button>
               <div id="environment-check-result" class="environment-check-result" aria-live="polite"></div>
@@ -160,7 +139,7 @@
             </div>
             <div class="agent-preset">
               <div class="agent-preset-heading">
-                <strong>自定义 Agent</strong>
+                <strong>Agent 列表</strong>
               </div>
               <div class="agent-preset-controls">
                 <label class="agent-field" hidden>
@@ -172,7 +151,7 @@
               </div>
               <div id="agent-preset-status" class="agent-preset-status" aria-live="polite"></div>
             </div>
-            <div class="custom-shortcut-editor">
+            <div class="custom-shortcut-editor" hidden>
               <strong>飞书自定义快捷键</strong>
               <div id="custom-shortcut-list" class="custom-shortcut-list"></div>
               <button id="custom-shortcut-add" type="button">添加快捷键</button>
@@ -181,7 +160,7 @@
           </section>
           <section id="config-workspaces" class="config-section config-panel">
             <h2>工作目录</h2>
-            <p id="default-workspace-summary" class="config-subtitle"></p>
+            <p id="default-workspace-summary" class="config-subtitle" hidden></p>
             <label class="config-wide"><span>默认目录</span><input id="cfg-default-workspace-dir" placeholder="例如：/Users/me/projects/default_dir"></label>
             <div id="workspace-option-list" class="workspace-option-list"></div>
             <button id="workspace-option-add" type="button">添加目录</button>
@@ -311,137 +290,8 @@
         <div class="dialog-actions">
           <button value="cancel" type="button" id="config-cancel">取消</button>
           <button value="default" id="config-save">保存</button>
-          <button type="button" id="config-prev">上一步</button>
-          <button type="button" id="config-next">下一步</button>
         </div>
       </form>
-    </dialog>
-    <dialog id="help-dialog" class="help-dialog">
-      <div class="help-head">
-        <div>
-          <div class="dialog-title">使用说明</div>
-          <div class="config-subtitle">从创建会话到飞书联动的完整操作指南</div>
-        </div>
-        <button id="help-close" class="help-close" type="button" aria-label="关闭使用说明">×</button>
-      </div>
-      <div class="help-layout">
-        <nav class="help-nav" aria-label="说明章节">
-          <button class="help-tab active" type="button" data-help-target="help-start">快速开始</button>
-          <button class="help-tab" type="button" data-help-target="help-terminal">网页终端</button>
-          <button class="help-tab" type="button" data-help-target="help-lark">飞书联动</button>
-          <button class="help-tab" type="button" data-help-target="help-notify">推送机制</button>
-          <button class="help-tab" type="button" data-help-target="help-config">配置说明</button>
-          <button class="help-tab" type="button" data-help-target="help-files">图片与文件</button>
-          <button class="help-tab" type="button" data-help-target="help-trouble">常见问题</button>
-        </nav>
-        <div class="help-content">
-          <section id="help-start" class="help-panel active">
-            <h2>快速开始</h2>
-            <p>Iris 是连接飞书与本机 Agent 的个人助理。每个会话都会自动启动已配置的 Agent，既能由你直接使用，也能先接待通过飞书联系你的人。</p>
-            <div class="help-flow" aria-label="基本工作流">
-              <div><span>1</span><strong>保护设置</strong><small>首次进入先设置访问密码，也可在确认风险后跳过。</small></div>
-              <div><span>2</span><strong>确认 Agent</strong><small>首次使用会优先自动选择本机的 Codex，其次选择 Claude Code。</small></div>
-              <div><span>3</span><strong>配置飞书</strong><small>创建机器人并填写开发者 open_id，供个人助理建群与鉴权。</small></div>
-              <div><span>4</span><strong>开始对话</strong><small>网页新建会话，或直接向飞书机器人发送消息。</small></div>
-            </div>
-            <div class="help-callout">
-              <strong>推荐习惯</strong>
-              <p>短命令直接在黑色终端里输入；长提示、带换行的文字、说明性任务放到下方输入框再发送。</p>
-            </div>
-          </section>
-          <section id="help-terminal" class="help-panel">
-            <h2>网页终端</h2>
-            <div class="help-grid">
-              <article><h3>会话列表</h3><p>左侧只显示当前活跃会话。点击会话卡片即可切换；不再保留已退出或失败的历史会话。</p></article>
-              <article><h3>终端区域</h3><p>黑色区域是 xterm 终端，支持常规键盘输入、复制粘贴、方向键和 TUI 程序操作。</p></article>
-              <article><h3>下方输入框</h3><p>适合发送多行文本。点击 Send 或按 Command/Ctrl + Enter，会把内容提交给终端并自动回车。</p></article>
-              <article><h3>快速命令</h3><p>下方横向命令条可以保存常用命令。点击 + 添加，点击命令片段会填入输入框，点击 × 删除。</p></article>
-            </div>
-          </section>
-          <section id="help-lark" class="help-panel">
-            <h2>飞书联动</h2>
-            <p>其他人私聊机器人后，Iris 会创建“与某某的对话”群聊，将对方、开发者和机器人加入群中，并自动把私聊消息转发给群内 Agent。后续私聊会继续复用这个群聊和 Agent 会话。</p>
-            <div class="help-callout">
-              <strong>应用能力</strong>
-              <p>扫码创建或选择已有应用时，会打开带应用模板的飞书确认页，由飞书流程补齐基础消息、发消息、长连接事件和卡片回调配置。群里直接发消息需要额外开通“获取群组中所有消息（敏感权限）”。</p>
-            </div>
-            <div class="help-steps">
-              <p><strong>普通私聊</strong>：自动建立或复用联系人群聊，并把消息交给 Agent。</p>
-              <p><strong>开始 会话名</strong>：创建你的开发会话，默认开启开发者模式并关闭艾特模式。</p>
-              <p><strong>联系人群聊</strong>：默认开启艾特模式，只有 @Iris 的消息才会触发 Agent；可在开发者模式下关闭。</p>
-              <p><strong>直接把机器人拉进群</strong>：自动绑定新 Agent 会话，默认开启艾特模式。</p>
-              <p><strong>开发者模式</strong>：由配置的开发者通过卡片按钮开关；开启后显示目录、模型、推理等级、Agent 重启、终端快捷键和自定义快捷键。</p>
-            </div>
-            <div class="help-callout">
-              <strong>等待通知怎么判断</strong>
-              <p>终端在一段时间内没有新的输出后，会被认为进入 waiting。快速等待适合普通命令，保守等待适合 Codex/TUI 等输出节奏更复杂的场景。</p>
-            </div>
-          </section>
-          <section id="help-notify" class="help-panel">
-            <h2>飞书推送机制</h2>
-            <div class="help-grid">
-              <article><h3>什么时候推送</h3><p>会话开启“通知”后，每次输入会把状态切回 running；终端输出稳定一段时间后进入 waiting。达到快速等待或保守等待时间后，系统会准备一条飞书等待通知。</p></article>
-              <article><h3>推到哪里</h3><p>联系人消息与 Agent 回复都进入“与某某的对话”群；开发会话则进入对应会话群或开发者通知目标。</p></article>
-              <article><h3>消息标题</h3><p>通知卡片标题默认是会话名。用户回复后终端重新运行时，会把同一张卡片标题临时改成“会话名（Running）”；本轮再次进入 waiting 后恢复会话名。</p></article>
-              <article><h3>消息正文</h3><p>正文是当前轮终端内容，不是完整历史。系统优先使用后端维护的终端屏幕快照，浏览器页面打开与否不会影响基础数据源。</p></article>
-              <article><h3>锚点规则</h3><p>每次提交输入时会记录“上次输入文本”和“输入前的屏幕快照”。推送时优先从屏幕快照里找到这次输入的回显，只截取它后面的回复；找不到输入回显时，会用本轮原始输出作为兜底，避免把上一轮内容推出来。</p></article>
-              <article><h3>更新规则</h3><p>同一轮第一次完成会新发主卡片；后续内容变化会 Patch 更新同一张卡片，并单独提示“任务已完成”。Agent 回合优先由 Hook 精确感知，普通终端使用短暂静默作为完成兜底。</p></article>
-              <article><h3>卡片操作</h3><p>普通模式保留刷新和开发者模式按钮。开发者模式开启后，才显示工作目录、模型选择、Agent 重启、艾特模式、终端快捷键和自定义快捷键。</p></article>
-              <article><h3>内容清理</h3><p>推送前会清理终端控制字符、重复行、空白分隔、Codex/TUI 临时状态行，并按“通知过滤规则”处理匹配内容。邮箱样式文本会被替换成 [email]。</p></article>
-              <article><h3>长度限制</h3><p>正文最多保留“通知最大行数”里的尾部内容，同时还有总字符保护。超过限制时会带 [truncated] 前缀，表示前面的内容已被裁剪。</p></article>
-            </div>
-          </section>
-          <section id="help-config" class="help-panel">
-            <h2>配置说明</h2>
-            <div class="help-table">
-              <div><strong>首次引导</strong><span>先设置访问密码，再选择必需的 Agent。完成后可通过左下角齿轮配置飞书和工作目录。</span></div>
-              <div><strong>扫码配置</strong><span>用飞书扫码创建或选择已有应用，本地会自动填入 App ID、App Secret 和 open_id，并通过应用模板补齐基础消息、发消息和卡片回调能力，保存后生效。敏感权限需要在飞书后台开通。</span></div>
-              <div><strong>测试飞书配置</strong><span>保存前可发送测试卡片，并检查“获取群组中所有消息（敏感权限）”是否真实生效。</span></div>
-              <div><strong>App ID / App Secret</strong><span>飞书应用凭证，用于接收事件、发通知、创建群聊。</span></div>
-              <div><strong>开发者 open_id</strong><span>“通知接收 ID”同时用于识别开发者，并作为联系人群聊中的开发者成员。</span></div>
-              <div><strong>Agent</strong><span>首次使用会自动选择本机 Agent，也可以改为 Codex、Claude Code 或自定义 Agent。</span></div>
-              <div><strong>工作目录</strong><span>默认目录可在设置中修改，留空时为 ~/Iris_Workspace/default_dir；还可配置其他项目目录供 Codex 开发者卡片切换。</span></div>
-              <div><strong>设置密码</strong><span>保护飞书凭证、Agent 命令和目录；可在安全页修改，也可通过本机命令重置。</span></div>
-              <div><strong>飞书自定义快捷键</strong><span>配置按钮名称和指令。按钮会显示在系统快捷键下一行，点击后提交该指令。</span></div>
-            </div>
-          </section>
-          <section id="help-files" class="help-panel">
-            <h2>图片与文件</h2>
-            <div class="help-grid">
-              <article><h3>网页粘贴图片</h3><p>在终端区域粘贴图片，会上传到当前会话目录，并把图片路径写入终端。粘贴到下方输入框时，会把路径插入输入框。</p></article>
-              <article><h3>飞书图片</h3><p>从飞书发送图片时，图片会下载到用户数据目录的 data/uploads/{session_id}/lark/，再把本地路径交给终端使用。</p></article>
-              <article><h3>路径用途</h3><p>路径是给本机命令或终端程序读取图片用的。如果要分析图片，可以在路径后补充“请分析这张图”。</p></article>
-              <article><h3>清理规则</h3><p>删除会话时，会同步删除该会话的上传目录。</p></article>
-              <article><h3>数据库辅助文件</h3><p>iris.db-wal 和 iris.db-shm 是 SQLite 运行时文件。服务运行时出现是正常现象，不需要手动处理。</p></article>
-            </div>
-          </section>
-          <section id="help-trouble" class="help-panel">
-            <h2>常见问题</h2>
-            <div class="help-qa">
-              <article>
-                <h3>问题：配置保存时提示数值无效</h3>
-                <p><strong>解决：</strong>检查快速等待、保守等待、通知最大行数是否为空或小于 1。它们都是正整数，单位分别是毫秒和行数。</p>
-              </article>
-              <article>
-                <h3>问题：飞书发送消息后没有响应</h3>
-                <p><strong>解决：</strong>先点击“测试飞书配置”。如果“群所有消息权限”失败，需要在飞书后台为当前 App 开通“获取群组中所有消息（敏感权限）”，发布/审批后再保存配置。只 @ 机器人可用但普通群消息无响应时，基本就是缺这个权限。</p>
-              </article>
-              <article>
-                <h3>问题：飞书通知内容太长</h3>
-                <p><strong>解决：</strong>调小通知最大行数，或在“通知过滤规则”里加入噪声输出的匹配规则。</p>
-              </article>
-              <article>
-                <h3>问题：终端尺寸或显示不正常</h3>
-                <p><strong>解决：</strong>刷新页面后重新选择会话。页面加载和窗口变化时会自动适配终端列数和行数。</p>
-              </article>
-              <article>
-                <h3>问题：粘贴图片后没有看到路径</h3>
-                <p><strong>解决：</strong>确认当前选中的是在线会话。粘贴到终端区域会把路径写入终端；粘贴到下方输入框会把路径插入输入框。</p>
-              </article>
-            </div>
-          </section>
-        </div>
-      </div>
     </dialog>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
