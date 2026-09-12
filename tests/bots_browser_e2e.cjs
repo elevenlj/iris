@@ -66,6 +66,35 @@ const base=process.env.IRIS_TEST_URL;
   await page.locator('#bot-add').click();
   await page.locator('#bot-dialog').waitFor({state:'visible'});
   assert(await page.locator('#bot-scan').isVisible());
+  assert.equal(await page.locator('#bot-scan').innerText(),'创建');
+  await page.locator('#bot-name').fill('Progress test');
+  await page.evaluate(()=>{
+   window.originalBotFetch=window.fetch;
+   window.fetch=(url,options)=>url==='/api/bots/create'?Promise.resolve(new Response(new ReadableStream({start(controller){window.botTestStream=controller}}),{headers:{'Content-Type':'application/x-ndjson'}})):window.originalBotFetch(url,options);
+  });
+  await page.locator('#bot-scan').click();
+  assert(await page.locator('#bot-error').evaluate(e=>e.classList.contains('pending')&&!e.classList.contains('error')));
+  assert(await page.locator('#bot-scan').isDisabled());
+  await page.screenshot({path:'/tmp/iris-bot-creation-progress.png'});
+  const emit=async event=>page.evaluate(e=>window.botTestStream.enqueue(new TextEncoder().encode(JSON.stringify(e)+'\n')),event);
+  for(const [stage,message]of [['checking_login','正在检查登录状态…'],['login','等待登录…'],['creating','登录完成，正在创建…'],['configuring','正在配置权限…'],['publishing','正在确认上线状态…']]){
+   await emit({stage,message,...(stage==='configuring'?{app_id:'cli_created'}:{})});
+   await page.waitForFunction(text=>document.querySelector('#bot-error').textContent===text,message);
+   assert(await page.locator('#bot-error').evaluate(e=>e.classList.contains('pending')&&!e.classList.contains('error')));
+  }
+  await emit({stage:'error',error:'等待企业审批'});
+  await page.waitForFunction(()=>document.querySelector('#bot-error').classList.contains('error'));
+  assert(await page.locator('#bot-created-app').isVisible());assert(await page.locator('#bot-scan').isDisabled());
+  await page.locator('#bot-link').click();
+  await emit({stage:'apps',apps:[{app_id:'cli_created',name:'测试2'}]});
+  await page.evaluate(()=>window.botTestStream.close());
+  await page.locator('#bot-link-fields').waitFor({state:'visible'});
+  assert.equal(await page.locator('#bot-select-app').inputValue(),'cli_created');
+  await page.setViewportSize({width:390,height:844});
+  assert(await page.locator('#bot-dialog').evaluate(e=>e.scrollWidth<=e.clientWidth),'app chooser overflows on mobile');
+  await page.screenshot({path:'/tmp/iris-bot-link-mobile.png'});
+  await page.setViewportSize({width:1440,height:1000});
+  await page.evaluate(()=>{window.fetch=window.originalBotFetch});
   assert.equal(await page.locator('#bot-app-fields').isVisible(),false);
   await page.locator('#bot-existing').click();
   assert(await page.locator('#bot-app-id').isVisible());

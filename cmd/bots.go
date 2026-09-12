@@ -53,20 +53,34 @@ func (s *botService) CreateBot(ctx context.Context, bot httpapi.BotConfig) (http
 	if _, err := validateDefaultWorkspaceDir(bot.DefaultWorkspaceDir); err != nil {
 		return bot, err
 	}
-	app, err := createFeishuApp(ctx, bot.Name, s.dataDir)
+	mode := "create"
+	if bot.AppID != "" {
+		mode = "connect"
+	}
+	app, err := runFeishuSetup(ctx, bot.Name, s.dataDir, mode, bot.AppID)
 	if err != nil {
 		return bot, err
 	}
 	bot.AppID, bot.AppSecret = app.AppID, app.AppSecret
+	httpapi.ReportBotCreationProgress(ctx, "verifying", "应用已发布，正在验证身份和连接…", app.AppID)
 	bot.ReceiveID, err = httpapi.ResolveLarkOwner(ctx, app.AppID, app.AppSecret, app.OwnerEmail)
 	if err != nil {
-		return bot, fmt.Errorf("应用 %s 已创建，但获取开发者身份失败：%w。请勿重复创建", app.AppID, err)
+		return bot, fmt.Errorf("应用 %s 已上线，但获取开发者身份失败：%w。请勿重复创建", app.AppID, err)
 	}
 	result, err := s.SaveBot(ctx, bot)
 	if err != nil {
-		return bot, fmt.Errorf("应用 %s 已创建，但连接验证失败：%w。请勿重复创建", app.AppID, err)
+		return bot, fmt.Errorf("应用 %s 已上线，但连接验证失败：%w。请勿重复创建", app.AppID, err)
 	}
 	return result, nil
+}
+
+func (s *botService) ListFeishuApps(ctx context.Context) ([]httpapi.FeishuApp, error) {
+	if !s.createMu.TryLock() {
+		return nil, errors.New("已有登录或创建任务正在进行，请等待完成")
+	}
+	defer s.createMu.Unlock()
+	result, err := runFeishuSetup(ctx, "", s.dataDir, "list", "")
+	return result.Apps, err
 }
 
 func newBotService(root *appConfigService, server *httpapi.Server, dataDir string) *botService {

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -19,10 +20,33 @@ type BotConfig struct {
 }
 
 type BotService interface {
+	ListFeishuApps(context.Context) ([]FeishuApp, error)
 	CreateBot(context.Context, BotConfig) (BotConfig, error)
 	ListBots() []BotConfig
 	SaveBot(context.Context, BotConfig) (BotConfig, error)
 	BotHandler(string) http.Handler
+}
+
+type FeishuApp struct {
+	AppID string `json:"app_id"`
+	Name  string `json:"name"`
+}
+
+type BotCreationProgress struct {
+	Stage   string      `json:"stage"`
+	Message string      `json:"message,omitempty"`
+	AppID   string      `json:"app_id,omitempty"`
+	BotID   string      `json:"bot_id,omitempty"`
+	Error   string      `json:"error,omitempty"`
+	Apps    []FeishuApp `json:"apps,omitempty"`
+}
+
+type botProgressKey struct{}
+
+func ReportBotCreationProgress(ctx context.Context, stage, message, appID string) {
+	if report, ok := ctx.Value(botProgressKey{}).(func(BotCreationProgress)); ok {
+		report(BotCreationProgress{Stage: stage, Message: message, AppID: appID})
+	}
 }
 
 func (s *Server) handleBotCreate(w http.ResponseWriter, r *http.Request) {
@@ -37,12 +61,51 @@ func (s *Server) handleBotCreate(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	var bot BotConfig
-	if err := decodeLimitedJSON(w, r, &bot); err != nil {
+	var request struct {
+		BotConfig
+		ListApps bool `json:"list_apps"`
+	}
+	if err := decodeLimitedJSON(w, r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	result, err := s.bots.CreateBot(r.Context(), bot)
+	ctx := r.Context()
+	if r.Header.Get("Accept") == "application/x-ndjson" {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Accel-Buffering", "no")
+		report := func(event BotCreationProgress) {
+			_ = json.NewEncoder(w).Encode(event)
+			_ = http.NewResponseController(w).Flush()
+		}
+		ctx = context.WithValue(ctx, botProgressKey{}, report)
+		if request.ListApps {
+			apps, err := s.bots.ListFeishuApps(ctx)
+			if err != nil {
+				report(BotCreationProgress{Stage: "error", Error: err.Error()})
+			} else {
+				report(BotCreationProgress{Stage: "apps", Apps: apps})
+			}
+			return
+		}
+		result, err := s.bots.CreateBot(ctx, request.BotConfig)
+		if err != nil {
+			report(BotCreationProgress{Stage: "error", Error: err.Error()})
+		} else {
+			report(BotCreationProgress{Stage: "done", BotID: result.ID})
+		}
+		return
+	}
+	if request.ListApps {
+		apps, err := s.bots.ListFeishuApps(ctx)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+		} else {
+			writeJSON(w, http.StatusOK, apps, nil)
+		}
+		return
+	}
+	result, err := s.bots.CreateBot(ctx, request.BotConfig)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

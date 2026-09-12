@@ -36,7 +36,12 @@
 .bot-app-heading a { font-size:12px; color:#42694c; }
 .bot-app-heading h3 { font-size:13px; }
 #bot-app-name { background:#f1f2ed; color:#747d70; }
-#bot-error { color:var(--danger); margin-top:16px; white-space:pre-wrap; overflow-wrap:anywhere; }
+#bot-error { color:var(--ink); margin-top:16px; white-space:pre-wrap; overflow-wrap:anywhere; }
+#bot-error.error { color:var(--danger); }
+#bot-error.pending::before { content:""; display:inline-block; width:14px; height:14px; margin-right:8px; vertical-align:-2px; border:2px solid var(--line-strong); border-top-color:var(--accent); border-radius:50%; animation:bot-spin .8s linear infinite; }
+#bot-created-app { display:inline-block; margin-top:8px; color:var(--accent); font-size:12px; }
+@keyframes bot-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { #bot-error.pending::before { animation:none; } }
 
 * {
   box-sizing: border-box;

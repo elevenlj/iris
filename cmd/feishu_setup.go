@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/elevenlj/iris/internal/httpapi"
 	"github.com/gorilla/websocket"
 )
 
@@ -21,15 +22,30 @@ import (
 var feishuSetupScript string
 
 type createdFeishuApp struct {
-	AppID      string `json:"app_id"`
-	AppSecret  string `json:"app_secret"`
-	AppName    string `json:"app_name"`
-	OwnerEmail string `json:"owner_email"`
+	AppID      string              `json:"app_id"`
+	AppSecret  string              `json:"app_secret"`
+	AppName    string              `json:"app_name"`
+	OwnerEmail string              `json:"owner_email"`
+	Apps       []httpapi.FeishuApp `json:"apps,omitempty"`
 }
 
 // Reuse only Iris's own login profile, isolated per service data directory.
 // Never read or export the user's normal browser profile.
 func createFeishuApp(ctx context.Context, name, dataDir string) (createdFeishuApp, error) {
+	return runFeishuSetup(ctx, name, dataDir, "create", "")
+}
+
+func runFeishuSetup(ctx context.Context, name, dataDir, mode, appID string) (createdFeishuApp, error) {
+	result, err := runFeishuBrowser(ctx, name, dataDir, mode, appID, true)
+	if errors.Is(err, errFeishuLoginRequired) {
+		return runFeishuBrowser(ctx, name, dataDir, mode, appID, false)
+	}
+	return result, err
+}
+
+var errFeishuLoginRequired = errors.New("需要飞书登录")
+
+func runFeishuBrowser(ctx context.Context, name, dataDir, mode, appID string, headless bool) (createdFeishuApp, error) {
 	var result createdFeishuApp
 	chrome := findChrome()
 	if chrome == "" {
@@ -41,7 +57,8 @@ func createFeishuApp(ctx context.Context, name, dataDir string) (createdFeishuAp
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	command := exec.Command(chrome, "--user-data-dir="+profile, "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "https://open.feishu.cn/app")
+	httpapi.ReportBotCreationProgress(ctx, "checking_login", "正在检查登录状态…", "")
+	command := exec.Command(chrome, feishuChromeArgs(profile, headless)...)
 	if err := command.Start(); err != nil {
 		return result, err
 	}
@@ -60,6 +77,23 @@ func createFeishuApp(ctx context.Context, name, dataDir string) (createdFeishuAp
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	var connection *websocket.Conn
+	lastStage := "checking_login"
+	reportLogin := func(pageURL string) error {
+		stage, message := "checking_login", "正在检查登录状态…"
+		if strings.HasPrefix(pageURL, "https://accounts.feishu.cn/") || strings.HasPrefix(pageURL, "https://accounts.larkoffice.com/") {
+			stage, message = "login", "等待登录，请在飞书窗口完成登录…"
+		} else if strings.HasPrefix(pageURL, "https://security.larkoffice.com/") || strings.HasPrefix(pageURL, "https://security.feishu.cn/") {
+			stage, message = "device_auth", "等待设备授权，请在飞书客户端确认…"
+		}
+		if headless && stage != "checking_login" {
+			return errFeishuLoginRequired
+		}
+		if stage != lastStage {
+			lastStage = stage
+			httpapi.ReportBotCreationProgress(ctx, stage, message, "")
+		}
+		return nil
+	}
 	for connection == nil {
 		if err := wait(); err != nil {
 			return result, err
@@ -77,6 +111,7 @@ func createFeishuApp(ctx context.Context, name, dataDir string) (createdFeishuAp
 			continue
 		}
 		var pages []struct {
+			ID     string `json:"id"`
 			Type   string `json:"type"`
 			URL    string `json:"url"`
 			Socket string `json:"webSocketDebuggerUrl"`
@@ -87,17 +122,47 @@ func createFeishuApp(ctx context.Context, name, dataDir string) (createdFeishuAp
 			continue
 		}
 		for _, page := range pages {
-			if page.Type == "page" && (strings.HasPrefix(page.URL, "https://open.feishu.cn/") || strings.HasPrefix(page.URL, "https://open.larkoffice.com/")) {
+			if page.Type == "page" {
 				connection, _, err = websocket.DefaultDialer.DialContext(ctx, page.Socket, nil)
 				if err == nil {
+					// Session restore may bring back stale login tabs. Keep one Iris
+					// tab and navigate afresh before judging the saved login state.
+					for _, other := range pages {
+						if other.Type == "page" && other.ID != page.ID {
+							_ = connection.WriteJSON(map[string]any{"id": -2, "method": "Target.closeTarget", "params": map[string]string{"targetId": other.ID}})
+						}
+					}
 					break
 				}
 			}
 		}
 	}
 	defer connection.Close()
+	if err := connection.WriteJSON(map[string]any{"id": -3, "method": "Page.navigate", "params": map[string]string{"url": "https://open.feishu.cn/app"}}); err != nil {
+		return result, err
+	}
 	stop := context.AfterFunc(ctx, func() { connection.Close() })
 	defer stop()
+	// Wait for the new navigation to commit; the restored page can still show
+	// a stale login URL while Page.navigate is in flight.
+	for {
+		var response struct {
+			ID     int             `json:"id"`
+			Error  json.RawMessage `json:"error"`
+			Result struct {
+				ErrorText string `json:"errorText"`
+			} `json:"result"`
+		}
+		if err := connection.ReadJSON(&response); err != nil {
+			return result, err
+		}
+		if response.ID == -3 {
+			if response.Error != nil || response.Result.ErrorText != "" {
+				return result, errors.New("飞书开放平台加载失败，请检查网络后重试")
+			}
+			break
+		}
+	}
 	sequence := 0
 	evaluate := func(expression string, out any) error {
 		sequence++
@@ -106,6 +171,11 @@ func createFeishuApp(ctx context.Context, name, dataDir string) (createdFeishuAp
 		}
 		for {
 			var response struct {
+				Method string `json:"method"`
+				Params struct {
+					Name    string `json:"name"`
+					Payload string `json:"payload"`
+				} `json:"params"`
 				ID     int             `json:"id"`
 				Error  json.RawMessage `json:"error"`
 				Result struct {
@@ -123,6 +193,13 @@ func createFeishuApp(ctx context.Context, name, dataDir string) (createdFeishuAp
 			if err := connection.ReadJSON(&response); err != nil {
 				return err
 			}
+			if response.Method == "Runtime.bindingCalled" && response.Params.Name == "irisSetupProgress" {
+				var event httpapi.BotCreationProgress
+				if json.Unmarshal([]byte(response.Params.Payload), &event) == nil {
+					httpapi.ReportBotCreationProgress(ctx, event.Stage, event.Message, event.AppID)
+				}
+				continue
+			}
 			if response.ID != sequence {
 				continue
 			}
@@ -130,23 +207,53 @@ func createFeishuApp(ctx context.Context, name, dataDir string) (createdFeishuAp
 				return errors.New("浏览器执行失败")
 			}
 			if response.Result.Exception != nil {
-				return fmt.Errorf("%s", response.Result.Exception.Exception.Description)
+				return errors.New(strings.TrimPrefix(strings.SplitN(response.Result.Exception.Exception.Description, "\n", 2)[0], "Error: "))
 			}
 			return json.Unmarshal(response.Result.Result.Value, out)
 		}
 	}
 	for {
-		var ready bool
-		if err := evaluate("['https://open.feishu.cn','https://open.larkoffice.com'].includes(location.origin) && Boolean(window.csrfToken && window.user && window.user.id)", &ready); err == nil && ready {
-			break
+		var state struct {
+			Ready bool   `json:"ready"`
+			URL   string `json:"url"`
+		}
+		if err := evaluate("({ready:['https://open.feishu.cn','https://open.larkoffice.com'].includes(location.origin) && Boolean(window.csrfToken && window.user && window.user.id),url:location.origin+location.pathname})", &state); err == nil {
+			if state.Ready {
+				break
+			}
+			if err := reportLogin(state.URL); err != nil {
+				return result, err
+			}
 		}
 		if err := wait(); err != nil {
 			return result, err
 		}
 	}
+	stage, message := "creating", "登录完成，正在创建应用…"
+	if mode == "list" {
+		stage, message = "listing", "登录完成，正在读取已有应用…"
+	}
+	if mode == "connect" {
+		stage, message = "verifying", "登录完成，正在验证已有应用…"
+	}
+	httpapi.ReportBotCreationProgress(ctx, stage, message, "")
+	if err := connection.WriteJSON(map[string]any{"id": -1, "method": "Runtime.addBinding", "params": map[string]string{"name": "irisSetupProgress"}}); err != nil {
+		return result, err
+	}
 	encodedName, _ := json.Marshal(name)
-	err = evaluate(feishuSetupScript+"\nirisCreateFeishuApp("+string(encodedName)+")", &result)
+	encodedMode, _ := json.Marshal(mode)
+	encodedID, _ := json.Marshal(appID)
+	err = evaluate(feishuSetupScript+"\nirisCreateFeishuApp("+string(encodedName)+","+string(encodedMode)+","+string(encodedID)+")", &result)
 	return result, err
+}
+
+func feishuChromeArgs(profile string, headless bool) []string {
+	// Chrome session cookies need session restoration, not just a retained directory.
+	args := []string{"--user-data-dir=" + profile, "--restore-last-session", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "https://open.feishu.cn/app"}
+	if headless {
+		args = append([]string{"--headless=new"}, args...)
+	}
+	return args
 }
 
 func feishuLoginProfile(dataDir string) (string, error) {

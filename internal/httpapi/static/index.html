@@ -36,8 +36,13 @@
         <label>默认 Agent<select id="bot-agent" required></select></label>
         <label>默认工作目录<input id="bot-directory" placeholder="/Users/me/projects"></label>
         <div id="bot-create-methods" class="bot-create-methods">
-          <button id="bot-scan" type="button">扫码创建</button>
-          <button id="bot-existing" type="button">接入已有应用</button>
+          <button id="bot-scan" type="button">创建</button>
+          <button id="bot-link" type="button">关联已有机器人</button>
+          <button id="bot-existing" type="button">手动填写</button>
+        </div>
+        <div id="bot-link-fields" hidden>
+          <label>选择已有应用<select id="bot-select-app"></select></label>
+          <button id="bot-connect" type="button">关联</button>
         </div>
         <section id="bot-app-fields" hidden>
           <div class="bot-app-heading"><h3>飞书应用</h3><a id="bot-console" target="_blank" rel="noreferrer">打开应用后台 ↗</a></div>
@@ -47,7 +52,8 @@
           <button id="bot-show-secret" class="link-btn" type="button">显示 Secret</button>
           <label>通知接收 ID<input id="bot-receive-id" autocomplete="off"></label>
         </section>
-        <div id="bot-error" role="status"></div>
+        <div id="bot-error" role="status" aria-live="polite"></div>
+        <a id="bot-created-app" target="_blank" rel="noopener noreferrer" hidden>查看已创建的应用 ↗</a>
         <div class="dialog-actions"><button id="bot-cancel" type="button">取消</button><button id="bot-save" type="submit">创建</button></div>
       </form>
     </dialog>

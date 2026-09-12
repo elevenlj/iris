@@ -17,7 +17,21 @@ async function loadBots() {
   $('bot-settings').disabled = !irisBots.some(bot => bot.id === selected);
 }
 
-function botError(error) { $('bot-error').textContent = error.message || String(error); }
+function botStatus(message, kind = '') {
+  $('bot-error').textContent = message;
+  $('bot-error').className = kind;
+  $('bot-error').setAttribute('aria-busy', String(kind === 'pending'));
+}
+function botError(error) { botStatus(error.message || String(error), 'error'); }
+
+function setBotPending(pending) {
+  botSavePending = pending;
+  for (const id of ['bot-scan','bot-link','bot-connect','bot-select-app','bot-existing','bot-save','bot-cancel','bot-name','bot-agent','bot-directory']) $(id).disabled = pending;
+  if (!pending) {
+    $('bot-error').classList.remove('pending');
+    $('bot-error').setAttribute('aria-busy','false');
+  }
+}
 
 async function openBotEditor(edit) {
   if (!await ensureSettingsAccess(false)) return;
@@ -36,7 +50,10 @@ async function openBotEditor(edit) {
   $('bot-receive-id').value = bot?.receive_id || '';
   $('bot-app-fields').hidden = !edit;
   $('bot-create-methods').hidden = edit;
-  $('bot-error').textContent = '';
+  botStatus('');
+  $('bot-created-app').hidden = true;
+  $('bot-link-fields').hidden = true;
+  setBotPending(false);
   $('bot-save').textContent = edit ? '保存' : '创建';
   $('bot-save').hidden = !edit;
   $('bot-scan').disabled = false;
@@ -59,31 +76,89 @@ function readBot() {
 async function saveBot() {
   if (botSavePending) return;
   const bot = readBot();
-  botSavePending = true;
-  $('bot-save').disabled = true;
-  $('bot-error').textContent = editingBotID ? '正在保存…' : '正在验证连接和权限…';
+  setBotPending(true);
+  botStatus(editingBotID ? '正在保存…' : '正在验证连接和权限…', 'pending');
   try {
     const result = await api('/api/bots', { method: editingBotID ? 'PATCH' : 'POST', body: JSON.stringify(bot) });
     $('bot-dialog').close();
     // Reloading closes the old WebSocket and prevents late responses from the
     // previous bot from replacing the newly selected bot's terminal.
     location.assign(result.id === 'default' ? '/' : `/bots/${result.id}/`);
-  } finally { botSavePending = false; $('bot-save').disabled = false; }
+  } finally { setBotPending(false); }
 }
 
-async function createBotWithQR() {
+async function streamBotSetup(bot, receive) {
+  const response = await fetch('/api/bots/create', {method:'POST',headers:{'Content-Type':'application/json',Accept:'application/x-ndjson'},body:JSON.stringify(bot)});
+  if (!response.ok) throw new Error((await response.json()).error || '请求失败');
+  const reader = response.body.getReader(), decoder = new TextDecoder();
+  let buffer = '';
+  const line = text => { if (text.trim()) receive(JSON.parse(text)); };
+  try {
+    while (true) {
+      const {value,done} = await reader.read();
+      buffer += decoder.decode(value, {stream:!done});
+      const lines = buffer.split('\n'); buffer = lines.pop();
+      for (const text of lines) line(text);
+      if (done) { line(buffer); break; }
+    }
+  } finally { await reader.cancel().catch(()=>{}); }
+}
+
+async function listExistingBots() {
+  if (botSavePending) return;
+  setBotPending(true);
+  botStatus('正在检查登录状态…', 'pending');
+  let apps;
+  try {
+    await streamBotSetup({list_apps:true}, event => {
+      if (event.stage === 'error') throw new Error(event.error);
+      if (event.message) botStatus(event.message,'pending');
+      if (event.stage === 'apps') apps = event.apps || [];
+    });
+    if (!apps) throw new Error('连接已中断，请重试读取应用列表');
+    const select = $('bot-select-app'); select.replaceChildren();
+    for (const app of apps) {
+      if (irisBots.some(bot=>bot.app_id===app.app_id)) continue;
+      const option = document.createElement('option');
+      option.value = app.app_id; option.textContent = `${app.name} (${app.app_id})`;
+      option.dataset.name = app.name; select.appendChild(option);
+    }
+    $('bot-link-fields').hidden = select.options.length === 0;
+    botStatus(select.options.length ? '请选择要关联的应用' : '当前账号没有可关联的新应用');
+  } finally { setBotPending(false); }
+}
+
+async function createBot(connect = false) {
   if (botSavePending) return;
   const bot = readBot();
-  botSavePending = true;
-  $('bot-scan').disabled = true;
-  $('bot-error').textContent = '正在打开飞书窗口并检查登录状态；如已失效，请完成登录。登录后会自动创建应用、配置权限并验证连接。';
+  bot.app_id = connect ? $('bot-select-app').value : '';
+  if (connect && !bot.app_id) throw new Error('请选择已有应用');
+  setBotPending(true);
+  botStatus('正在检查登录状态…', 'pending');
+  let createdApp = false;
   try {
-    const result = await api('/api/bots/create', {method:'POST',body:JSON.stringify(bot)});
-    $('bot-dialog').close();
-    location.assign(result.id === 'default' ? '/' : `/bots/${result.id}/`);
+    let resultID = '';
+    const receive = event => {
+      if (event.app_id && /^cli_[a-zA-Z0-9]+$/.test(event.app_id)) {
+        createdApp = true;
+        $('bot-created-app').href = larkAppConsoleURL(event.app_id);
+        $('bot-created-app').textContent = connect ? '查看应用 ↗' : '查看已创建的应用 ↗';
+        $('bot-created-app').hidden = false;
+        $('bot-app-id').value = event.app_id;
+        updateBotConsole();
+      }
+      if (event.stage === 'error') throw new Error(event.error);
+      if (event.stage === 'done') resultID = event.bot_id;
+      if (event.message) botStatus(event.message, 'pending');
+    };
+    await streamBotSetup(bot, receive);
+    if (!resultID) throw new Error('连接已中断，创建结果尚未确认，请先查看应用后台，勿重复创建。');
+    botStatus(connect ? '关联完成' : '创建完成');
+    location.assign(resultID === 'default' ? '/' : `/bots/${encodeURIComponent(resultID)}/`);
   } finally {
-    botSavePending = false;
-    $('bot-scan').disabled = false;
+    setBotPending(false);
+    // An app already exists; do not offer a second create after a later failure.
+    $('bot-scan').disabled = createdApp;
   }
 }
 
@@ -95,9 +170,20 @@ function updateBotConsole() {
 $('bot-select').onchange = () => location.assign($('bot-select').value === 'default' ? '/' : `/bots/${encodeURIComponent($('bot-select').value)}/`);
 $('bot-settings').onclick = () => openBotEditor(true).catch(botError);
 $('bot-add').onclick = () => openBotEditor(false).catch(botError);
-$('bot-form').onsubmit = event => {event.preventDefault();saveBot().catch(botError)};
-$('bot-scan').onclick = () => createBotWithQR().catch(botError);
-$('bot-existing').onclick = () => {$('bot-app-fields').hidden = false;$('bot-save').hidden = false;$('bot-create-methods').hidden = true};
+$('bot-form').onsubmit = event => {
+  event.preventDefault();
+  if (botSavePending) return;
+  if (!$('bot-save').hidden) saveBot().catch(botError);
+  else if (!$('bot-link-fields').hidden) $('bot-connect').click();
+  else if (!$('bot-scan').disabled) createBot().catch(botError);
+};
+$('bot-scan').onclick = () => createBot().catch(botError);
+$('bot-link').onclick = () => listExistingBots().catch(botError);
+$('bot-connect').onclick = () => {
+  if (!$('bot-name').value.trim()) $('bot-name').value = $('bot-select-app').selectedOptions[0]?.dataset.name || '';
+  createBot(true).catch(botError);
+};
+$('bot-existing').onclick = () => {$('bot-app-fields').hidden = false;$('bot-save').hidden = false;$('bot-create-methods').hidden = true;$('bot-link-fields').hidden = true};
 $('bot-cancel').onclick = () => {if (!botSavePending) $('bot-dialog').close()};
 $('bot-dialog').addEventListener('cancel', event => {if (botSavePending) event.preventDefault()});
 $('bot-app-id').oninput = () => {$('bot-app-name').value='';updateBotConsole()};
