@@ -18,6 +18,23 @@
   --terminal-standard-rows: 36;
 }
 
+/* Bot navigation extends the existing terminal layout; session status colors stay unchanged. */
+.bot-title { display:flex; align-items:center; gap:4px; }
+.bot-title select { flex:1; min-width:0; border-radius:8px; }
+.bot-title .bot-settings { flex:none; display:grid; place-items:center; width:44px; height:44px; padding:0; font-size:24px; border:0; background:none; }
+.sidebar .brand { font-style:italic; color:#42694c; }
+.sidebar .bot-add { border:0; background:none; text-align:left; padding:4px 0; color:#42694c; }
+.sidebar-footer .global-settings { display:flex; align-items:center; gap:8px; border:0; background:none; padding:8px 0; }
+.global-settings span { font-size:24px; line-height:1; }
+#bot-dialog { width:min(490px,calc(100vw - 32px)); max-height:90vh; overflow:auto; }
+#bot-dialog label { display:block; margin-top:18px; }
+#bot-dialog label input, #bot-dialog label select { display:block; margin-top:8px; border-radius:8px; }
+.bot-create-methods { display:flex; flex-wrap:wrap; gap:10px; margin-top:24px; }
+.bot-app-heading { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin-top:24px; border-top:1px solid var(--line); }
+.bot-app-heading a { font-size:12px; color:#42694c; }
+#bot-app-name { background:rgba(0,0,0,.04); }
+#bot-error { color:var(--danger); margin-top:16px; white-space:pre-wrap; overflow-wrap:anywhere; }
+
 * {
   box-sizing: border-box;
 }

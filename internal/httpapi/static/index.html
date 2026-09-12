@@ -9,16 +9,17 @@
   </head>
   <body>
     <aside class="sidebar">
-      <div class="eyebrow">PERSONAL AI ASSISTANT</div>
-      <div class="brand">Iris</div>
-      <form id="new-session" class="new-session">
+      <div class="brand">iris</div>
+      <div class="bot-title"><select id="bot-select" aria-label="选择机器人"></select><button id="bot-settings" class="bot-settings" type="button" aria-label="机器人设置"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 3-1 2 3 3-1 1-3 3-1 1-3-2-2 1-3-3-2-3 1-2-3Z"/><circle cx="12" cy="11" r="3"/></svg></button></div>
+      <button id="bot-add" class="bot-add" type="button">＋ 添加机器人</button>
+      <form id="new-session" class="new-session" hidden>
         <input id="session-name" aria-label="会话名称" placeholder="会话名称" autocomplete="off">
         <button title="新建会话">新建会话</button>
       </form>
       <input id="session-search" class="search" aria-label="搜索会话" placeholder="搜索会话" autocomplete="off">
       <div id="sessions" class="sessions"></div>
       <div class="sidebar-footer">
-        <button id="config-open" class="settings-btn" type="button" title="配置" aria-label="配置">⚙</button>
+        <button id="config-open" class="global-settings" type="button" aria-label="全局设置"><span aria-hidden="true">⚙</span> 全局设置</button>
       </div>
     </aside>
     <main class="main">
@@ -36,6 +37,28 @@
         <button>发送</button>
       </form>
     </main>
+    <dialog id="bot-dialog" aria-labelledby="bot-dialog-title">
+      <form id="bot-form">
+        <h2 id="bot-dialog-title">添加机器人</h2>
+        <label>机器人名称<input id="bot-name" required maxlength="40"></label>
+        <label>默认 Agent<select id="bot-agent" required></select></label>
+        <label>默认工作目录<input id="bot-directory" placeholder="/Users/me/projects"></label>
+        <div id="bot-create-methods" class="bot-create-methods">
+          <button id="bot-scan" type="button">扫码创建</button>
+          <button id="bot-existing" type="button">接入已有应用</button>
+        </div>
+        <section id="bot-app-fields" hidden>
+          <div class="bot-app-heading"><h3>飞书应用</h3><a id="bot-console" target="_blank" rel="noreferrer">打开应用后台 ↗</a></div>
+          <label>应用名称<input id="bot-app-name" readonly></label>
+          <label>App ID<input id="bot-app-id" autocomplete="off"></label>
+          <label>App Secret<input id="bot-app-secret" type="password" autocomplete="off"></label>
+          <button id="bot-show-secret" class="link-btn" type="button">显示 Secret</button>
+          <label>通知接收 ID<input id="bot-receive-id" autocomplete="off"></label>
+        </section>
+        <div id="bot-error" role="status"></div>
+        <div class="dialog-actions"><button id="bot-cancel" type="button">取消</button><button id="bot-save" type="submit">创建</button></div>
+      </form>
+    </dialog>
     <dialog id="quick-dialog">
       <form id="quick-form" method="dialog">
         <div class="dialog-title">添加快捷命令</div>
@@ -77,14 +100,13 @@
       <form id="config-form" method="dialog">
         <div class="config-head">
           <div>
-            <div class="dialog-title">配置</div>
-            <div class="config-subtitle">修改后保存到本机配置</div>
+            <div class="dialog-title">全局设置</div>
           </div>
         </div>
         <nav class="config-tabs" aria-label="配置分组">
-          <button class="config-tab active" type="button" data-config-target="config-lark">飞书</button>
+          <button class="config-tab" hidden type="button" data-config-target="config-lark">飞书</button>
           <button class="config-tab" type="button" data-config-target="config-session">Agent</button>
-          <button class="config-tab" type="button" data-config-target="config-runtime">服务</button>
+          <button class="config-tab" hidden type="button" data-config-target="config-runtime">服务</button>
           <button class="config-tab" type="button" data-config-target="config-security">安全</button>
           <button class="config-tab" type="button" data-config-target="config-workspaces">工作目录</button>
           <button class="config-tab hidden" hidden type="button" data-config-target="config-notify">等待通知</button>
@@ -93,6 +115,7 @@
         <div class="config-sections">
           <section id="config-security" class="config-section config-panel">
             <h2>安全</h2>
+            <label class="config-check"><input id="cfg-auto-start-enabled" type="checkbox"><span>开机自启</span></label>
             <p class="config-subtitle">定期更新访问密码，保护飞书凭证、Agent 和工作目录配置。</p>
             <div id="settings-security-warning" class="security-warning hidden" hidden>当前未设置访问密码。任何能访问本页面的人都可以修改飞书凭证和 Agent 命令，建议立即设置密码。</div>
             <div class="security-password-card">
@@ -121,14 +144,13 @@
               <div id="environment-check-result" class="environment-check-result" aria-live="polite"></div>
             </div>
           </section>
-          <section id="config-runtime" class="config-section config-panel">
+          <section id="config-runtime" class="config-section config-panel" hidden>
             <h2>服务</h2>
             <div class="environment-check">
               <div>
                 <strong>登录后自动启动</strong>
                 <p>默认开启。关闭后不影响当前运行的 Iris，下次登录系统时不再自动启动。</p>
               </div>
-              <label class="config-check"><input id="cfg-auto-start-enabled" type="checkbox"><span>自动启动 Iris</span></label>
             </div>
           </section>
           <section id="config-session" class="config-section config-panel">
@@ -138,11 +160,10 @@
             </div>
             <div class="agent-preset">
               <div class="agent-preset-heading">
-                <strong>默认 Agent</strong>
-                <p>所有新会话都会自动启动当前 Agent，不能留空。</p>
+                <strong>自定义 Agent</strong>
               </div>
               <div class="agent-preset-controls">
-                <label class="agent-field">
+                <label class="agent-field" hidden>
                   <span>Agent 类型</span>
                   <select id="cfg-agent-preset" aria-label="默认 Agent"></select>
                 </label>
@@ -151,6 +172,12 @@
               </div>
               <div id="agent-preset-status" class="agent-preset-status" aria-live="polite"></div>
             </div>
+            <div class="custom-shortcut-editor">
+              <strong>飞书自定义快捷键</strong>
+              <div id="custom-shortcut-list" class="custom-shortcut-list"></div>
+              <button id="custom-shortcut-add" type="button">添加快捷键</button>
+            </div>
+            <textarea id="cfg-lark-custom-shortcuts" class="hidden" hidden spellcheck="false"></textarea>
           </section>
           <section id="config-workspaces" class="config-section config-panel">
             <h2>工作目录</h2>
@@ -160,7 +187,7 @@
             <button id="workspace-option-add" type="button">添加目录</button>
             <textarea id="cfg-workspace-options" class="hidden" hidden spellcheck="false"></textarea>
           </section>
-          <section id="config-lark" class="config-section config-panel active">
+          <section id="config-lark" class="config-section config-panel" hidden>
             <h2>飞书</h2>
             <div class="lark-register">
               <div>
@@ -209,15 +236,6 @@
               <button id="lark-test-start" type="button">测试飞书配置</button>
               <div id="lark-test-result" class="lark-test-result" aria-live="polite"></div>
             </div>
-            <div class="custom-shortcut-editor">
-              <div>
-                <strong>飞书自定义快捷键</strong>
-                <p>显示在系统快捷键下一行。点击后会把对应指令提交到当前会话。</p>
-              </div>
-              <div id="custom-shortcut-list" class="custom-shortcut-list"></div>
-              <button id="custom-shortcut-add" type="button">添加快捷键</button>
-            </div>
-            <textarea id="cfg-lark-custom-shortcuts" class="hidden" hidden spellcheck="false"></textarea>
           </section>
           <section id="config-notify" class="config-section config-panel">
             <h2>等待与通知</h2>
@@ -428,5 +446,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
     <script src="/app.js"></script>
+    <script src="/bots.js"></script>
   </body>
 </html>

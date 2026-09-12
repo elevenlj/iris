@@ -58,6 +58,7 @@ var defaultLarkNotifyDropLineRules = session.LarkNotifyDropLineRules{
 }
 
 type Config struct {
+	Bots                            []httpapi.BotConfig                   `json:"bots,omitempty"`
 	Port                            string                                `json:"port"`
 	AutoStartEnabled                bool                                  `json:"auto_start_enabled"`
 	LarkAppID                       string                                `json:"lark_app_id"`
@@ -225,6 +226,7 @@ func run() error {
 		st,
 		session.ShellLauncher{},
 		session.WithNotifier(notifier),
+		session.WithIsolatedMessageRegistry(),
 		session.WithWaitingTransitionDelays(
 			time.Duration(cfg.FastWaitingTransitionMs)*time.Millisecond,
 			time.Duration(cfg.ConservativeWaitingTransitionMs)*time.Millisecond,
@@ -266,6 +268,13 @@ func run() error {
 
 	configSvc := &appConfigService{path: configPath, cfg: &cfg, manager: mgr, bridge: bridge}
 	srv := httpapi.NewServer(mgr, uploadsDir, configSvc)
+	bots := newBotService(configSvc, srv, dataDir)
+	if err := bots.Start(); err != nil {
+		return err
+	}
+	defer bots.Close()
+	srv.SetBotService(bots)
+	configSvc.bots = bots
 	addr := ":" + cfg.Port
 	log.Printf("iris listening on http://localhost%s", addr)
 	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
@@ -306,11 +315,12 @@ func run() error {
 	}()
 	if !opts.NoOpen && !envBool("IRIS_NO_OPEN", false) {
 		go func() {
-			if err := openBrowserURL(startupBrowserURL(listener.Addr(), cfg.Port)); err != nil {
+			if err := openBrowserURL(startupBrowserURL(listener.Addr(), actualPort)); err != nil {
 				log.Printf("failed to open Iris page: %v", err)
 			}
 		}()
 	}
+	go bots.refreshAppNames()
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, interruptSignals()...)
 	defer signal.Stop(sigCh)
@@ -526,7 +536,15 @@ func migrateAgentDefinitions(cfg Config) (Config, bool) {
 	agents := append([]session.AgentConfig(nil), cfg.Agents...)
 	legacyKind := strings.ToLower(strings.TrimSpace(cfg.AgentKind))
 	legacyCommand := strings.TrimSpace(cfg.AgentCommand)
-	if legacyKind == "custom" && legacyCommand != "" && agentConfigByID(agents, "custom").Command == "" {
+	legacyCustomID := "custom"
+	legacyCustomPresent := false
+	for _, agent := range agents {
+		if strings.EqualFold(agent.Kind, "custom") && strings.TrimSpace(agent.Command) == legacyCommand {
+			legacyCustomID, legacyCustomPresent = agent.ID, true
+			break
+		}
+	}
+	if legacyKind == "custom" && legacyCommand != "" && !legacyCustomPresent && agentConfigByID(agents, "custom").Command == "" {
 		agents = append(agents, session.AgentConfig{ID: "custom", Name: strings.TrimSpace(cfg.AgentName), Kind: "custom", Command: legacyCommand})
 	}
 	if agentConfigByID(agents, "codex").ID == "" {
@@ -606,7 +624,7 @@ func migrateAgentDefinitions(cfg Config) (Config, bool) {
 		case "codex", "claude", "aiden", "aiden-codex", "aiden-claude":
 			cfg.DefaultAgentID = legacyKind
 		case "custom":
-			cfg.DefaultAgentID = "custom"
+			cfg.DefaultAgentID = legacyCustomID
 		}
 	}
 	cfg = syncLegacyDefaultAgent(cfg)
@@ -875,6 +893,7 @@ func enterRuntimeDir(dir string) (string, error) {
 }
 
 type appConfigService struct {
+	bots      *botService
 	mu        sync.Mutex
 	path      string
 	cfg       *Config
@@ -999,6 +1018,18 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 	cfg.DefaultWorkspaceDir = defaultWorkspaceDir
 	cfg.WorkspaceOptions = workspaces
 	cfg.AutoStartEnabled = req.AutoStartEnabled
+	// Bot credentials are edited and validated through /api/bots, not a stale
+	// global-settings form that another tab may have opened before that edit.
+	if len(cfg.Bots) > 0 {
+		cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkNotifyReceiveID = oldCfg.LarkAppID, oldCfg.LarkAppSecret, oldCfg.LarkNotifyReceiveID
+	}
+	if s.bots != nil {
+		for _, bot := range cfg.Bots {
+			if _, _, err := validateAgentDefinitions(cfg.Agents, bot.DefaultAgentID); err != nil {
+				return httpapi.RuntimeConfig{}, fmt.Errorf("机器人 %s 的默认 Agent 不可用：%w", bot.Name, err)
+			}
+		}
+	}
 	reconnectLark := oldCfg.LarkAppID != cfg.LarkAppID || oldCfg.LarkAppSecret != cfg.LarkAppSecret
 	if oldCfg.AutoStartEnabled != cfg.AutoStartEnabled && s.autoStart != nil {
 		if err := s.autoStart(cfg.AutoStartEnabled); err != nil {
@@ -1018,6 +1049,11 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 		return httpapi.RuntimeConfig{}, err
 	}
 	*s.cfg = cfg
+	if s.bots != nil {
+		if err := s.bots.applyGlobal(cfg); err != nil {
+			return httpapi.RuntimeConfig{}, err
+		}
+	}
 	return runtimeConfigFromConfig(cfg), nil
 }
 
@@ -1167,7 +1203,7 @@ func writeConfigFile(path string, cfg Config) error {
 		return err
 	}
 	b = append(b, '\n')
-	return os.WriteFile(path, b, 0o600)
+	return writeFileAtomic(path, b, 0o600)
 }
 
 func env(key, fallback string) string {
@@ -1190,23 +1226,25 @@ func envBool(key string, fallback bool) bool {
 }
 
 type headlessBrowserManager struct {
-	port     string
-	mu       sync.Mutex
-	sessions map[string]*headlessBrowserSession
-	starting map[string]struct{}
+	pathPrefix string
+	port       string
+	mu         sync.Mutex
+	sessions   map[string]*headlessBrowserSession
+	starting   map[string]chan struct{}
 }
 
 type headlessBrowserSession struct {
 	cmd     *exec.Cmd
 	profile string
 	started time.Time
+	done    chan struct{}
 }
 
 func newHeadlessBrowserManager(port string) *headlessBrowserManager {
 	return &headlessBrowserManager{
 		port:     port,
 		sessions: make(map[string]*headlessBrowserSession),
-		starting: make(map[string]struct{}),
+		starting: make(map[string]chan struct{}),
 	}
 }
 
@@ -1215,7 +1253,7 @@ func (m *headlessBrowserManager) Ensure(sessionID string) {
 		return
 	}
 	m.mu.Lock()
-	if sess := m.sessions[sessionID]; sess != nil && sess.cmd != nil && sess.cmd.ProcessState == nil {
+	if sess := m.sessions[sessionID]; sess != nil && sess.cmd != nil {
 		m.mu.Unlock()
 		return
 	}
@@ -1223,7 +1261,8 @@ func (m *headlessBrowserManager) Ensure(sessionID string) {
 		m.mu.Unlock()
 		return
 	}
-	m.starting[sessionID] = struct{}{}
+	done := make(chan struct{})
+	m.starting[sessionID] = done
 	m.mu.Unlock()
 	started := false
 	defer func() {
@@ -1231,7 +1270,9 @@ func (m *headlessBrowserManager) Ensure(sessionID string) {
 			return
 		}
 		m.mu.Lock()
-		delete(m.starting, sessionID)
+		if m.starting[sessionID] == done {
+			delete(m.starting, sessionID)
+		}
 		m.mu.Unlock()
 	}()
 
@@ -1245,7 +1286,7 @@ func (m *headlessBrowserManager) Ensure(sessionID string) {
 		log.Printf("headless browser profile setup failed: %v", err)
 		return
 	}
-	pageURL := "http://localhost:" + m.port + "/?session=" + url.QueryEscape(sessionID) + "&headless=1"
+	pageURL := "http://localhost:" + m.port + m.pathPrefix + "/?session=" + url.QueryEscape(sessionID) + "&headless=1"
 	cmd := exec.Command(chrome, headlessChromeArgs(profile, pageURL)...)
 	cmd.Stderr = log.Writer()
 	configureDetachedCommand(cmd)
@@ -1255,14 +1296,14 @@ func (m *headlessBrowserManager) Ensure(sessionID string) {
 		return
 	}
 	m.mu.Lock()
-	delete(m.starting, sessionID)
-	if existing := m.sessions[sessionID]; existing != nil && existing.cmd != nil && existing.cmd.ProcessState == nil {
+	if m.starting[sessionID] != done || m.sessions[sessionID] != nil {
 		m.mu.Unlock()
-		terminateHeadlessProcess(cmd)
-		_ = os.RemoveAll(profile)
+		go func() { _ = cmd.Wait(); close(done); _ = os.RemoveAll(profile) }()
+		terminateHeadlessProcess(cmd, done)
 		return
 	}
-	m.sessions[sessionID] = &headlessBrowserSession{cmd: cmd, profile: profile, started: time.Now()}
+	delete(m.starting, sessionID)
+	m.sessions[sessionID] = &headlessBrowserSession{cmd: cmd, profile: profile, started: time.Now(), done: done}
 	m.mu.Unlock()
 	started = true
 	log.Printf("headless browser started for terminal snapshots (pid=%d, session=%s)", cmd.Process.Pid, sessionID)
@@ -1270,6 +1311,7 @@ func (m *headlessBrowserManager) Ensure(sessionID string) {
 		if err := cmd.Wait(); err != nil {
 			log.Printf("headless browser exited: %v", err)
 		}
+		close(done)
 		m.mu.Lock()
 		if sess := m.sessions[sessionID]; sess != nil && sess.cmd == cmd {
 			delete(m.sessions, sessionID)
@@ -1284,30 +1326,31 @@ func (m *headlessBrowserManager) Stop(sessionID string) {
 		return
 	}
 	m.mu.Lock()
+	delete(m.starting, sessionID)
 	sess := m.sessions[sessionID]
 	if sess != nil {
 		delete(m.sessions, sessionID)
 	}
 	m.mu.Unlock()
-	if sess == nil || sess.cmd == nil || sess.cmd.Process == nil || sess.cmd.ProcessState != nil {
+	if sess == nil || sess.cmd == nil || sess.cmd.Process == nil {
 		return
 	}
 	log.Printf("headless browser stopped (pid=%d, session=%s)", sess.cmd.Process.Pid, sessionID)
-	terminateHeadlessProcess(sess.cmd)
+	terminateHeadlessProcess(sess.cmd, sess.done)
 }
 
 func (m *headlessBrowserManager) StopAll() {
 	m.mu.Lock()
 	sessions := m.sessions
 	m.sessions = make(map[string]*headlessBrowserSession)
-	m.starting = make(map[string]struct{})
+	m.starting = make(map[string]chan struct{})
 	m.mu.Unlock()
 	for sessionID, sess := range sessions {
-		if sess == nil || sess.cmd == nil || sess.cmd.Process == nil || sess.cmd.ProcessState != nil {
+		if sess == nil || sess.cmd == nil || sess.cmd.Process == nil {
 			continue
 		}
 		log.Printf("headless browser stopped (pid=%d, session=%s)", sess.cmd.Process.Pid, sessionID)
-		terminateHeadlessProcess(sess.cmd)
+		terminateHeadlessProcess(sess.cmd, sess.done)
 	}
 }
 

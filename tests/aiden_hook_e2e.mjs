@@ -16,7 +16,7 @@ const server = http.createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    const match = request.url?.match(/^\/api\/sessions\/([^/]+)\/hook\/turn-ended$/);
+    const match = request.url?.match(/^\/bots\/hook-test\/api\/sessions\/([^/]+)\/hook\/turn-ended$/);
     assert.ok(match, request.url);
     const queue = waiters.get(match[1]);
     assert.ok(queue?.length, `unexpected hook for ${match[1]}`);
@@ -66,7 +66,7 @@ try {
     const resumeMarker = `IRIS_${sessionKey.replaceAll("-", "_")}_RESUME_OK`;
     const env = {
       ...process.env,
-      IRIS_API_URL: `http://127.0.0.1:${address.port}`,
+      IRIS_API_URL: `http://127.0.0.1:${address.port}/bots/hook-test`,
       IRIS_SESSION_ID: sessionKey,
       IRIS_SESSION_TOKEN: `${sessionKey}-token`,
       ...(scenario.mode === "codex" ? {} : { CLAUDE_CONFIG_DIR: claudeHome }),

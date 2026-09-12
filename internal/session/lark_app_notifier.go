@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -33,6 +35,10 @@ var (
 )
 
 type LarkAppNotifier struct {
+	registry         *LarkMessageRegistry
+	cardsMu          sync.Mutex
+	cards            *larkCardState
+	cardsPath        string
 	appID            string
 	appSecret        string
 	client           *lark.Client
@@ -48,6 +54,66 @@ type LarkAppNotifier struct {
 	tipMu            sync.Mutex
 	tipSent          map[string]map[int]bool
 	tipSender        func(string, string, int) error
+}
+
+type larkCardState struct {
+	mu      sync.Mutex
+	latest  map[string]WaitingNotification
+	retired map[string]bool
+	pending map[string]WaitingNotification
+}
+
+func (n *LarkAppNotifier) cardState() *larkCardState {
+	n.cardsMu.Lock()
+	defer n.cardsMu.Unlock()
+	if n.cards == nil {
+		n.cards = &larkCardState{latest: map[string]WaitingNotification{}, retired: map[string]bool{}, pending: map[string]WaitingNotification{}}
+		if n.cardsPath != "" {
+			data, err := os.ReadFile(n.cardsPath)
+			if err == nil {
+				var saved struct {
+					Latest  map[string]WaitingNotification
+					Retired map[string]bool
+					Pending map[string]WaitingNotification
+				}
+				if err := json.Unmarshal(data, &saved); err != nil {
+					log.Printf("load card controls state: %v", err)
+				} else {
+					if saved.Latest != nil {
+						n.cards.latest = saved.Latest
+					}
+					if saved.Retired != nil {
+						n.cards.retired = saved.Retired
+					}
+					if saved.Pending != nil {
+						n.cards.pending = saved.Pending
+					}
+				}
+			}
+		}
+	}
+	return n.cards
+}
+
+// Called with state.mu held; the existing atomic writer keeps crash recovery safe.
+func (n *LarkAppNotifier) persistCards(state *larkCardState) {
+	if n.cardsPath == "" {
+		return
+	}
+	data, err := json.Marshal(map[string]any{"Latest": state.latest, "Retired": state.retired, "Pending": state.pending})
+	if err == nil {
+		err = writeFileAtomically(n.cardsPath, data, 0600)
+	}
+	if err != nil {
+		log.Printf("save card controls state: %v", err)
+	}
+}
+
+func (n *LarkAppNotifier) messageRegistry() *LarkMessageRegistry {
+	if n.registry != nil {
+		return n.registry
+	}
+	return defaultLarkMessageRegistry
 }
 
 func NewLarkAppNotifier(appID, appSecret, receiveID string, mention bool) *LarkAppNotifier {
@@ -133,6 +199,44 @@ func (n *LarkAppNotifier) customShortcutSnapshot() []LarkCustomShortcut {
 }
 
 func (n *LarkAppNotifier) NotifyWaiting(note WaitingNotification) (WaitingNotificationResult, error) {
+	// ponytail: serialize card writes per bot; use per-session locks if traffic requires it.
+	state := n.cardState()
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	key := note.SessionID + "\x00" + note.ChatID
+	previous := state.latest[key]
+	if state.retired[note.MessageID] {
+		note.Disabled = true
+		note.SuppressUpdateTip = true
+	}
+	result, err := n.writeWaiting(note)
+	if err != nil {
+		return result, err
+	}
+	if result.MessageID != "" && !note.Disabled {
+		note.MessageID = result.MessageID
+		state.latest[key] = note
+		if previous.MessageID != "" && previous.MessageID != note.MessageID {
+			previous.Disabled = true
+			previous.SuppressUpdateTip = true
+			state.retired[previous.MessageID] = true
+			state.pending[previous.MessageID] = previous
+		}
+	}
+	// A failed retirement never retries creation of a card already delivered.
+	n.persistCards(state)
+	for id, old := range state.pending {
+		if _, err := n.writeWaiting(old); err != nil {
+			log.Printf("retire old card failed message=%s: %v", id, err)
+		} else {
+			delete(state.pending, id)
+		}
+	}
+	n.persistCards(state)
+	return result, nil
+}
+
+func (n *LarkAppNotifier) writeWaiting(note WaitingNotification) (WaitingNotificationResult, error) {
 	if !n.Available() {
 		return WaitingNotificationResult{}, errors.New("lark notifier is not configured")
 	}
@@ -167,7 +271,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 			if contextElement := larkTerminalAgentContextElement(note.AgentContext, larkNotificationAgentLabel(note)); contextElement != nil {
 				elements = append(elements, map[string]any{"tag": "hr"}, contextElement)
 			}
-			if workspaceElement := larkWorkspaceSelectElement(note.SessionID, note.WorkspaceOptions, note.AgentContext); workspaceElement != nil {
+			if workspaceElement := larkWorkspaceSelectElement(note.SessionID, note.WorkspaceOptions, note.AgentContext); workspaceElement != nil && !note.Disabled {
 				elements = append(elements, workspaceElement)
 			}
 		}
@@ -191,7 +295,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 			}
 			elements = append(elements, interactionElement)
 		}
-		if note.DeveloperModeEnabled && note.AssistantName == "" {
+		if note.DeveloperModeEnabled && note.AssistantName == "" && !note.Disabled {
 			if contextElement := larkTerminalAgentContextElement(note.AgentContext, ""); contextElement != nil {
 				elements = append(elements, map[string]any{"tag": "hr"})
 				elements = append(elements, contextElement)
@@ -1091,16 +1195,17 @@ func (n *LarkAppNotifier) createWaiting(note WaitingNotification, content string
 			ParentID  string `json:"parent_id"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&createResp); err == nil && createResp.Code == 0 {
-		defaultLarkMessageRegistry.remember(note.SessionID, createResp.Data.MessageID, createResp.Data.RootID, createResp.Data.ParentID)
-		return WaitingNotificationResult{MessageID: createResp.Data.MessageID, RootID: createResp.Data.RootID, ParentID: createResp.Data.ParentID}, nil
-	} else {
-		defaultLarkMessageRegistry.rememberLatest(note.SessionID)
-		if createResp.Code != 0 {
-			return WaitingNotificationResult{}, fmt.Errorf("lark message API returned code %d", createResp.Code)
-		}
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		return WaitingNotificationResult{}, fmt.Errorf("invalid lark message response: %w", err)
 	}
-	return WaitingNotificationResult{}, nil
+	if createResp.Code != 0 {
+		return WaitingNotificationResult{}, fmt.Errorf("lark message API returned code %d", createResp.Code)
+	}
+	if strings.TrimSpace(createResp.Data.MessageID) == "" {
+		return WaitingNotificationResult{}, errors.New("lark message API did not return a message ID")
+	}
+	n.messageRegistry().remember(note.SessionID, createResp.Data.MessageID, createResp.Data.RootID, createResp.Data.ParentID)
+	return WaitingNotificationResult{MessageID: createResp.Data.MessageID, RootID: createResp.Data.RootID, ParentID: createResp.Data.ParentID}, nil
 }
 
 func (n *LarkAppNotifier) updateWaiting(note WaitingNotification, content string) (WaitingNotificationResult, error) {
@@ -1123,7 +1228,9 @@ func (n *LarkAppNotifier) updateWaiting(note WaitingNotification, content string
 			tipSent = true
 		}
 	}
-	defaultLarkMessageRegistry.remember(note.SessionID, note.MessageID)
+	if !note.Disabled {
+		n.messageRegistry().remember(note.SessionID, note.MessageID)
+	}
 	return WaitingNotificationResult{MessageID: note.MessageID, Updated: true, TipSent: tipSent}, nil
 }
 
@@ -1132,6 +1239,12 @@ func (n *LarkAppNotifier) UpdateWaitingRunning(note WaitingNotification, running
 		return nil
 	}
 	note.Running = running
+	state := n.cardState()
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.retired[note.MessageID] {
+		note.Disabled = true
+	}
 	content, err := larkNotificationCardContent(note, n.receiveID, n.mention, n.customShortcutSnapshot()...)
 	if err != nil {
 		return err
@@ -1149,7 +1262,14 @@ func (n *LarkAppNotifier) UpdateWaitingRunning(note WaitingNotification, running
 	if !resp.Success() {
 		return fmt.Errorf("lark patch message API returned code %d: %s", resp.Code, resp.Msg)
 	}
-	defaultLarkMessageRegistry.remember(note.SessionID, note.MessageID)
+	if !note.Disabled {
+		n.messageRegistry().remember(note.SessionID, note.MessageID)
+	}
+	key := note.SessionID + "\x00" + note.ChatID
+	if !note.Disabled && state.latest[key].MessageID == note.MessageID {
+		state.latest[key] = note
+		n.persistCards(state)
+	}
 	return nil
 }
 

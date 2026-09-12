@@ -476,7 +476,7 @@ func (b *LarkReplyBridge) handleCardRestartAgent(value map[string]interface{}, o
 	}
 	b.manager.EnsureBrowser(sessionID)
 	if openMessageID != "" {
-		defaultLarkMessageRegistry.remember(sessionID, openMessageID)
+		b.manager.messageRegistry().remember(sessionID, openMessageID)
 	}
 	log.Printf("lark card restarted Agent session=%s message=%s", sessionID, openMessageID)
 	return larkCardToast("info", "正在重启 Agent"), nil
@@ -505,7 +505,7 @@ func (b *LarkReplyBridge) handleCardAgentSelect(value map[string]interface{}, op
 	}
 	b.manager.EnsureBrowser(sessionID)
 	if openMessageID != "" {
-		defaultLarkMessageRegistry.remember(sessionID, openMessageID)
+		b.manager.messageRegistry().remember(sessionID, openMessageID)
 	}
 	log.Printf("lark card switched Agent session=%s message=%s agent=%s", sessionID, openMessageID, selected.Kind)
 	return larkCardToast("info", "正在切换至 "+selected.Label), nil
@@ -601,7 +601,7 @@ func (b *LarkReplyBridge) handleCardTerminalSelect(ctx context.Context, value ma
 		}
 	}
 	if openMessageID != "" {
-		defaultLarkMessageRegistry.remember(sessionID, openMessageID)
+		b.manager.messageRegistry().remember(sessionID, openMessageID)
 	}
 	rt.NotifyInputRunningOnMessage(openMessageID)
 	log.Printf("lark card terminal selection session=%s message=%s interaction=%s option=%s input_len=%d", sessionID, openMessageID, interactionID, selected.ID, len(selected.Input))
@@ -619,7 +619,7 @@ func (b *LarkReplyBridge) handleCardDeleteSession(ctx context.Context, value map
 		chatID = strings.TrimSpace(openChatID)
 	}
 	if chatID != "" {
-		defaultLarkMessageRegistry.forgetChat(chatID, sessionID)
+		b.manager.messageRegistry().forgetChat(chatID, sessionID)
 	}
 	if b.uploadsDir != "" {
 		_ = os.RemoveAll(filepath.Join(b.uploadsDir, sessionID))
@@ -671,7 +671,7 @@ func (b *LarkReplyBridge) handleCardShortcut(ctx context.Context, value map[stri
 	}
 	log.Printf("lark card shortcut action session=%s key=%s message=%s", sessionID, key, openMessageID)
 	if openMessageID != "" {
-		defaultLarkMessageRegistry.remember(sessionID, openMessageID)
+		b.manager.messageRegistry().remember(sessionID, openMessageID)
 	}
 	rt.NotifyInputRunningOnMessage(openMessageID)
 	return nil, nil
@@ -683,7 +683,7 @@ func (b *LarkReplyBridge) handleCardRefresh(ctx context.Context, value map[strin
 		return blocked, nil
 	}
 	if openMessageID != "" {
-		defaultLarkMessageRegistry.remember(sessionID, openMessageID)
+		b.manager.messageRegistry().remember(sessionID, openMessageID)
 	}
 	updateNo, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value["update_no"])))
 	go func() {
@@ -702,7 +702,7 @@ func (b *LarkReplyBridge) handleCardToggleAutoRefresh(ctx context.Context, value
 		return blocked, nil
 	}
 	if openMessageID != "" {
-		defaultLarkMessageRegistry.remember(sessionID, openMessageID)
+		b.manager.messageRegistry().remember(sessionID, openMessageID)
 	}
 	updateNo, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value["update_no"])))
 	enabled, err := rt.ToggleAutoRefresh(openMessageID)
@@ -732,7 +732,7 @@ func (b *LarkReplyBridge) handleCardToggleAutoSummary(ctx context.Context, value
 		return blocked, nil
 	}
 	if openMessageID != "" {
-		defaultLarkMessageRegistry.remember(sessionID, openMessageID)
+		b.manager.messageRegistry().remember(sessionID, openMessageID)
 	}
 	updateNo, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value["update_no"])))
 	enabled, err := rt.ToggleAutoSummary()
@@ -765,7 +765,7 @@ func (b *LarkReplyBridge) handleCardToggleMentionMode(ctx context.Context, value
 		return larkCardToast("warning", "会话不在线"), nil
 	}
 	if openMessageID != "" {
-		defaultLarkMessageRegistry.remember(sessionID, openMessageID)
+		b.manager.messageRegistry().remember(sessionID, openMessageID)
 	}
 	updateNo, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value["update_no"])))
 	go func() {
@@ -827,7 +827,7 @@ func (b *LarkReplyBridge) resolveCardActionRuntimeForRefresh(value map[string]in
 func (b *LarkReplyBridge) resolveCardActionRuntimeWithMode(value map[string]interface{}, openMessageID string, refresh bool) (string, *RuntimeSession, *callback.CardActionTriggerResponse) {
 	sessionID := strings.TrimSpace(fmt.Sprint(value["session_id"]))
 	if sessionID == "" && openMessageID != "" {
-		if id, ok := defaultLarkMessageRegistry.lookup(openMessageID); ok {
+		if id, ok := b.manager.messageRegistry().lookup(openMessageID); ok {
 			sessionID = id
 		}
 	}
@@ -1240,7 +1240,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		}
 		b.scheduleAutoSummary(rt, text)
 		b.clearPendingFiles(sessionID)
-		defaultLarkMessageRegistry.remember(sessionID, messageID, parentID, rootID)
+		b.manager.messageRegistry().remember(sessionID, messageID, parentID, rootID)
 		b.notifyInputRunning(sessionID)
 		return sessionID, nil
 	}
@@ -1253,7 +1253,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 			if updated, found, updateErr := b.manager.UpdateLarkMentionMode(ctx, s.ID, false); updateErr == nil && found {
 				s = updated
 			}
-			defaultLarkMessageRegistry.remember(s.ID, messageID)
+			b.manager.messageRegistry().remember(s.ID, messageID)
 			namePresetMatched, presetErr := false, error(nil)
 			if agent, _ := b.manager.AgentConfig(); agent.Command == "" {
 				namePresetMatched, presetErr = b.runSessionNamePreset(s, presetCodes)
@@ -1298,7 +1298,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		if err := rt.WriteInput("\x03"); err != nil {
 			return sessionID, err
 		}
-		defaultLarkMessageRegistry.remember(sessionID, messageID, parentID, rootID)
+		b.manager.messageRegistry().remember(sessionID, messageID, parentID, rootID)
 		b.notifyInputRunning(sessionID)
 		return sessionID, nil
 	}
@@ -1323,7 +1323,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		if err := b.replyLarkRawText(ctx, messageID, content); err != nil {
 			return sessionID, err
 		}
-		defaultLarkMessageRegistry.remember(sessionID, messageID, parentID, rootID)
+		b.manager.messageRegistry().remember(sessionID, messageID, parentID, rootID)
 		return sessionID, nil
 	}
 	if sessionID == "" {
@@ -1347,7 +1347,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 	}
 	b.manager.EnsureBrowser(sessionID)
 	if b.enqueueInputIfRuntimeBusy(rt, sessionID, inputParts, routeCtx.SenderOpenID, routeCtx.AssistantName) {
-		defaultLarkMessageRegistry.remember(sessionID, messageID, parentID, rootID)
+		b.manager.messageRegistry().remember(sessionID, messageID, parentID, rootID)
 		return sessionID, nil
 	}
 	b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.SenderOpenID, routeCtx.AssistantName)
@@ -1355,7 +1355,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		return sessionID, err
 	}
 	b.scheduleAutoSummary(rt, text)
-	defaultLarkMessageRegistry.remember(sessionID, messageID, parentID, rootID)
+	b.manager.messageRegistry().remember(sessionID, messageID, parentID, rootID)
 	b.notifyInputRunning(sessionID)
 	return sessionID, nil
 }
@@ -1429,7 +1429,7 @@ func (b *LarkReplyBridge) routeDirectContactMessage(ctx context.Context, routeCt
 	}
 	b.manager.EnsureBrowser(binding.SessionID)
 	if b.enqueueInputIfRuntimeBusy(rt, binding.SessionID, parts, routeCtx.SenderOpenID) {
-		defaultLarkMessageRegistry.remember(binding.SessionID, routeCtx.MessageID)
+		b.manager.messageRegistry().remember(binding.SessionID, routeCtx.MessageID)
 		return binding.SessionID, nil
 	}
 	b.enqueuePipeline(binding.SessionID, parts[1:], routeCtx.SenderOpenID)
@@ -1437,7 +1437,7 @@ func (b *LarkReplyBridge) routeDirectContactMessage(ctx context.Context, routeCt
 		return binding.SessionID, err
 	}
 	b.scheduleAutoSummary(rt, parts[0])
-	defaultLarkMessageRegistry.remember(binding.SessionID, routeCtx.MessageID)
+	b.manager.messageRegistry().remember(binding.SessionID, routeCtx.MessageID)
 	b.notifyInputRunning(binding.SessionID)
 	return binding.SessionID, nil
 }
@@ -1667,8 +1667,8 @@ func (b *LarkReplyBridge) routeAttachments(ctx context.Context, routeCtx larkRou
 			return sessionID, err
 		}
 		b.appendPendingFiles(sessionID, files)
-		defaultLarkMessageRegistry.remember(sessionID, messageID, parentID, rootID)
-		defaultLarkMessageRegistry.rememberLatest(sessionID)
+		b.manager.messageRegistry().remember(sessionID, messageID, parentID, rootID)
+		b.manager.messageRegistry().rememberLatest(sessionID)
 		if err := b.replyLarkText(ctx, messageID, larkAttachmentUploadSuccessMessage(files)); err != nil {
 			return sessionID, err
 		}
@@ -1687,7 +1687,7 @@ func (b *LarkReplyBridge) routeAttachments(ctx context.Context, routeCtx larkRou
 	}
 	b.scheduleAutoSummary(rt, text)
 	b.clearPendingFiles(sessionID)
-	defaultLarkMessageRegistry.remember(sessionID, messageID, parentID, rootID)
+	b.manager.messageRegistry().remember(sessionID, messageID, parentID, rootID)
 	b.notifyInputRunning(sessionID)
 	return sessionID, nil
 }
@@ -1803,7 +1803,7 @@ func (b *LarkReplyBridge) bindSessionToLarkChat(ctx context.Context, sess Sessio
 	if err != nil || !ok {
 		return sess, err
 	}
-	defaultLarkMessageRegistry.rememberChat(chatID, updated.ID)
+	b.manager.messageRegistry().rememberChat(chatID, updated.ID)
 	return updated, nil
 }
 
@@ -1825,7 +1825,7 @@ func (b *LarkReplyBridge) ensureRouteRuntime(ctx context.Context, sessionID stri
 		return rt, sess, ok, err
 	}
 	if routeCtx.ChatID != "" {
-		defaultLarkMessageRegistry.rememberChat(routeCtx.ChatID, sess.ID)
+		b.manager.messageRegistry().rememberChat(routeCtx.ChatID, sess.ID)
 	}
 	b.recordAgentLarkContext(sess, routeCtx)
 	if routeCtx.SenderOpenID != "" {
@@ -2771,20 +2771,20 @@ func (b *LarkReplyBridge) duplicate(messageID string) bool {
 }
 
 func (b *LarkReplyBridge) resolveSessionID(ctx context.Context, text, parentID, rootID, chatID, chatType string) string {
-	if id, ok := defaultLarkMessageRegistry.lookupChat(chatID); ok {
+	if id, ok := b.manager.messageRegistry().lookupChat(chatID); ok {
 		if b.sessionIsActive(ctx, id) {
 			return id
 		}
-		defaultLarkMessageRegistry.forgetChat(chatID, id)
+		b.manager.messageRegistry().forgetChat(chatID, id)
 		log.Printf("lark reply bridge ignored stale chat route chat=%s session=%s", chatID, id)
 	}
 	if b.manager != nil && chatID != "" {
 		if s, ok, err := b.manager.FindSessionByLarkChatID(ctx, chatID); err == nil && ok && s.Live && s.Status != StatusExited && s.Status != StatusFailed {
-			defaultLarkMessageRegistry.rememberChat(chatID, s.ID)
+			b.manager.messageRegistry().rememberChat(chatID, s.ID)
 			return s.ID
 		}
 	}
-	if id, ok := defaultLarkMessageRegistry.lookup(parentID, rootID); ok {
+	if id, ok := b.manager.messageRegistry().lookup(parentID, rootID); ok {
 		return id
 	}
 	if m := regexp.MustCompile(`sess-\d+`).FindString(text); m != "" {
@@ -2796,7 +2796,7 @@ func (b *LarkReplyBridge) resolveSessionID(ctx context.Context, text, parentID, 
 	if chatID != "" && isLarkDirectChatType(chatType) {
 		return ""
 	}
-	return defaultLarkMessageRegistry.latestNotifiedSessionID()
+	return b.manager.messageRegistry().latestNotifiedSessionID()
 }
 
 func (b *LarkReplyBridge) sessionIsActive(ctx context.Context, sessionID string) bool {

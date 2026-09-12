@@ -24,6 +24,7 @@ import (
 var staticFiles embed.FS
 
 type Server struct {
+	bots                BotService
 	manager             *session.Manager
 	uploadsDir          string
 	config              ConfigService
@@ -72,6 +73,9 @@ func (s *Server) SetRuntimeControl(instanceID, token, version string, pid int, s
 }
 
 func (s *Server) routes() {
+	s.mux.HandleFunc("/api/bots", s.handleBots)
+	s.mux.HandleFunc("/api/bots/create", s.handleBotCreate)
+	s.mux.HandleFunc("/bots/", s.handleBotRoute)
 	s.mux.HandleFunc("/", s.handleStatic)
 	s.mux.HandleFunc("/api/sessions", s.handleSessions)
 	s.mux.HandleFunc("/api/sessions/", s.handleSessionByID)

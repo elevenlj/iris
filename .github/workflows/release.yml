@@ -9,7 +9,21 @@ permissions:
   contents: write
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: go test ./...
+      - run: node internal/httpapi/static/app_e2e_test.mjs
+      - run: node tests/feishu_setup_test.cjs
   build:
+    needs: verify
     name: build binaries
     runs-on: ubuntu-latest
     strategy:

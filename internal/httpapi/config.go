@@ -125,6 +125,10 @@ type realLarkConfigTester struct {
 	probe larkGroupPermissionProbe
 }
 
+func TestLarkConfig(cfg RuntimeConfig) LarkConfigTestResult {
+	return (realLarkConfigTester{}).Test(cfg)
+}
+
 func (t realLarkConfigTester) Test(cfg RuntimeConfig) LarkConfigTestResult {
 	result := LarkConfigTestResult{}
 	appID := strings.TrimSpace(cfg.LarkAppID)

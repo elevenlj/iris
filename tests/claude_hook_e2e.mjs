@@ -23,7 +23,7 @@ const callback = new Promise((resolve, reject) => {
 const server = http.createServer(async (request, response) => {
   try {
     assert.equal(request.method, "POST");
-    assert.equal(request.url, `/api/sessions/${irisSessionID}/hook/turn-ended`);
+    assert.equal(request.url, `/bots/hook-test/api/sessions/${irisSessionID}/hook/turn-ended`);
     assert.equal(request.headers["x-iris-agent-token"], hookToken);
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
@@ -69,11 +69,11 @@ try {
     "text",
   ], {
     ...process.env,
-    IRIS_API_URL: `http://127.0.0.1:${address.port}`,
+    IRIS_API_URL: `http://127.0.0.1:${address.port}/bots/hook-test`,
     IRIS_SESSION_ID: irisSessionID,
     IRIS_SESSION_TOKEN: hookToken,
   });
-  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.code, 0, result.stderr + result.stdout);
   assert.ok(result.stdout.includes(marker), result.stdout);
   await Promise.race([
     callback,

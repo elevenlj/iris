@@ -594,14 +594,14 @@ assert.equal(onboardingConfig.onboarding_completed, true, "onboarding should be 
 assert.equal(onboardingConfig.agent_kind, "codex");
 assert.equal(onboardingConfig.lark_default_session_name, "默认会话");
 await app.openConfigDialog();
-assert.ok(configTabs[0].className.includes("active"), "settings should start from Feishu tab");
-assert.equal(elements["config-prev"].disabled, true, "previous should be disabled on first config tab");
+assert.ok(configTabs[3].className.includes("active"), "settings should start from Security tab");
+assert.equal(elements["config-prev"].disabled, false, "Agent tab precedes Security");
 assert.equal(elements["config-next"].disabled, false, "next should be enabled on first config tab");
 elements["config-next"].onclick();
-assert.ok(configTabs[1].className.includes("active"), "next should move to the next config tab");
+assert.ok(configTabs[4].className.includes("active"), "next should move to Workspaces");
 assert.equal(elements["config-prev"].disabled, false, "previous should be enabled after moving forward");
 elements["config-prev"].onclick();
-assert.ok(configTabs[0].className.includes("active"), "previous should move back to Feishu config tab");
+assert.ok(configTabs[3].className.includes("active"), "previous should move back to Security");
 elements["config-next"].onclick();
 elements["config-next"].onclick();
 elements["config-next"].onclick();

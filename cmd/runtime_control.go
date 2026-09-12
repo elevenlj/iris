@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -15,7 +14,6 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
-	"strings"
 	"text/tabwriter"
 	"time"
 )
@@ -234,100 +232,52 @@ func restartRuntime(dataDir string, record runtimeRecord) error {
 	return fmt.Errorf("端口 %s 的 Iris 未在 30 秒内重新启动", record.Port)
 }
 
-func handleServiceCommand(args []string, in io.Reader, out io.Writer, dataDir string, interactive bool) (bool, error) {
+func handleServiceCommand(args []string, _ io.Reader, out io.Writer, dataDir string, _ bool) (bool, error) {
 	if len(args) == 0 || (args[0] != "status" && args[0] != "stop" && args[0] != "restart") {
 		return false, nil
 	}
 	command := args[0]
-	args = args[1:]
-	if command == "status" {
-		if len(args) != 0 {
-			return true, errors.New("用法：iris status")
-		}
-		records, err := listActiveRuntimeRecords(dataDir)
-		if err != nil {
-			return true, err
-		}
-		printRuntimeStatus(out, records, autoStartPort(dataDir))
-		return true, nil
-	}
-	if len(args) > 1 {
-		return true, fmt.Errorf("用法：iris %s [端口|all]", command)
+	if len(args) != 1 {
+		return true, fmt.Errorf("用法：iris %s（操作 Iris 服务，不再接受端口或 all）", command)
 	}
 	records, err := listActiveRuntimeRecords(dataDir)
 	if err != nil {
 		return true, err
 	}
+	if command == "status" {
+		printRuntimeStatus(out, records, autoStartPort(dataDir))
+		return true, nil
+	}
 	if len(records) == 0 {
 		fmt.Fprintln(out, "当前没有运行中的 Iris 服务。")
 		return true, nil
 	}
-	selector := ""
-	if len(args) == 1 {
-		selector = strings.TrimSpace(args[0])
-	} else if len(records) == 1 {
-		selector = records[0].Port
-	} else if interactive {
-		selector, err = promptRuntimeSelection(in, out, records, command)
+	targets := records
+	if len(records) > 1 {
+		// Never stop a legacy instance's sessions without migrating its data.
+		primary := loadConfig(configPathForDataDir("", dataDir)).Port
+		targets, err = selectRuntimeRecords(records, primary)
 		if err != nil {
-			return true, err
+			return true, errors.New("检测到旧版多服务，请先确认主服务配置并迁移数据")
 		}
-	} else {
-		printRuntimeStatus(out, records, autoStartPort(dataDir))
-		return true, fmt.Errorf("发现多个 Iris 服务，请执行 iris %s <端口|all>", command)
+		fmt.Fprintf(out, "检测到旧版多服务，本次仅操作主服务（端口 %s）。\n", primary)
 	}
-	targets, err := selectRuntimeRecords(records, selector)
-	if err != nil {
+	record := targets[0]
+	if err := stopRuntime(record); err != nil {
 		return true, err
 	}
-	for _, record := range targets {
-		if err := stopRuntime(record); err != nil {
+	if command == "restart" {
+		if err := restartRuntime(dataDir, record); err != nil {
 			return true, err
 		}
-		if command == "restart" {
-			if err := restartRuntime(dataDir, record); err != nil {
-				return true, fmt.Errorf("重新启动端口 %s 失败：%w", record.Port, err)
-			}
-			fmt.Fprintf(out, "已重新启动端口 %s 的 Iris 服务。\n", record.Port)
-		} else {
-			fmt.Fprintf(out, "已停止端口 %s 的 Iris 服务。\n", record.Port)
-		}
+		fmt.Fprintln(out, "Iris 服务已重启。")
+	} else {
+		fmt.Fprintln(out, "Iris 服务已停止。")
 	}
 	return true, nil
 }
 
-func promptRuntimeSelection(in io.Reader, out io.Writer, records []runtimeRecord, command string) (string, error) {
-	action := "停止"
-	if command == "restart" {
-		action = "重启"
-	}
-	fmt.Fprintf(out, "请选择要%s的 Iris 服务：\n", action)
-	for i, record := range records {
-		fmt.Fprintf(out, "%d. %s\n", i+1, record.Port)
-	}
-	fmt.Fprintf(out, "%d. all\n> ", len(records)+1)
-	scanner := bufio.NewScanner(in)
-	if !scanner.Scan() {
-		return "", errors.New("未选择要停止的服务")
-	}
-	choice := strings.TrimSpace(scanner.Text())
-	if choice == "all" {
-		return choice, nil
-	}
-	index, err := strconv.Atoi(choice)
-	if err == nil && index >= 1 && index <= len(records) {
-		return records[index-1].Port, nil
-	}
-	if err == nil && index == len(records)+1 {
-		return "all", nil
-	}
-	return choice, nil
-}
-
 func selectRuntimeRecords(records []runtimeRecord, selector string) ([]runtimeRecord, error) {
-	if selector == "all" {
-		return records, nil
-	}
 	port, err := strconv.Atoi(selector)
 	if err != nil || port < 1 || port > 65535 {
 		return nil, fmt.Errorf("无效端口：%s", selector)

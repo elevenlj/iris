@@ -208,7 +208,7 @@ func TestSelectRuntimeRecordsSupportsPortAndAll(t *testing.T) {
 		t.Fatalf("port selection = %#v, %v", selected, err)
 	}
 	selected, err = selectRuntimeRecords(records, "all")
-	if err != nil || len(selected) != 2 {
+	if err == nil || len(selected) != 0 {
 		t.Fatalf("all selection = %#v, %v", selected, err)
 	}
 }
@@ -295,14 +295,14 @@ func TestHandleServiceCommandRestartsExactInstance(t *testing.T) {
 		return registerRuntimeRecord(dataDir, runtimeRecord{InstanceID: instanceID, Token: token, Port: port})
 	}
 	var output bytes.Buffer
-	handled, err := handleServiceCommand([]string{"restart", port}, strings.NewReader(""), &output, dataDir, false)
+	handled, err := handleServiceCommand([]string{"restart"}, strings.NewReader(""), &output, dataDir, false)
 	if err != nil || !handled {
 		t.Fatalf("restart handled=%v err=%v", handled, err)
 	}
 	if launched.Port != port || launched.Executable != "/opt/iris" || launched.ConfigDir != "/data/iris" {
 		t.Fatalf("launched record = %#v", launched)
 	}
-	if !strings.Contains(output.String(), "已重新启动端口 "+port) {
+	if !strings.Contains(output.String(), "Iris 服务已重启") {
 		t.Fatalf("restart output = %q", output.String())
 	}
 }

@@ -1,4 +1,4 @@
-.PHONY: build test test-browser test-codex-tui test-claude-hook test-aiden-hook test-all run tidy
+.PHONY: build test test-browser test-multi-bot test-feishu-setup test-codex-tui test-claude-hook test-aiden-hook test-all run tidy
 
 VERSION ?= dev
 
@@ -7,6 +7,12 @@ build:
 
 test:
 	go test ./...
+
+test-multi-bot:
+	IRIS_BROWSER_TEST=1 go test -race ./cmd -run TestBotsBrowserIntegration -v -count=1
+
+test-feishu-setup:
+	node tests/feishu_setup_test.cjs
 
 test-browser: build
 	node tests/browser_e2e.mjs

@@ -14,7 +14,7 @@ func interruptSignals() []os.Signal {
 func configureDetachedCommand(cmd *exec.Cmd) {
 }
 
-func terminateHeadlessProcess(cmd *exec.Cmd) {
+func terminateHeadlessProcess(cmd *exec.Cmd, done <-chan struct{}) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}

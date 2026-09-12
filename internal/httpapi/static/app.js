@@ -36,7 +36,8 @@ const STANDARD_TERMINAL_LINE_HEIGHT = 1.2;
 const SNAPSHOT_CONTINUITY_VERSION = 2;
 const DEFAULT_SESSION_NAME = "默认会话";
 const DEFAULT_AGENT_PRESET_CODE = "999999";
-const CONFIG_TAB_IDS = ["config-lark", "config-session", "config-runtime", "config-security", "config-workspaces"];
+const CONFIG_TAB_IDS = ["config-session", "config-security", "config-workspaces"];
+const BOT_BASE = (location.pathname || "").match(/^\/bots\/[a-z0-9-]+/)?.[0] || "";
 const DROP_RULE_KINDS = [
   ["line", "行过滤"],
   ["block_head", "块首行过滤"],
@@ -48,6 +49,7 @@ const DROP_RULE_BLOCK_ACTIONS = [
 ];
 
 async function api(path, options = {}) {
+  if (path.startsWith("/api/sessions")) path = BOT_BASE + path;
   const res = await fetch(path, {
     headers: options.body instanceof FormData ? {} : { "Content-Type": "application/json" },
     ...options,
@@ -259,7 +261,7 @@ function connectWS(id) {
 function terminalWebSocketURL(id) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const suffix = isHeadlessMode() ? "?headless=1" : "";
-  return `${proto}://${location.host}/api/sessions/${id}/ws${suffix}`;
+  return `${proto}://${location.host}${BOT_BASE}/api/sessions/${id}/ws${suffix}`;
 }
 
 function isHeadlessMode() {
@@ -936,7 +938,7 @@ function renderConfig() {
   $("settings-password-status").textContent = "";
   renderSettingsPasswordMatch();
   renderAgentPresetControls();
-  setAgentPresetStatus("所有新会话都会自动启动当前 Agent。");
+  setAgentPresetStatus("");
   $("preset-session-name").value = "";
   $("start-preset-code").value = "";
   state.editingPresetCommand = null;
@@ -1022,7 +1024,7 @@ function moveConfigStep(delta) {
   if (nextIndex !== index) setConfigTab(CONFIG_TAB_IDS[nextIndex]);
 }
 
-async function openConfigDialog(targetID = "config-lark") {
+async function openConfigDialog(targetID = "config-security") {
   if (!state.config) await loadConfig();
   renderConfig();
   setConfigTab(targetID);

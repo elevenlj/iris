@@ -19,7 +19,7 @@ func configureDetachedCommand(cmd *exec.Cmd) {
 	}
 }
 
-func terminateHeadlessProcess(cmd *exec.Cmd) {
+func terminateHeadlessProcess(cmd *exec.Cmd, done <-chan struct{}) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
@@ -27,13 +27,19 @@ func terminateHeadlessProcess(cmd *exec.Cmd) {
 	if pid <= 0 {
 		return
 	}
+	select {
+	case <-done:
+		return
+	default:
+	}
 	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
 		_ = cmd.Process.Kill()
 		return
 	}
 	go func() {
-		time.Sleep(2 * time.Second)
-		if cmd.ProcessState == nil {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
 			_ = syscall.Kill(-pid, syscall.SIGKILL)
 		}
 	}()

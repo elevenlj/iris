@@ -76,6 +76,7 @@ type Store interface {
 }
 
 type Manager struct {
+	registry                 *LarkMessageRegistry
 	mu                       sync.RWMutex
 	store                    Store
 	launcher                 Launcher
@@ -214,6 +215,18 @@ func (m *Manager) defaultAgentSnapshot() AgentConfig {
 
 type ManagerOption func(*Manager)
 
+// WithIsolatedMessageRegistry keeps routing state local to one Feishu bot.
+func WithIsolatedMessageRegistry() ManagerOption {
+	return func(m *Manager) { m.registry = &LarkMessageRegistry{} }
+}
+
+func (m *Manager) messageRegistry() *LarkMessageRegistry {
+	if m != nil && m.registry != nil {
+		return m.registry
+	}
+	return defaultLarkMessageRegistry
+}
+
 func NewManager(store Store, launcher Launcher, opts ...ManagerOption) *Manager {
 	m := &Manager{
 		store:                store,
@@ -232,6 +245,12 @@ func NewManager(store Store, launcher Launcher, opts ...ManagerOption) *Manager 
 	if m.launcher == nil {
 		m.launcher = ShellLauncher{}
 	}
+	if n, ok := m.notifier.(*LarkAppNotifier); ok {
+		n.registry = m.messageRegistry()
+		if m.recoveryBaseDir != "" {
+			n.cardsPath = filepath.Join(m.recoveryBaseDir, fmt.Sprintf("cards-%x.json", n.appID))
+		}
+	}
 	return m
 }
 
@@ -242,6 +261,15 @@ func WithNotifier(n WaitingNotifier) ManagerOption {
 func (m *Manager) SetNotifier(n WaitingNotifier) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if next, ok := n.(*LarkAppNotifier); ok {
+		next.registry = m.messageRegistry()
+		if m.recoveryBaseDir != "" {
+			next.cardsPath = filepath.Join(m.recoveryBaseDir, fmt.Sprintf("cards-%x.json", next.appID))
+		}
+		if previous, ok := m.notifier.(*LarkAppNotifier); ok && previous.appID == next.appID && previous.appSecret == next.appSecret {
+			next.cards = previous.cardState()
+		}
+	}
 	m.notifier = n
 }
 
@@ -1026,7 +1054,7 @@ func (m *Manager) BindLarkChat(ctx context.Context, id string, chatID string) (S
 			err = m.store.UpdateSession(ctx, s)
 		}
 		if err == nil && chatID != "" {
-			defaultLarkMessageRegistry.rememberChat(chatID, id)
+			m.messageRegistry().rememberChat(chatID, id)
 		}
 		return s, true, err
 	}
@@ -1044,7 +1072,7 @@ func (m *Manager) BindLarkChat(ctx context.Context, id string, chatID string) (S
 		}
 	}
 	if chatID != "" {
-		defaultLarkMessageRegistry.rememberChat(chatID, id)
+		m.messageRegistry().rememberChat(chatID, id)
 	}
 	return s, true, nil
 }
@@ -1058,7 +1086,7 @@ func (m *Manager) FindSessionByLarkChatID(ctx context.Context, chatID string) (S
 	for _, rt := range m.sessions {
 		s := rt.Snapshot()
 		if s.LarkChatID == chatID && s.Live && s.Status != StatusExited && s.Status != StatusFailed {
-			defaultLarkMessageRegistry.rememberChat(chatID, s.ID)
+			m.messageRegistry().rememberChat(chatID, s.ID)
 			m.mu.RUnlock()
 			return s, true, nil
 		}
@@ -1073,7 +1101,7 @@ func (m *Manager) FindSessionByLarkChatID(ctx context.Context, chatID string) (S
 	}
 	for _, s := range list {
 		if s.LarkChatID == chatID && s.Live && s.Status != StatusExited && s.Status != StatusFailed {
-			defaultLarkMessageRegistry.rememberChat(chatID, s.ID)
+			m.messageRegistry().rememberChat(chatID, s.ID)
 			return s, true, nil
 		}
 	}
@@ -1956,7 +1984,7 @@ func (rt *RuntimeSession) beginStartupNotification(mentionOpenID string) string 
 		return ""
 	}
 	if messageID != "" {
-		defaultLarkMessageRegistry.remember(sessionID, messageID)
+		rt.manager.messageRegistry().remember(sessionID, messageID)
 	}
 	return messageID
 }
@@ -3298,7 +3326,7 @@ func (rt *RuntimeSession) NotifyInputRunningOnMessage(messageID string) {
 		rt.notificationRunning = true
 	}
 	rt.mu.Unlock()
-	defaultLarkMessageRegistry.rememberLatest(n.SessionID)
+	rt.manager.messageRegistry().rememberLatest(n.SessionID)
 }
 
 func (rt *RuntimeSession) RefreshNotificationMessage(messageID string, preserveUpdateNo ...int) error {
@@ -3564,8 +3592,8 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 		rt.bindTerminalInteractionMessageLocked(n.Interaction, boundMessageID)
 	}
 	rt.mu.Unlock()
-	defaultLarkMessageRegistry.remember(rt.session.ID, messageID)
-	defaultLarkMessageRegistry.rememberLatest(rt.session.ID)
+	rt.manager.messageRegistry().remember(rt.session.ID, messageID)
+	rt.manager.messageRegistry().rememberLatest(rt.session.ID)
 	return nil
 }
 
@@ -4479,7 +4507,7 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 		rt.rescheduleNotifyRetryLocked(version)
 		rt.mu.Unlock()
 		if messageID != "" {
-			defaultLarkMessageRegistry.remember(n.SessionID, messageID)
+			rt.manager.messageRegistry().remember(n.SessionID, messageID)
 		}
 		return
 	}
@@ -4522,7 +4550,7 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 		rt.notificationRunning = n.Running
 	}
 	rt.mu.Unlock()
-	defaultLarkMessageRegistry.rememberLatest(n.SessionID)
+	rt.manager.messageRegistry().rememberLatest(n.SessionID)
 	rt.manager.notificationSent(n.SessionID)
 }
 
