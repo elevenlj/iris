@@ -29,7 +29,7 @@
 <dialog id="connect"><h2>连接飞书机器人</h2><p>选择接入方式，完成后机器人将出现在工作台。</p><button class="outline" id="scan" style="width:100%;margin:15px 0">扫码创建并自动配置</button><button class="outline" id="existing" style="width:100%">接入已有机器人</button><div class="actions"><button class="close" data-close="connect">返回</button></div></dialog>
 <dialog id="global-dialog">
  <h2>全局设置</h2>
- <nav class="global-tabs" aria-label="配置分组"><button type="button" data-panel="config-session" aria-pressed="false">Agent</button><button type="button" data-panel="config-runtime" aria-pressed="false">服务</button><button type="button" data-panel="config-security" aria-pressed="false">安全</button><button type="button" data-panel="config-workspaces" aria-pressed="false">工作目录</button></nav>
+ <nav class="global-tabs" aria-label="配置分组"><button type="button" data-panel="config-session" aria-pressed="false">Agent</button><button type="button" data-panel="config-security" aria-pressed="false">安全</button><button type="button" data-panel="config-workspaces" aria-pressed="false">工作目录</button></nav>
  <div id="global-fields"><section id="config-session" class="config-section config-panel" hidden>
             <h2>Agent</h2>
             <div class="config-grid hidden" hidden>
@@ -56,18 +56,9 @@
             <button id="workspace-option-add" type="button">添加目录</button>
             <textarea id="cfg-workspace-options" class="hidden" hidden spellcheck="false"></textarea>
           </section>
-<section id="config-runtime" class="config-section config-panel" hidden>
-            <h2>服务</h2>
-            <div class="environment-check">
-              <div>
-                <strong>登录后自动启动</strong>
-
-              </div>
-              <label class="config-check"><input id="cfg-auto-start-enabled" checked type="checkbox"><span>自动启动 Iris</span></label>
-            </div>
-          </section>
 <section id="config-security" class="config-section config-panel" hidden>
             <h2>安全</h2>
+            <label class="config-check"><input id="cfg-auto-start-enabled" checked type="checkbox"><span>开机自启</span></label>
 
             <div id="settings-security-warning" class="security-warning hidden" hidden>当前未设置访问密码。任何能访问本页面的人都可以修改飞书凭证和 Agent 命令，建议立即设置密码。</div>
             <div class="security-password-card">
@@ -203,10 +194,8 @@ document.addEventListener('click',e=>{const target=e.target.closest('button');if
  $('robot-form').onsubmit=e=>{e.preventDefault();const values={name:$('name-input').value.trim(),agent:$('agent-input').value,dir:$('dir-input').value.trim()};if(!values.name||!values.dir)return;if(editing||!$('app-info').hidden){const appId=$('app-id').value.trim(),appSecret=$('app-secret').value.trim();if(!appId||!appSecret){$('app-result').textContent='请填写 App ID 和 App Secret';return}Object.assign(values,{appId,appSecret,receiveId:$('receive-id').value.trim()});if(!editing){pendingBot={...values,appName:'待同步'};$('editor').close();connect();return}if(appId!==bot().appId)values.appName='待同步';Object.assign(bot(),values);$('editor').close();render();toast('已保存页面中的配置草稿')}else{pendingBot=values;$('editor').close();$('connect').showModal()}};
 function connect(){if(!pendingBot)return;const id=Math.max(...bots.map(b=>b.id))+1;bots.push({id,appName:'飞书应用 '+id,appId:'cli_demo_'+id,appSecret:'demo_secret_'+id,receiveId:'ou_demo_'+id,...pendingBot,icon:'✧',online:true,sessions:[]});pendingBot=null;activeBot=id;activeSession=null;$('search').value='';$('connect').close();render();toast('已添加到页面，尚未建立实际连接')}
 // These controls edit a page-local draft only; no live settings or credentials are sent.
-function globalPanel(id){if(!['config-session','config-runtime','config-security','config-workspaces'].includes(id))return;document.querySelectorAll('#global-fields>.config-panel').forEach(p=>p.hidden=p.id!==id);document.querySelectorAll('[data-panel]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.panel===id)))}
+function globalPanel(id){if(!['config-session','config-security','config-workspaces'].includes(id))return;document.querySelectorAll('#global-fields>.config-panel').forEach(p=>p.hidden=p.id!==id);document.querySelectorAll('[data-panel]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.panel===id)))}
 function addDraftRow(list,fields){const row=document.createElement('div');row.className='draft-row';row.innerHTML='<div class="row-fields">'+fields.map(([label,value])=>'<label>'+escapeHTML(label)+'<input aria-label="'+escapeHTML(label)+'" value="'+escapeHTML(value)+'"></label>').join('')+'</div><button type="button" data-remove-row>删除</button>';$(list).append(row)}
-const globalAgents=[['Codex','codex --dangerously-bypass-approvals-and-sandbox --no-alt-screen'],['Claude Code','claude --dangerously-skip-permissions'],['Aiden','aiden --permission-mode bypassPermissions'],['Aiden X Codex','aiden x codex --dangerously-bypass-approvals-and-sandbox --no-alt-screen'],['Aiden X Claude Code','aiden x claude --dangerously-skip-permissions']];
-for(const [name,command] of globalAgents)addDraftRow('agent-option-list',[['名称',name],['启动命令',command],['重启命令（留空使用启动命令）','']]);
 addDraftRow('workspace-option-list',[['名称','Iris'],['目录','~/Desktop/develop/python/iris']]);
 addDraftRow('workspace-option-list',[['名称','工作目录'],['目录','~/Desktop/develop/go']]);
 addDraftRow('prestart-command-list',[['命令','source ~/.zshrc']]);
@@ -222,7 +211,7 @@ function cancelGlobal(){if(savedGlobalDraft){$('global-fields').replaceWith(save
 $('global-cancel').onclick=cancelGlobal;$('global-dialog').addEventListener('cancel',e=>{e.preventDefault();cancelGlobal()});
 $('global-save').onclick=()=>{document.querySelectorAll('#global-fields input[type=password]').forEach(i=>i.value='');savedGlobalDraft=null;$('global-dialog').close();toast('已保存页面中的配置草稿')};
 $('global-dialog').addEventListener('click',e=>{const button=e.target.closest('button');if(!button)return;if(button.dataset.panel){globalPanel(button.dataset.panel);return}if(button.hasAttribute('data-remove-row')){button.closest('.draft-row').remove();return}
- const add={ 'agent-option-add':['agent-option-list',[['名称',''],['启动命令',''],['重启命令（留空使用启动命令）','']]],'workspace-option-add':['workspace-option-list',[['名称',''],['目录','']]],'prestart-command-add':['prestart-command-list',[['命令','']]],'custom-shortcut-add':['custom-shortcut-list',[['名称',''],['命令','']]],'drop-rule-add':['drop-rule-list',[['规则类型（line / block_head / line_group）','line'],['正则表达式',''],['块处理（drop_block / keep_head）','drop_block']]]};
+ const add={ 'agent-option-add':['agent-option-list',[['名称',''],['启动命令','']]],'workspace-option-add':['workspace-option-list',[['名称',''],['目录','']]],'prestart-command-add':['prestart-command-list',[['命令','']]],'custom-shortcut-add':['custom-shortcut-list',[['名称',''],['命令','']]],'drop-rule-add':['drop-rule-list',[['规则类型（line / block_head / line_group）','line'],['正则表达式',''],['块处理（drop_block / keep_head）','drop_block']]]};
  if(add[button.id]){addDraftRow(...add[button.id]);return}
  if(button.id==='environment-check-start'){$('environment-check-result').innerHTML='<div class="global-status">尚未连接服务，未执行检测</div>'+['Iris 服务','Node.js','Headless 浏览器','数据目录','飞书网络','飞书应用','Agent 启动命令','Agent 完成通知'].map(name=>'<div class="toggle-line"><span>'+name+'</span><span>待检测</span></div>').join('');return}
  if(button.id==='settings-password-save'){const password=$('settings-new-password').value,confirm=$('settings-confirm-password').value;$('settings-password-status').textContent=password.length<8?'新密码至少 8 个字符':password!==confirm?'两次密码不一致':'格式正确；尚未连接服务，未修改密码';return}
