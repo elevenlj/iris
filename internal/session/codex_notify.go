@@ -31,9 +31,10 @@ func IsCodexNotifyInvocation(args []string) bool {
 	return len(args) > 0 && args[0] == codexNotifyModeFlag
 }
 
-// EnsureCodexNotify installs Iris as Codex's notify command, preserves any
-// existing notification command as a downstream recipient, and removes only
-// the legacy Stop hook previously managed by Iris.
+// EnsureCodexNotify installs Iris as Codex's notify command, disables Codex's
+// startup update prompt, preserves any existing notification command as a
+// downstream recipient, and removes only the legacy Stop hook previously
+// managed by Iris.
 func EnsureCodexNotify(executable string) error {
 	home := defaultCodexHome()
 	if home == "" {
@@ -104,10 +105,47 @@ func ensureCodexNotifyConfig(path, executable string) error {
 		}
 		updated = append(updated, content...)
 	}
+	updated = disableCodexStartupUpdateCheck(updated)
 	if bytes.Equal(content, updated) {
 		return nil
 	}
 	return writeFileAtomically(path, updated, mode)
+}
+
+func disableCodexStartupUpdateCheck(content []byte) []byte {
+	const setting = "check_for_update_on_startup"
+	offset := 0
+	for offset < len(content) {
+		lineEnd := bytes.IndexByte(content[offset:], '\n')
+		if lineEnd < 0 {
+			lineEnd = len(content)
+		} else {
+			lineEnd += offset
+		}
+		line := content[offset:lineEnd]
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) > 0 && trimmed[0] == '[' {
+			break
+		}
+		equal := bytes.IndexByte(line, '=')
+		if equal >= 0 && strings.TrimSpace(string(line[:equal])) == setting {
+			replacement := []byte(setting + " = false")
+			if comment := bytes.IndexByte(line[equal+1:], '#'); comment >= 0 {
+				replacement = append(replacement, ' ')
+				replacement = append(replacement, bytes.TrimSpace(line[equal+1+comment:])...)
+			}
+			updated := make([]byte, 0, len(content)-(lineEnd-offset)+len(replacement))
+			updated = append(updated, content[:offset]...)
+			updated = append(updated, replacement...)
+			updated = append(updated, content[lineEnd:]...)
+			return updated
+		}
+		if lineEnd == len(content) {
+			break
+		}
+		offset = lineEnd + 1
+	}
+	return append([]byte(setting+" = false\n"), content...)
 }
 
 func removeDuplicateManagedPreviousNotify(command []string) []string {

@@ -67,6 +67,37 @@ func TestEnsureCodexNotifyCreatesConfigAndUpdatesExecutable(t *testing.T) {
 	if !reflect.DeepEqual(command, []string{"/new/iris", codexNotifyModeFlag}) {
 		t.Fatalf("notify = %#v", command)
 	}
+	if !strings.Contains(string(content), "check_for_update_on_startup = false\n") {
+		t.Fatalf("startup update check was not disabled: %s", content)
+	}
+}
+
+func TestEnsureCodexNotifyForcesStartupUpdateCheckOff(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	codexHome := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(codexHome, "config.toml")
+	content := "check_for_update_on_startup = true # managed by Iris\nmodel = \"gpt-5.4\"\n\n[features]\nexample = true\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureCodexNotify("/opt/iris"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(updated)
+	if strings.Contains(got, "check_for_update_on_startup = true") ||
+		!strings.Contains(got, "check_for_update_on_startup = false # managed by Iris") ||
+		!strings.Contains(got, "model = \"gpt-5.4\"") ||
+		!strings.Contains(got, "[features]\nexample = true") {
+		t.Fatalf("config was not updated cleanly: %s", updated)
+	}
 }
 
 func TestEnsureCodexNotifyRemovesRecursivePreviousNotify(t *testing.T) {

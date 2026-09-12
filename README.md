@@ -56,7 +56,7 @@ iris stop all
 
 Iris 启动成功后会自动打开本机配置页。首次使用先进入独立的密码设置页，完成密码确认后才能进入配置台；之后在设置页配置飞书应用、开发者 open_id、工作目录和自定义快捷键。
 
-Iris 启动时会自动安装并维护 Codex `notify`、Claude Code `Stop` Hook，以及两者用于识别当前飞书群的 Skill，保留用户已有配置。安装包也会在安装完成后执行同样的配置；如当时没有写入权限，首次启动会自动重试。可手动执行 `iris --install-agent-hooks` 重新安装。
+Iris 启动时会自动安装并维护 Codex `notify`、Claude Code `Stop` Hook，以及两者用于识别当前飞书群的 Skill，并将 Codex 的 `check_for_update_on_startup` 强制设为 `false`，其他用户配置保持不变。安装包也会在安装完成后执行同样的配置；如当时没有写入权限，首次启动会自动重试。可手动执行 `iris --install-agent-hooks` 重新安装。
 
 ## 飞书配置
 

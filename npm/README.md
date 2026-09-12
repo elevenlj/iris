@@ -21,7 +21,7 @@ Iris always uses `~/.iris` as its runtime working directory and stores its datab
 After the service is ready, Iris opens the local configuration page automatically. First launch uses a dedicated password-setup page with password confirmation; later visits use a dedicated login page, with a secure browser session retained for thirty days.
 
 The installer downloads the platform binary from GitHub Release first, then falls back to Gitee Release.
-It also installs the Codex `notify` and Claude Code `Stop` completion hooks together with the Iris Feishu-context Skill for both Agents. The CLI retries Agent integration setup on every service start, and `iris --install-agent-hooks` can run it manually.
+It also installs the Codex `notify` and Claude Code `Stop` completion hooks together with the Iris Feishu-context Skill for both Agents, and forces Codex `check_for_update_on_startup = false` without replacing other user settings. The CLI retries Agent integration setup on every service start, and `iris --install-agent-hooks` can run it manually.
 When a question lacks enough conversation context, that Skill requires the Agent to read the current group's latest messages before asking the user to repeat information.
 
 The settings page includes an optional one-time environment check for Node.js, the headless browser, writable data storage, Feishu connectivity, and the configured Agent. The result is not saved and does not block setup.
