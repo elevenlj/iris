@@ -164,7 +164,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 			elements = append(elements, larkFlowShortcutActionElement(larkRestartAgentButtonColumn(note.SessionID)))
 		}
 		if note.StartupComplete && !note.StartupFailed {
-			if contextElement := larkTerminalAgentContextElement(note.AgentContext); contextElement != nil {
+			if contextElement := larkTerminalAgentContextElement(note.AgentContext, larkNotificationAgentLabel(note)); contextElement != nil {
 				elements = append(elements, map[string]any{"tag": "hr"}, contextElement)
 			}
 			if workspaceElement := larkWorkspaceSelectElement(note.SessionID, note.WorkspaceOptions, note.AgentContext); workspaceElement != nil {
@@ -185,7 +185,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 			elements = append(elements, interactionElement)
 		}
 		if note.DeveloperModeEnabled && note.AssistantName == "" {
-			if contextElement := larkTerminalAgentContextElement(note.AgentContext); contextElement != nil {
+			if contextElement := larkTerminalAgentContextElement(note.AgentContext, ""); contextElement != nil {
 				elements = append(elements, map[string]any{"tag": "hr"})
 				elements = append(elements, contextElement)
 			}
@@ -207,7 +207,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 			}
 		}
 		if !note.Disabled && note.AssistantName == "" {
-			elements = append(elements, larkShortcutActionElements(note.SessionID, note.UpdateNo, note.MentionModeEnabled, note.AssistantModeEnabled, note.DeveloperModeEnabled)...)
+			elements = append(elements, larkShortcutActionElements(note.SessionID, note.UpdateNo, note.MentionModeEnabled, note.AssistantModeEnabled, note.DeveloperModeEnabled, note.TerminalURL)...)
 			if shortcuts := normalizeLarkCustomShortcuts(customShortcuts); note.DeveloperModeEnabled && len(shortcuts) > 0 {
 				elements = append(elements, map[string]any{"tag": "hr"})
 				elements = append(elements, larkCustomShortcutActionElements(note.SessionID, shortcuts)...)
@@ -581,16 +581,26 @@ func startsLarkNotifyInputPrompt(line string) bool {
 	return strings.HasPrefix(line, "›")
 }
 
-func larkTerminalAgentContextElement(context *TerminalAgentContext) map[string]any {
+func larkTerminalAgentContextElement(context *TerminalAgentContext, agentLabel string) map[string]any {
+	parts := []string{}
+	if agentLabel = strings.TrimSpace(agentLabel); agentLabel != "" {
+		parts = append(parts, "Agent："+truncateLarkInteractionText(agentLabel, 80))
+	}
 	if context == nil || strings.TrimSpace(context.Directory) == "" {
+		if len(parts) == 0 {
+			return nil
+		}
+	} else {
+		parts = append(parts, "目录："+truncateLarkInteractionText(context.Directory, 140))
+		if model := strings.TrimSpace(context.Model); model != "" {
+			parts = append(parts, "模型："+truncateLarkInteractionText(model, 80))
+		}
+		if reasoning := strings.TrimSpace(context.Reasoning); reasoning != "" {
+			parts = append(parts, "Reasoning："+truncateLarkInteractionText(reasoning, 40))
+		}
+	}
+	if len(parts) == 0 {
 		return nil
-	}
-	parts := []string{"目录：" + truncateLarkInteractionText(context.Directory, 140)}
-	if model := strings.TrimSpace(context.Model); model != "" {
-		parts = append(parts, "模型："+truncateLarkInteractionText(model, 80))
-	}
-	if reasoning := strings.TrimSpace(context.Reasoning); reasoning != "" {
-		parts = append(parts, "Reasoning："+truncateLarkInteractionText(reasoning, 40))
 	}
 	return map[string]any{
 		"tag": "div",
@@ -599,6 +609,19 @@ func larkTerminalAgentContextElement(context *TerminalAgentContext) map[string]a
 			"content": strings.Join(parts, " · "),
 		},
 	}
+}
+
+func larkNotificationAgentLabel(note WaitingNotification) string {
+	for _, option := range note.AgentOptions {
+		if strings.EqualFold(strings.TrimSpace(option.ID), strings.TrimSpace(note.AgentID)) {
+			return strings.TrimSpace(option.Label)
+		}
+	}
+	agent := normalizeAgentConfig(AgentConfig{Kind: note.AgentKind})
+	if agent.Kind != "custom" {
+		return agent.Name
+	}
+	return ""
 }
 
 func larkTerminalInteractionElement(sessionID string, interaction *TerminalInteraction) map[string]any {
@@ -731,7 +754,7 @@ func larkTerminalPlainTextWithMerge(content string, allowWrappedLineMerge bool) 
 	return content
 }
 
-func larkShortcutActionElements(sessionID string, updateNo int, mentionModeEnabled, assistantModeEnabled, developerModeEnabled bool) []map[string]any {
+func larkShortcutActionElements(sessionID string, updateNo int, mentionModeEnabled, assistantModeEnabled, developerModeEnabled bool, terminalURL string) []map[string]any {
 	columns := []map[string]any{larkRefreshButtonColumn(sessionID, updateNo), larkDeveloperModeButtonColumn(sessionID, updateNo, developerModeEnabled)}
 	elements := []map[string]any{}
 	if developerModeEnabled {
@@ -742,14 +765,29 @@ func larkShortcutActionElements(sessionID string, updateNo int, mentionModeEnabl
 			larkDeleteSessionButtonColumn(sessionID),
 		)
 		elements = append(elements, larkFlowShortcutActionElement(columns...))
-		elements = append(elements, larkFlowShortcutActionElement(
+		shortcutColumns := []map[string]any{
 			larkShortcutButtonColumn("Ctrl-C", "default", sessionID, "ctrl_c"),
 			larkShortcutButtonColumn("Esc", "default", sessionID, "esc"),
 			larkShortcutButtonColumn("Enter", "default", sessionID, "enter"),
-		))
+		}
+		if strings.TrimSpace(terminalURL) != "" {
+			shortcutColumns = append(shortcutColumns, larkOpenTerminalButtonColumn(terminalURL))
+		}
+		elements = append(elements, larkFlowShortcutActionElement(shortcutColumns...))
 		return elements
 	}
 	return []map[string]any{larkFlowShortcutActionElement(columns...)}
+}
+
+func larkOpenTerminalButtonColumn(terminalURL string) map[string]any {
+	return map[string]any{
+		"tag": "column", "width": "auto", "vertical_spacing": "8px",
+		"elements": []map[string]any{{
+			"tag": "button", "type": "default", "size": "tiny", "width": "default",
+			"text":      map[string]any{"tag": "plain_text", "content": "打开终端"},
+			"behaviors": []map[string]any{{"type": "open_url", "default_url": terminalURL, "pc_url": terminalURL}},
+		}},
+	}
 }
 
 func larkAssistantModeButtonColumn(sessionID string, updateNo int, enabled bool) map[string]any {

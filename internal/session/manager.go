@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -4662,6 +4663,9 @@ func (rt *RuntimeSession) decorateWaitingNotification(note WaitingNotification) 
 		note.AgentOptions = append(note.AgentOptions, AgentOption{ID: defaultAgent.ID, Label: defaultAgent.Name, Kind: defaultAgent.Kind, Command: defaultAgent.Command})
 	}
 	note.AgentID = matchingAgentOptionID(sess, note.AgentOptions)
+	if baseURL := rt.manager.AgentTurnHookURL(); baseURL != "" {
+		note.TerminalURL = strings.TrimRight(baseURL, "/") + "/?session=" + url.QueryEscape(sess.ID)
+	}
 	return note
 }
 

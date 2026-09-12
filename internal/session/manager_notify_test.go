@@ -2268,12 +2268,16 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 		Content:              RunningNotificationPlaceholder,
 		Running:              true,
 		DeveloperModeEnabled: true,
+		TerminalURL:          "http://127.0.0.1:8080/?session=sess-1",
 	}, "ou_1", false, LarkCustomShortcut{Label: "状态", Command: "git status"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(content, "Ctrl-C") || !strings.Contains(content, "ctrl_c") || !strings.Contains(content, "重启 Agent") || !strings.Contains(content, "restart_agent") || !strings.Contains(content, "sess-1") {
 		t.Fatalf("card content should include shortcut buttons, got %s", content)
+	}
+	if !strings.Contains(content, `"content":"打开终端"`) || !strings.Contains(content, `"type":"open_url"`) || !strings.Contains(content, `"default_url":"http://127.0.0.1:8080/?session=sess-1"`) {
+		t.Fatalf("card content should open the current session terminal, got %s", content)
 	}
 	if strings.Contains(content, `"content":"sess-1"`) {
 		t.Fatalf("card content should not show session id as visible text, got %s", content)
@@ -2307,13 +2311,14 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 		strings.Index(content, `"content":"删除会话"`) < strings.Index(content, `"content":"Ctrl-C"`) &&
 		strings.Index(content, `"content":"Ctrl-C"`) < strings.Index(content, `"content":"Esc"`) &&
 		strings.Index(content, `"content":"Esc"`) < strings.Index(content, `"content":"Enter"`) &&
-		strings.Index(content, `"content":"Enter"`) < strings.Index(content, `"iris_action":"custom_shortcut"`)) {
+		strings.Index(content, `"content":"Enter"`) < strings.Index(content, `"content":"打开终端"`) &&
+		strings.Index(content, `"content":"打开终端"`) < strings.Index(content, `"iris_action":"custom_shortcut"`)) {
 		t.Fatalf("refresh button should be first and custom shortcuts below system shortcuts, got %s", content)
 	}
 	if !strings.Contains(content, "状态") || !strings.Contains(content, `"iris_action":"custom_shortcut"`) || !strings.Contains(content, "git status") {
 		t.Fatalf("card content should include custom shortcut row, got %s", content)
 	}
-	for _, label := range []string{"刷新", "开发者模式：开", "艾特模式：关", "删除会话", "Ctrl-C", "Esc", "Enter"} {
+	for _, label := range []string{"刷新", "开发者模式：开", "艾特模式：关", "删除会话", "Ctrl-C", "Esc", "Enter", "打开终端"} {
 		if !strings.Contains(content, `"content":"`+label+`"`) {
 			t.Fatalf("card content should include system shortcut %s, got %s", label, content)
 		}
@@ -2338,8 +2343,8 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 		t.Fatalf("terminal shortcuts should use their own row, got %#v", shortcutRows)
 	}
 	shortcutColumns, _ := shortcutRows[0]["columns"].([]any)
-	if shortcutRows[0]["flex_mode"] != "flow" || len(shortcutColumns) != 3 {
-		t.Fatalf("terminal shortcut row should contain Ctrl-C, Esc and Enter, got %#v", shortcutRows[0])
+	if shortcutRows[0]["flex_mode"] != "flow" || len(shortcutColumns) != 4 {
+		t.Fatalf("terminal shortcut row should contain Ctrl-C, Esc, Enter and open terminal, got %#v", shortcutRows[0])
 	}
 	if strings.Count(content, `"type":"primary"`) != 1 || strings.Count(content, `"type":"default"`) < 7 {
 		t.Fatalf("only refresh should be primary while secondary actions stay neutral, got %s", content)
@@ -3928,7 +3933,7 @@ func TestDedicatedStartupCardCompletesForSupportedAgents(t *testing.T) {
 	} {
 		t.Run(agent.name, func(t *testing.T) {
 			notifier := &recordingNotifier{createMessageIDs: []string{"startup-card"}}
-			m := NewManager(nil, nil, WithNotifier(notifier))
+			m := NewManager(nil, nil, WithNotifier(notifier), WithAgentTurnHookURL("http://127.0.0.1:8081/"))
 			ready := make(chan string, 1)
 			m.SetNotificationSentHook(func(sessionID string) { ready <- sessionID })
 			rt := &RuntimeSession{
@@ -3957,6 +3962,9 @@ func TestDedicatedStartupCardCompletesForSupportedAgents(t *testing.T) {
 			notes := notifier.notes()
 			if len(notes) != 2 || !notes[0].Startup || !notes[1].StartupComplete || notes[1].MessageID != "startup-card" {
 				t.Fatalf("dedicated startup lifecycle = %#v", notes)
+			}
+			if want := "http://127.0.0.1:8081/?session=" + rt.session.ID; notes[1].TerminalURL != want {
+				t.Fatalf("startup terminal URL = %q, want %q", notes[1].TerminalURL, want)
 			}
 		})
 	}

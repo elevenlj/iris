@@ -96,6 +96,7 @@ type WaitingNotification struct {
 	AgentOptions         []AgentOption
 	AgentID              string
 	AgentKind            string
+	TerminalURL          string
 	SuppressUpdateTip    bool
 	NotificationVersion  int64
 	SnapshotSource       string
