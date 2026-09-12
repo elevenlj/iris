@@ -431,6 +431,31 @@ func TestLarkNotificationCardRendersStartupFallbackAsOrdinaryCard(t *testing.T) 
 	}
 }
 
+func TestStartupRestartAgentOnlyShownInDeveloperMode(t *testing.T) {
+	for _, complete := range []bool{false, true} {
+		for _, failed := range []bool{false, true} {
+			for _, developer := range []bool{false, true} {
+				for _, disabled := range []bool{false, true} {
+					note := WaitingNotification{SessionID: "startup", Name: "Iris", Content: "启动状态",
+						Startup: true, StartupComplete: complete, StartupFailed: failed,
+						StartupInputEnabled: !complete, DeveloperModeEnabled: developer, Disabled: disabled}
+					content, err := larkNotificationCardContent(note, "", false)
+					if err != nil {
+						t.Fatal(err)
+					}
+					want := 0
+					if developer && !disabled {
+						want = 1
+					}
+					if got := strings.Count(content, `"iris_action":"restart_agent"`); got != want {
+						t.Fatalf("complete=%v failed=%v developer=%v disabled=%v: restart buttons=%d want=%d", complete, failed, developer, disabled, got, want)
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestLarkNotificationCardRendersDedicatedStartupInputForm(t *testing.T) {
 	content, err := larkNotificationCardContent(WaitingNotification{
 		SessionID:            "sess-startup",

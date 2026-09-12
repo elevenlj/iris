@@ -292,9 +292,6 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		if note.StartupInputEnabled && !note.StartupComplete && !note.Disabled {
 			elements = append(elements, larkStartupInputFormElement(note.SessionID))
 		}
-		if !note.StartupComplete && !note.Disabled && !note.DeveloperModeEnabled {
-			elements = append(elements, larkFlowShortcutActionElement(larkRestartAgentButtonColumn(note.SessionID)))
-		}
 		if note.StartupComplete && !note.StartupFailed {
 			if contextElement := larkTerminalAgentContextElement(note.AgentContext, larkNotificationAgentLabel(note)); contextElement != nil {
 				elements = append(elements, map[string]any{"tag": "hr"}, contextElement)
