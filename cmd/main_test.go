@@ -326,6 +326,14 @@ func TestMigrateAgentDefinitionsResetsBuiltinCommand(t *testing.T) {
 	if got := agentConfigByID(cfg.Agents, "codex").Command; got != session.CodexAgentCommand {
 		t.Fatalf("Codex command = %q", got)
 	}
+	for id, want := range map[string]string{
+		"aiden":        session.AidenAgentCommand,
+		"aiden-claude": session.AidenClaudeAgentCommand,
+	} {
+		if got := agentConfigByID(cfg.Agents, id).Command; got != want {
+			t.Fatalf("%s command = %q, want %q", id, got, want)
+		}
+	}
 }
 
 func TestValidateAgentDefinitionsDoesNotAllowBuiltinOverrides(t *testing.T) {
@@ -335,6 +343,26 @@ func TestValidateAgentDefinitionsDoesNotAllowBuiltinOverrides(t *testing.T) {
 	}
 	if selected.Name != "Codex" || selected.Kind != "codex" || selected.Command != session.CodexAgentCommand || agents[0] != selected {
 		t.Fatalf("validated built-in = %#v, agents=%#v", selected, agents)
+	}
+}
+
+func TestValidateAgentDefinitionsRecognizesAidenBuiltins(t *testing.T) {
+	for _, test := range []struct {
+		id      string
+		name    string
+		kind    string
+		command string
+	}{
+		{id: "aiden", name: "Aiden", kind: "aiden", command: session.AidenAgentCommand},
+		{id: "aiden-claude", name: "Aiden X Claude Code", kind: "aiden-claude", command: session.AidenClaudeAgentCommand},
+	} {
+		agents, selected, err := validateAgentDefinitions([]session.AgentConfig{{ID: test.id, Name: "Changed", Kind: "custom", Command: "other"}}, test.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if selected.Name != test.name || selected.Kind != test.kind || selected.Command != test.command || agents[0] != selected {
+			t.Fatalf("validated %s = %#v, agents=%#v", test.id, selected, agents)
+		}
 	}
 }
 

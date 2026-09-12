@@ -160,10 +160,20 @@ func normalizeAgentConfig(agent AgentConfig) AgentConfig {
 		agent.Name = "Claude Code"
 		agent.Command = ClaudeAgentCommand
 	}
+	if agent.Kind == "aiden" {
+		agent.ID = "aiden"
+		agent.Name = "Aiden"
+		agent.Command = AidenAgentCommand
+	}
+	if agent.Kind == "aiden-claude" {
+		agent.ID = "aiden-claude"
+		agent.Name = "Aiden X Claude Code"
+		agent.Command = AidenClaudeAgentCommand
+	}
 	if agent.Kind == "custom" && agent.Name == "" {
 		agent.Name = "自定义 Agent"
 	}
-	if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "custom" {
+	if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "aiden" && agent.Kind != "aiden-claude" && agent.Kind != "custom" {
 		return AgentConfig{}
 	}
 	return agent
@@ -583,9 +593,10 @@ func (m *Manager) WorkspaceOptionsForSession(_ Session) []WorkspaceOption {
 	return out
 }
 
-// sessionSupportsWorkspaceSwitch reports whether the session runs Codex directly or through a compatible wrapper.
+// sessionSupportsWorkspaceSwitch reports whether the active Agent can receive Iris's /cd control input.
 func sessionSupportsWorkspaceSwitch(sess Session) bool {
-	if strings.EqualFold(strings.TrimSpace(sess.LastAgentKind), "codex") {
+	switch strings.ToLower(strings.TrimSpace(sess.LastAgentKind)) {
+	case "codex", "claude", "aiden":
 		return true
 	}
 	argv := shellFields(sess.LastAgentStartCommand)
@@ -593,7 +604,7 @@ func sessionSupportsWorkspaceSwitch(sess Session) bool {
 		argv = argv[1:]
 	}
 	info, ok := agentLaunchInfo(argv)
-	return ok && info.Kind == "codex"
+	return ok && (info.Kind == "codex" || info.Kind == "claude" || info.Kind == "aiden")
 }
 
 func agentKindForCommand(command, fallback string) string {
@@ -3912,6 +3923,11 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSes
 		}
 	case "claude":
 		if command, ok := pinClaudeResumeCommand(rt.session.LastAgentResumeCommand, strings.TrimSpace(agentSessionID)); ok {
+			rt.session.LastAgentResumeCommand = command
+			pinnedRecovery = true
+		}
+	case "aiden":
+		if command, ok := pinAidenResumeCommand(rt.session.LastAgentResumeCommand, strings.TrimSpace(agentSessionID)); ok {
 			rt.session.LastAgentResumeCommand = command
 			pinnedRecovery = true
 		}

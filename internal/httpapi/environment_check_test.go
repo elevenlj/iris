@@ -105,6 +105,8 @@ func TestEnvironmentAgentKindRecognizesAidenModes(t *testing.T) {
 		{command: "aiden", want: "aiden"},
 		{command: "aiden x codex --dangerously-bypass-approvals-and-sandbox", want: "codex"},
 		{command: "/usr/local/bin/aiden x codex", want: "codex"},
+		{command: "aiden x claude --dangerously-skip-permissions", want: "claude"},
+		{command: "/usr/local/bin/aiden x claude", want: "claude"},
 	}
 	for _, test := range tests {
 		if got := environmentAgentKind(RuntimeConfig{AgentKind: "custom", AgentCommand: test.command}); got != test.want {

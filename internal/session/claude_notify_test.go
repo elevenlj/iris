@@ -184,13 +184,43 @@ func TestCompleteAgentTurnSupportsNativeAiden(t *testing.T) {
 			RecoveryKey:            "hook-token",
 			LastMode:               SessionModeAgent,
 			LastAgentKind:          "aiden",
-			LastAgentResumeCommand: "aiden",
+			LastAgentResumeCommand: "aiden --continue --permission-mode agentFull",
 		},
 	}
 	manager.sessions[rt.session.ID] = rt
-	got, accepted, err := manager.CompleteAgentTurn(context.Background(), rt.session.ID, "hook-token", "aiden-session", "完成")
+	aidenSessionID := "019f5153-6e7f-7742-9f61-3ffe1530d61c"
+	got, accepted, err := manager.CompleteAgentTurn(context.Background(), rt.session.ID, "hook-token", aidenSessionID, "完成")
 	if err != nil || !accepted || got.Status != StatusWaiting || !rt.agentTurnHookVerified {
 		t.Fatalf("Aiden completion accepted=%v err=%v state=%#v", accepted, err, got)
+	}
+	if args := shellFields(got.LastAgentResumeCommand); !containsAdjacentArgs(args, "--resume", aidenSessionID) || slicesContain(args, "--continue") {
+		t.Fatalf("Aiden resume command = %q", got.LastAgentResumeCommand)
+	}
+}
+
+func TestCompleteAgentTurnSupportsAidenClaudeAndPinsResume(t *testing.T) {
+	manager := NewManager(nil, nil)
+	rt := &RuntimeSession{
+		manager: manager,
+		session: Session{
+			ID:                     "sess-aiden-claude",
+			Status:                 StatusRunning,
+			Live:                   true,
+			RecoveryKey:            "hook-token",
+			LastMode:               SessionModeAgent,
+			LastAgentKind:          "claude",
+			LastAgentResumeCommand: "aiden x claude --continue --dangerously-skip-permissions",
+		},
+	}
+	manager.sessions[rt.session.ID] = rt
+	sessionID := "019f5153-6e7f-7742-9f61-3ffe1530d61c"
+	got, accepted, err := manager.CompleteAgentTurn(context.Background(), rt.session.ID, "hook-token", sessionID, "完成")
+	if err != nil || !accepted || got.Status != StatusWaiting || !rt.agentTurnHookVerified {
+		t.Fatalf("Aiden X Claude completion accepted=%v err=%v state=%#v", accepted, err, got)
+	}
+	args := shellFields(got.LastAgentResumeCommand)
+	if !containsAdjacentArgs(args, "--resume", sessionID) || slicesContain(args, "--continue") || strings.Join(args[:3], " ") != "aiden x claude" {
+		t.Fatalf("Aiden X Claude resume command = %q", got.LastAgentResumeCommand)
 	}
 }
 

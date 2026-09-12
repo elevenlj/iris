@@ -203,9 +203,15 @@ func checkAgentCommand(cfg RuntimeConfig) EnvironmentCheckStep {
 	}
 	if filepath.IsAbs(executable) {
 		if info, err := os.Stat(executable); err == nil && isEnvironmentExecutableFile(info) {
+			if aidenXAgent(command) == "claude" && findEnvironmentExecutable("claude") == "" {
+				return EnvironmentCheckStep{ID: "agent_command", Name: "Agent 启动命令", Status: "error", Message: "Aiden X Claude Code 还需要安装 Claude Code"}
+			}
 			return EnvironmentCheckStep{ID: "agent_command", Name: "Agent 启动命令", Status: "ok", Message: "启动命令可用"}
 		}
 	} else if findEnvironmentExecutable(executable) != "" {
+		if aidenXAgent(command) == "claude" && findEnvironmentExecutable("claude") == "" {
+			return EnvironmentCheckStep{ID: "agent_command", Name: "Agent 启动命令", Status: "error", Message: "Aiden X Claude Code 还需要安装 Claude Code"}
+		}
 		return EnvironmentCheckStep{ID: "agent_command", Name: "Agent 启动命令", Status: "ok", Message: "启动命令可用"}
 	}
 	return EnvironmentCheckStep{ID: "agent_command", Name: "Agent 启动命令", Status: "error", Message: "找不到已配置的 Agent 启动命令"}
@@ -252,20 +258,30 @@ func environmentAgentKind(cfg RuntimeConfig) string {
 	case "claude", "claude-code":
 		return "claude"
 	case "aiden":
-		fields := strings.Fields(strings.ToLower(cfg.AgentCommand))
-		for index := range fields {
-			if strings.TrimSuffix(filepath.Base(fields[index]), ".exe") != "aiden" {
-				continue
-			}
-			if index+2 < len(fields) && fields[index+1] == "x" && fields[index+2] == "codex" {
-				return "codex"
-			}
-			return "aiden"
+		switch aidenXAgent(cfg.AgentCommand) {
+		case "codex":
+			return "codex"
+		case "claude":
+			return "claude"
 		}
 		return "aiden"
 	default:
 		return ""
 	}
+}
+
+func aidenXAgent(command string) string {
+	fields := strings.Fields(strings.ToLower(command))
+	for index := range fields {
+		if strings.TrimSuffix(filepath.Base(fields[index]), ".exe") != "aiden" {
+			continue
+		}
+		if index+2 < len(fields) && fields[index+1] == "x" {
+			return fields[index+2]
+		}
+		return ""
+	}
+	return ""
 }
 
 func firstEnvironmentCommand(command string) string {
@@ -356,6 +372,7 @@ func environmentCommandEnv() []string {
 
 func environmentPathEntries(home string) []string {
 	return []string{
+		filepath.Join(home, ".aiden", "global-install", "bin"),
 		filepath.Join(home, ".local", "bin"), filepath.Join(home, ".node", "bin"),
 		filepath.Join(home, ".npm-global", "bin"), filepath.Join(home, "bin"),
 		"/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",

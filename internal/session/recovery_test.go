@@ -96,8 +96,9 @@ func TestConfiguredAidenCommandsUseUnderlyingCompletionKind(t *testing.T) {
 		wantKind   string
 		wantResume string
 	}{
-		{command: "aiden", wantKind: "aiden", wantResume: "aiden"},
+		{command: "aiden --permission-mode agentFull", wantKind: "aiden", wantResume: "aiden --continue --permission-mode agentFull"},
 		{command: "aiden x codex --dangerously-bypass-approvals-and-sandbox", wantKind: "codex", wantResume: "aiden x codex resume --last"},
+		{command: "aiden x claude --dangerously-skip-permissions", wantKind: "claude", wantResume: "aiden x claude --continue --dangerously-skip-permissions"},
 	}
 	for _, test := range tests {
 		rt := &RuntimeSession{
@@ -298,6 +299,7 @@ func TestPinClaudeResumeCommand(t *testing.T) {
 		{name: "short continue", command: "claude -c --model sonnet"},
 		{name: "existing resume", command: "claude --resume 019e440b-54a7-7200-8ca0-fe9e9e87d4be --effort high"},
 		{name: "resume equals", command: "CLAUDE_CONFIG_DIR=/tmp/claude claude --resume=019e440b-54a7-7200-8ca0-fe9e9e87d4be"},
+		{name: "aiden wrapper", command: "aiden x claude --continue --dangerously-skip-permissions"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, ok := pinClaudeResumeCommand(test.command, sessionID)
@@ -306,6 +308,15 @@ func TestPinClaudeResumeCommand(t *testing.T) {
 				t.Fatalf("pinClaudeResumeCommand(%q) = %q, %v", test.command, got, ok)
 			}
 		})
+	}
+}
+
+func TestPinAidenResumeCommand(t *testing.T) {
+	sessionID := "019f5153-6e7f-7742-9f61-3ffe1530d61c"
+	got, ok := pinAidenResumeCommand("aiden --continue --permission-mode agentFull", sessionID)
+	args := shellFields(got)
+	if !ok || !containsAdjacentArgs(args, "--resume", sessionID) || slicesContain(args, "--continue") || strings.Join(args[:1], " ") != "aiden" {
+		t.Fatalf("pinAidenResumeCommand() = %q, %v", got, ok)
 	}
 }
 

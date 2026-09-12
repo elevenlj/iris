@@ -1,4 +1,4 @@
-.PHONY: build test test-browser test-codex-tui test-claude-hook test-all run tidy
+.PHONY: build test test-browser test-codex-tui test-claude-hook test-aiden-hook test-all run tidy
 
 VERSION ?= dev
 
@@ -16,6 +16,9 @@ test-codex-tui: build
 
 test-claude-hook: build
 	node tests/claude_hook_e2e.mjs
+
+test-aiden-hook: build
+	node tests/aiden_hook_e2e.mjs
 
 test-all: test test-browser
 

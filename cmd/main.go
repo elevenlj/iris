@@ -478,6 +478,10 @@ func loadConfig(path string) Config {
 		cfg.AgentName = "Codex"
 	case "claude":
 		cfg.AgentName = "Claude Code"
+	case "aiden":
+		cfg.AgentName = "Aiden"
+	case "aiden-claude":
+		cfg.AgentName = "Aiden X Claude Code"
 	case "custom":
 		if strings.TrimSpace(cfg.AgentName) == "" {
 			cfg.AgentName = "自定义 Agent"
@@ -530,6 +534,24 @@ func migrateAgentDefinitions(cfg Config) (Config, bool) {
 		copy(agents[insertAt+1:], agents[insertAt:])
 		agents[insertAt] = session.AgentConfig{ID: "claude", Name: "Claude Code", Kind: "claude", Command: session.ClaudeAgentCommand}
 	}
+	if agentConfigByID(agents, "aiden").ID == "" {
+		insertAt := 2
+		if len(agents) < insertAt {
+			insertAt = len(agents)
+		}
+		agents = append(agents, session.AgentConfig{})
+		copy(agents[insertAt+1:], agents[insertAt:])
+		agents[insertAt] = session.AgentConfig{ID: "aiden", Name: "Aiden", Kind: "aiden", Command: session.AidenAgentCommand}
+	}
+	if agentConfigByID(agents, "aiden-claude").ID == "" {
+		insertAt := 3
+		if len(agents) < insertAt {
+			insertAt = len(agents)
+		}
+		agents = append(agents, session.AgentConfig{})
+		copy(agents[insertAt+1:], agents[insertAt:])
+		agents[insertAt] = session.AgentConfig{ID: "aiden-claude", Name: "Aiden X Claude Code", Kind: "aiden-claude", Command: session.AidenClaudeAgentCommand}
+	}
 	normalized := make([]session.AgentConfig, 0, len(agents))
 	seen := map[string]bool{}
 	for _, agent := range agents {
@@ -543,10 +565,16 @@ func migrateAgentDefinitions(cfg Config) (Config, bool) {
 		if agent.ID == "claude" {
 			agent.Name, agent.Kind, agent.Command = "Claude Code", "claude", session.ClaudeAgentCommand
 		}
+		if agent.ID == "aiden" {
+			agent.Name, agent.Kind, agent.Command = "Aiden", "aiden", session.AidenAgentCommand
+		}
+		if agent.ID == "aiden-claude" {
+			agent.Name, agent.Kind, agent.Command = "Aiden X Claude Code", "aiden-claude", session.AidenClaudeAgentCommand
+		}
 		if agent.ID == "" || seen[agent.ID] || agent.Name == "" || agent.Command == "" {
 			continue
 		}
-		if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "custom" {
+		if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "aiden" && agent.Kind != "aiden-claude" && agent.Kind != "custom" {
 			continue
 		}
 		seen[agent.ID] = true
@@ -556,7 +584,7 @@ func migrateAgentDefinitions(cfg Config) (Config, bool) {
 	cfg.DefaultAgentID = strings.ToLower(strings.TrimSpace(cfg.DefaultAgentID))
 	if cfg.DefaultAgentID == "" {
 		switch legacyKind {
-		case "codex", "claude":
+		case "codex", "claude", "aiden", "aiden-claude":
 			cfg.DefaultAgentID = legacyKind
 		case "custom":
 			cfg.DefaultAgentID = "custom"
@@ -587,6 +615,10 @@ func validateAgentDefinitions(agents []session.AgentConfig, defaultID string) ([
 			agent.Name, agent.Kind, agent.Command = "Codex", "codex", session.CodexAgentCommand
 		} else if agent.ID == "claude" {
 			agent.Name, agent.Kind, agent.Command = "Claude Code", "claude", session.ClaudeAgentCommand
+		} else if agent.ID == "aiden" {
+			agent.Name, agent.Kind, agent.Command = "Aiden", "aiden", session.AidenAgentCommand
+		} else if agent.ID == "aiden-claude" {
+			agent.Name, agent.Kind, agent.Command = "Aiden X Claude Code", "aiden-claude", session.AidenClaudeAgentCommand
 		} else if agent.Kind != "custom" {
 			return nil, session.AgentConfig{}, errors.New("自定义 Agent 类型无效")
 		}
@@ -650,7 +682,7 @@ func autoSelectFirstUseAgent(cfg Config, options []session.AgentOption) (Config,
 		return cfg, false
 	}
 	for _, option := range options {
-		if option.Kind != "codex" && option.Kind != "claude" {
+		if option.Kind != "codex" && option.Kind != "claude" && option.Kind != "aiden" && option.Kind != "aiden-claude" {
 			continue
 		}
 		cfg.AgentKind = option.Kind
@@ -875,6 +907,8 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 			req.Agents = []session.AgentConfig{
 				{ID: "codex", Name: "Codex", Kind: "codex", Command: session.CodexAgentCommand},
 				{ID: "claude", Name: "Claude Code", Kind: "claude", Command: session.ClaudeAgentCommand},
+				{ID: "aiden", Name: "Aiden", Kind: "aiden", Command: session.AidenAgentCommand},
+				{ID: "aiden-claude", Name: "Aiden X Claude Code", Kind: "aiden-claude", Command: session.AidenClaudeAgentCommand},
 				{ID: "custom", Name: req.AgentName, Kind: "custom", Command: req.AgentCommand},
 			}
 			req.DefaultAgentID = "custom"

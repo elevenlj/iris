@@ -86,3 +86,65 @@ func TestWorkspaceOptionsForSessionAlwaysStartsWithSharedDefault(t *testing.T) {
 		t.Fatalf("custom workspace option = %#v", options[1])
 	}
 }
+
+func TestSwitchWorkspaceSubmitsCDToSupportedAgents(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		configKind  string
+		runtimeKind string
+		command     string
+	}{
+		{name: "Claude Code", configKind: "claude", runtimeKind: "claude", command: ClaudeAgentCommand},
+		{name: "Aiden", configKind: "aiden", runtimeKind: "aiden", command: AidenAgentCommand},
+		{name: "Aiden X Claude Code", configKind: "aiden-claude", runtimeKind: "claude", command: AidenClaudeAgentCommand},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			terminal := &recordingTerminal{readCh: make(chan []byte)}
+			manager := NewManager(nil, nil)
+			manager.SetAgentConfig(AgentConfig{Kind: test.configKind, Command: test.command}, []WorkspaceOption{{Label: "项目", Value: workspace}})
+			rt := &RuntimeSession{
+				manager:  manager,
+				terminal: terminal,
+				session:  Session{ID: "sess-workspace", Status: StatusWaiting, Live: true, LastMode: SessionModeAgent, LastAgentKind: test.runtimeKind, LastAgentStartCommand: test.command},
+			}
+			manager.sessions[rt.session.ID] = rt
+
+			got, ok, err := manager.SwitchWorkspace(context.Background(), rt.session.ID, workspace)
+			if err != nil || !ok || got.LastCWD != workspace {
+				t.Fatalf("SwitchWorkspace() ok=%v err=%v session=%#v", ok, err, got)
+			}
+			if writes := terminal.writes(); !strings.Contains(writes, "/cd "+workspace+"\r") {
+				t.Fatalf("workspace input = %q", writes)
+			}
+		})
+	}
+}
+
+func TestCreateSessionStartsAidenBuiltins(t *testing.T) {
+	for _, test := range []struct {
+		kind        string
+		command     string
+		runtimeKind string
+	}{
+		{kind: "aiden", command: AidenAgentCommand, runtimeKind: "aiden"},
+		{kind: "aiden-claude", command: AidenClaudeAgentCommand, runtimeKind: "claude"},
+	} {
+		t.Run(test.kind, func(t *testing.T) {
+			launcher := &recordingLauncher{}
+			manager := NewManager(nil, launcher)
+			manager.SetAgentConfig(AgentConfig{Kind: test.kind}, nil)
+
+			sess, err := manager.CreateSession(context.Background(), "test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if writes := launcher.terminals[0].writes(); !strings.Contains(writes, test.command+"\r") {
+				t.Fatalf("startup writes = %q, want %q", writes, test.command)
+			}
+			if sess.LastAgentKind != test.runtimeKind || sess.LastAgentID != test.kind {
+				t.Fatalf("startup session = %#v", sess)
+			}
+		})
+	}
+}

@@ -35,6 +35,7 @@ func (execAgentUpgradeRunner) LookPath(name string) (string, error) {
 	}
 	home, _ := os.UserHomeDir()
 	candidates := []string{
+		filepath.Join(home, ".aiden", "global-install", "bin", name),
 		filepath.Join(home, ".local", "bin", name),
 		filepath.Join(home, ".node", "bin", name),
 		filepath.Join(home, ".npm-global", "bin", name),
@@ -66,6 +67,7 @@ func (execAgentUpgradeRunner) Run(ctx context.Context, name string, args ...stri
 func agentUpgradeEnvironment() []string {
 	home, _ := os.UserHomeDir()
 	pathEntries := []string{
+		filepath.Join(home, ".aiden", "global-install", "bin"),
 		filepath.Join(home, ".local", "bin"),
 		filepath.Join(home, ".node", "bin"),
 		filepath.Join(home, ".npm-global", "bin"),
@@ -133,10 +135,10 @@ func startupAgentUpgradeKinds(sessions []Session, configured AgentConfig) []stri
 	kinds := map[string]bool{}
 	add := func(kind, command string) {
 		kind = strings.ToLower(strings.TrimSpace(kind))
-		if kind != "codex" && kind != "claude" {
+		if kind != "codex" && kind != "claude" && kind != "aiden" {
 			kind = recognizedUpgradeableAgentKind(command)
 		}
-		if kind == "codex" || kind == "claude" {
+		if kind == "codex" || kind == "claude" || kind == "aiden" {
 			kinds[kind] = true
 		}
 	}
@@ -173,6 +175,8 @@ func recognizedUpgradeableAgentKind(command string) string {
 			return "codex"
 		case "claude", "claude-code":
 			return "claude"
+		case "aiden":
+			return "aiden"
 		}
 	}
 	return ""
@@ -184,6 +188,8 @@ func agentUpgradeExecutable(kind string) string {
 		return "codex"
 	case "claude":
 		return "claude"
+	case "aiden":
+		return "aiden"
 	default:
 		return ""
 	}

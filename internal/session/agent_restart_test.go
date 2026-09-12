@@ -268,6 +268,46 @@ func TestRestartAgentStartsFreshAidenCodexSession(t *testing.T) {
 	}
 }
 
+func TestRestartAgentStartsFreshAidenSessions(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		agentID     string
+		runtimeKind string
+		command     string
+	}{
+		{name: "native", agentID: "aiden", runtimeKind: "aiden", command: AidenAgentCommand},
+		{name: "claude", agentID: "aiden-claude", runtimeKind: "claude", command: AidenClaudeAgentCommand},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			terminal := newControlledForegroundTerminal()
+			rt := &RuntimeSession{
+				terminal: terminal,
+				session: Session{
+					ID:                    "sess-aiden-restart",
+					Live:                  true,
+					LastMode:              SessionModeAgent,
+					LastAgentID:           test.agentID,
+					LastAgentKind:         test.runtimeKind,
+					LastAgentStartCommand: test.command,
+				},
+			}
+			if err := rt.RestartAgent(); err != nil {
+				t.Fatal(err)
+			}
+			<-terminal.started
+			close(terminal.release)
+			waitForAgentRestartWrites(t, terminal, 1)
+			if writes := terminal.snapshotWrites(); len(writes) != 1 || writes[0] != test.command+"\r" {
+				t.Fatalf("restart writes = %#v", writes)
+			}
+			got := rt.Snapshot()
+			if got.LastAgentKind != test.runtimeKind || !strings.Contains(got.LastAgentResumeCommand, "--continue") {
+				t.Fatalf("restart state = %#v", got)
+			}
+		})
+	}
+}
+
 func waitForAgentRestartWrites(t *testing.T, terminal *controlledForegroundTerminal, count int) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)

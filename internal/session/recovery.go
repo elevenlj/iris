@@ -378,7 +378,10 @@ func agentLaunchInfo(argv []string) (agentInfo, bool) {
 		if len(args) >= 2 && args[0] == "x" && args[1] == "codex" {
 			return codexAgentInfoWithPrefix([]string{argv[0], "x", "codex"}, args[2:])
 		}
-		return genericAgentInfo(cmd, argv[0], args)
+		if len(args) >= 2 && args[0] == "x" && args[1] == "claude" {
+			return claudeAgentInfoWithPrefix([]string{argv[0], "x", "claude"}, args[2:])
+		}
+		return aidenAgentInfo(argv[0], args)
 	case "gemini", "opencode":
 		return genericAgentInfo(cmd, argv[0], args)
 	default:
@@ -425,15 +428,27 @@ func firstCodexSubcommand(args []string) string {
 }
 
 func claudeAgentInfo(command string, args []string) (agentInfo, bool) {
+	return claudeAgentInfoWithPrefix([]string{command}, args)
+}
+
+func claudeAgentInfoWithPrefix(command []string, args []string) (agentInfo, bool) {
+	return resumableAgentInfo("claude", command, args)
+}
+
+func aidenAgentInfo(command string, args []string) (agentInfo, bool) {
+	return resumableAgentInfo("aiden", []string{command}, args)
+}
+
+func resumableAgentInfo(kind string, command, args []string) (agentInfo, bool) {
 	if hasAnyArg(args, "--version", "-v", "--help", "-h") {
 		return agentInfo{}, false
 	}
-	if hasAnyArg(args, "--resume", "--continue") {
-		return agentInfo{Kind: "claude", ResumeCommand: joinShellCommand(append([]string{command}, args...))}, true
+	if hasResumeLikeArg(args) {
+		return agentInfo{Kind: kind, ResumeCommand: joinShellCommand(append(append([]string(nil), command...), args...))}, true
 	}
 	flags := preserveCLIFlags(args)
-	resume := append([]string{command, "--continue"}, flags...)
-	return agentInfo{Kind: "claude", ResumeCommand: joinShellCommand(resume)}, true
+	resume := append(append(append([]string(nil), command...), "--continue"), flags...)
+	return agentInfo{Kind: kind, ResumeCommand: joinShellCommand(resume)}, true
 }
 
 func genericAgentInfo(kind, command string, args []string) (agentInfo, bool) {
@@ -467,7 +482,7 @@ func preserveCLIFlags(args []string) []string {
 
 func cliFlagTakesValue(arg string) bool {
 	switch arg {
-	case "-c", "--config", "-i", "--image", "-m", "--model", "-p", "--profile", "-s", "--sandbox", "-C", "--cd", "--add-dir", "-a", "--ask-for-approval", "--local-provider", "--remote", "--remote-auth-token-env":
+	case "-c", "--config", "-i", "--image", "-m", "--model", "-p", "--print", "--profile", "-s", "--sandbox", "-C", "--cd", "--add-dir", "-a", "--agent", "--ask-for-approval", "--local-provider", "--remote", "--remote-auth-token-env", "--permission-mode", "--model-reasoning-effort", "--output-style", "--settings", "--config-home", "--env":
 		return true
 	default:
 		return false
@@ -490,7 +505,10 @@ func hasAnyArg(args []string, values ...string) bool {
 func hasResumeLikeArg(args []string) bool {
 	for _, arg := range args {
 		switch arg {
-		case "resume", "--resume", "--continue", "continue", "--last":
+		case "resume", "--resume", "-r", "--continue", "-c", "continue", "--last":
+			return true
+		}
+		if strings.HasPrefix(arg, "--resume=") {
 			return true
 		}
 	}
@@ -706,6 +724,10 @@ func exactAgentResumeCommand(sess Session) string {
 		if claudeResumeSessionID(command) != "" {
 			return command
 		}
+	case "aiden":
+		if claudeResumeSessionID(command) != "" {
+			return command
+		}
 	}
 	return ""
 }
@@ -761,6 +783,14 @@ func pinCodexResumeCommand(command, threadID string) (string, bool) {
 }
 
 func pinClaudeResumeCommand(command, sessionID string) (string, bool) {
+	return pinResumableAgentCommand(command, sessionID, "claude")
+}
+
+func pinAidenResumeCommand(command, sessionID string) (string, bool) {
+	return pinResumableAgentCommand(command, sessionID, "aiden")
+}
+
+func pinResumableAgentCommand(command, sessionID, kind string) (string, bool) {
 	if !validCodexThreadID(sessionID) {
 		return command, false
 	}
@@ -772,13 +802,25 @@ func pinClaudeResumeCommand(command, sessionID string) (string, bool) {
 	if envEnd >= len(argv) {
 		return command, false
 	}
+	prefixEnd := envEnd + 1
 	base := shellCommandBase(argv[envEnd])
-	if base != "claude" && base != "claude-code" {
+	switch kind {
+	case "claude":
+		if base == "aiden" && envEnd+2 < len(argv) && argv[envEnd+1] == "x" && argv[envEnd+2] == "claude" {
+			prefixEnd = envEnd + 3
+		} else if base != "claude" && base != "claude-code" {
+			return command, false
+		}
+	case "aiden":
+		if base != "aiden" || (envEnd+1 < len(argv) && argv[envEnd+1] == "x") {
+			return command, false
+		}
+	default:
 		return command, false
 	}
 	args := make([]string, 0, len(argv)-envEnd+1)
 	resumeSet := false
-	for index := envEnd + 1; index < len(argv); index++ {
+	for index := prefixEnd; index < len(argv); index++ {
 		arg := argv[index]
 		switch {
 		case arg == "--continue" || arg == "-c":
@@ -806,7 +848,7 @@ func pinClaudeResumeCommand(command, sessionID string) (string, bool) {
 	if !resumeSet {
 		args = append([]string{"--resume", sessionID}, args...)
 	}
-	result := joinShellCommand(append([]string{argv[envEnd]}, args...))
+	result := joinShellCommand(append(append([]string(nil), argv[envEnd:prefixEnd]...), args...))
 	if envEnd > 0 {
 		result = strings.TrimSpace(joinEnvAssignments(argv[:envEnd]) + " " + result)
 	}

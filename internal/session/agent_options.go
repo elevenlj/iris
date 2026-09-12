@@ -5,8 +5,10 @@ import (
 )
 
 const (
-	CodexAgentCommand  = "codex --dangerously-bypass-approvals-and-sandbox"
-	ClaudeAgentCommand = "claude --dangerously-skip-permissions"
+	CodexAgentCommand       = "codex --dangerously-bypass-approvals-and-sandbox"
+	ClaudeAgentCommand      = "claude --dangerously-skip-permissions"
+	AidenAgentCommand       = "aiden --permission-mode agentFull"
+	AidenClaudeAgentCommand = "aiden x claude --dangerously-skip-permissions"
 )
 
 type AgentOption struct {
@@ -31,12 +33,19 @@ func DetectAvailableAgentOptions(configured ...AgentConfig) []AgentOption {
 }
 
 func detectAvailableAgentOptions(configured []AgentConfig, finder agentExecutableFinder) []AgentOption {
-	options := make([]AgentOption, 0, len(configured)+2)
+	options := make([]AgentOption, 0, len(configured)+4)
 	if _, err := finder.LookPath("codex"); err == nil {
 		options = append(options, AgentOption{ID: "codex", Label: "Codex", Kind: "codex", Command: CodexAgentCommand})
 	}
-	if _, err := finder.LookPath("claude"); err == nil {
+	_, claudeErr := finder.LookPath("claude")
+	if claudeErr == nil {
 		options = append(options, AgentOption{ID: "claude", Label: "Claude Code", Kind: "claude", Command: ClaudeAgentCommand})
+	}
+	if _, err := finder.LookPath("aiden"); err == nil {
+		options = append(options, AgentOption{ID: "aiden", Label: "Aiden", Kind: "aiden", Command: AidenAgentCommand})
+		if claudeErr == nil {
+			options = append(options, AgentOption{ID: "aiden-claude", Label: "Aiden X Claude Code", Kind: "aiden-claude", Command: AidenClaudeAgentCommand})
+		}
 	}
 	for _, agent := range configured {
 		agent.ID = strings.ToLower(strings.TrimSpace(agent.ID))
@@ -61,7 +70,7 @@ func normalizeAgentOptions(options []AgentOption) []AgentOption {
 		if option.ID == "" || option.Label == "" || option.Command == "" || seen[option.ID] {
 			continue
 		}
-		if option.Kind != "codex" && option.Kind != "claude" && option.Kind != "custom" {
+		if option.Kind != "codex" && option.Kind != "claude" && option.Kind != "aiden" && option.Kind != "aiden-claude" && option.Kind != "custom" {
 			continue
 		}
 		seen[option.ID] = true

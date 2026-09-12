@@ -30,15 +30,16 @@ func (r *recordingAgentUpgradeRunner) Run(_ context.Context, name string, args .
 	return "updated", nil
 }
 
-func TestStartupAgentUpgradeKindsIncludesCodexClaudeAndCustomCommands(t *testing.T) {
+func TestStartupAgentUpgradeKindsIncludesSupportedBuiltinsAndCustomCommands(t *testing.T) {
 	sessions := []Session{
 		{Live: true, LastMode: SessionModeAgent, LastAgentKind: "codex", LastAgentStartCommand: "codex --yolo"},
 		{Live: true, LastMode: SessionModeAgent, LastAgentKind: "custom", LastAgentStartCommand: "CLAUDE_CONFIG_DIR=/tmp/claude claude --continue"},
 		{Live: false, LastMode: SessionModeAgent, LastAgentKind: "claude", LastAgentStartCommand: "claude"},
 		{Live: true, LastMode: SessionModeAgent, LastAgentKind: "custom", LastAgentStartCommand: "other-agent"},
+		{Live: true, LastMode: SessionModeAgent, LastAgentKind: "aiden", LastAgentStartCommand: "aiden --permission-mode agentFull"},
 	}
 	got := startupAgentUpgradeKinds(sessions, AgentConfig{Kind: "custom", Command: "other-agent"})
-	if want := []string{"claude", "codex"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"aiden", "claude", "codex"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("upgrade kinds = %#v, want %#v", got, want)
 	}
 }
@@ -91,6 +92,24 @@ func TestExecAgentUpgradeRunnerFindsUserLocalBinOutsideServicePath(t *testing.T)
 	}
 }
 
+func TestExecAgentUpgradeRunnerFindsAidenDefaultInstall(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".aiden", "global-install", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	executable := filepath.Join(binDir, "aiden")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	got, err := (execAgentUpgradeRunner{}).LookPath("aiden")
+	if err != nil || got != executable {
+		t.Fatalf("resolved executable = %q, err=%v", got, err)
+	}
+}
+
 func TestAgentUpgradeEnvironmentAddsCommonAgentAndNodePaths(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -102,7 +121,7 @@ func TestAgentUpgradeEnvironmentAddsCommonAgentAndNodePaths(t *testing.T) {
 			break
 		}
 	}
-	for _, want := range []string{filepath.Join(home, ".local", "bin"), filepath.Join(home, ".node", "bin"), "/opt/homebrew/bin"} {
+	for _, want := range []string{filepath.Join(home, ".aiden", "global-install", "bin"), filepath.Join(home, ".local", "bin"), filepath.Join(home, ".node", "bin"), "/opt/homebrew/bin"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("upgrade PATH %q does not contain %q", got, want)
 		}
