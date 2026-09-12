@@ -792,6 +792,56 @@ func TestLarkReplyBridgeMentionModeRequiresBotMentionInGroup(t *testing.T) {
 	}
 }
 
+func TestLarkReplyBridgeAssistantMode(t *testing.T) {
+	resetLarkRegistryForTest()
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	bridge.SetDeveloperOpenID("ou-owner")
+	bridge.fetchBotIdentity = func(context.Context) (larkBotIdentity, error) {
+		return larkBotIdentity{OpenID: "ou-bot"}, nil
+	}
+	bridge.fetchUserDisplayName = func(context.Context, string) (string, error) { return "申晗", nil }
+	sess, err := manager.CreateSession(context.Background(), "Group")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := manager.BindLarkChat(context.Background(), sess.ID, "oc-group"); err != nil || !ok {
+		t.Fatalf("BindLarkChat ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := manager.UpdateLarkMentionMode(context.Background(), sess.ID, true); err != nil || !ok {
+		t.Fatalf("UpdateLarkMentionMode ok=%v err=%v", ok, err)
+	}
+	action := &callback.CallBackAction{Value: map[string]interface{}{"iris_action": "toggle_assistant_mode", "session_id": sess.ID}}
+	if resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-guest"); err != nil || resp.Toast == nil || !strings.Contains(resp.Toast.Content, "只有配置的开发者") {
+		t.Fatalf("guest toggle response=%#v err=%v", resp, err)
+	}
+	if manager.sessions[sess.ID].Snapshot().AssistantModeEnabled {
+		t.Fatal("guest must not enable assistant mode")
+	}
+	if resp, err := bridge.handleCardAction(context.Background(), action, "", "", "ou-owner"); err != nil || resp.Toast == nil || resp.Toast.Content != "已开启助理模式" {
+		t.Fatalf("owner toggle response=%#v err=%v", resp, err)
+	}
+
+	event := p2MessageWithChat("m-assistant", "", "", "text", `{"text":"@_user_1 帮我看一下"}`, "group", "oc-group", "ou-user")
+	event.Event.Message.Mentions = []*larkim.MentionEvent{{Key: strPtr("@_user_1"), Id: &larkim.UserId{OpenId: strPtr("ou-owner")}}}
+	if err := bridge.HandleP2MessageReceive(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	if got := launcher.terminals[0].writes(); !strings.Contains(got, PrepareStructuredInput("帮我看一下")) || strings.Contains(got, "助理") {
+		t.Fatalf("assistant trigger should submit only the original request, got %q", got)
+	}
+	if got := manager.sessions[sess.ID].NotificationAssistantName(); got != "申晗" {
+		t.Fatalf("assistant display name=%q, want 申晗", got)
+	}
+	both := larkRouteContext{ChatType: "group", ChatID: "oc-group", SenderOpenID: "ou-user", Mentions: []*larkim.MentionEvent{
+		{Id: &larkim.UserId{OpenId: strPtr("ou-owner")}}, {Id: &larkim.UserId{OpenId: strPtr("ou-bot")}},
+	}}
+	if got := bridge.prepareAssistantRoute(context.Background(), both, larkIncomingMessage{Text: "正常呼叫机器人"}); got.AssistantName != "" {
+		t.Fatalf("message mentioning both bot and developer must stay a normal request: %#v", got)
+	}
+}
+
 func TestLarkReplyBridgeMentionModeDoesNotFilterDirectChat(t *testing.T) {
 	resetLarkRegistryForTest()
 	launcher := &recordingLauncher{}

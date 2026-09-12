@@ -148,6 +148,9 @@ func (n *LarkAppNotifier) NotifyWaiting(note WaitingNotification) (WaitingNotifi
 
 func larkNotificationCardContent(note WaitingNotification, receiveID string, mention bool, customShortcuts ...LarkCustomShortcut) (string, error) {
 	elements := []map[string]any{}
+	if !note.Startup && !note.Running && strings.TrimSpace(note.AssistantName) != "" {
+		elements = append(elements, map[string]any{"tag": "div", "text": map[string]any{"tag": "plain_text", "content": "我是" + strings.TrimSpace(note.AssistantName) + "的助理。"}})
+	}
 	mentionID := larkNotificationMentionID(note, receiveID)
 	if mention && mentionID != "" {
 		elements = append(elements, map[string]any{"tag": "markdown", "content": "<at id=" + mentionID + "></at>"})
@@ -181,7 +184,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 			}
 			elements = append(elements, interactionElement)
 		}
-		if note.DeveloperModeEnabled {
+		if note.DeveloperModeEnabled && note.AssistantName == "" {
 			if contextElement := larkTerminalAgentContextElement(note.AgentContext); contextElement != nil {
 				elements = append(elements, map[string]any{"tag": "hr"})
 				elements = append(elements, contextElement)
@@ -203,8 +206,8 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 				elements = append(elements, selectorRow)
 			}
 		}
-		if !note.Disabled {
-			elements = append(elements, larkShortcutActionElements(note.SessionID, note.UpdateNo, note.MentionModeEnabled, note.DeveloperModeEnabled)...)
+		if !note.Disabled && note.AssistantName == "" {
+			elements = append(elements, larkShortcutActionElements(note.SessionID, note.UpdateNo, note.MentionModeEnabled, note.AssistantModeEnabled, note.DeveloperModeEnabled)...)
 			if shortcuts := normalizeLarkCustomShortcuts(customShortcuts); note.DeveloperModeEnabled && len(shortcuts) > 0 {
 				elements = append(elements, map[string]any{"tag": "hr"})
 				elements = append(elements, larkCustomShortcutActionElements(note.SessionID, shortcuts)...)
@@ -728,12 +731,13 @@ func larkTerminalPlainTextWithMerge(content string, allowWrappedLineMerge bool) 
 	return content
 }
 
-func larkShortcutActionElements(sessionID string, updateNo int, mentionModeEnabled bool, developerModeEnabled bool) []map[string]any {
+func larkShortcutActionElements(sessionID string, updateNo int, mentionModeEnabled, assistantModeEnabled, developerModeEnabled bool) []map[string]any {
 	columns := []map[string]any{larkRefreshButtonColumn(sessionID, updateNo), larkDeveloperModeButtonColumn(sessionID, updateNo, developerModeEnabled)}
 	elements := []map[string]any{}
 	if developerModeEnabled {
 		columns = append(columns,
 			larkMentionModeButtonColumn(sessionID, updateNo, mentionModeEnabled),
+			larkAssistantModeButtonColumn(sessionID, updateNo, assistantModeEnabled),
 			larkRestartAgentButtonColumn(sessionID),
 			larkDeleteSessionButtonColumn(sessionID),
 		)
@@ -746,6 +750,23 @@ func larkShortcutActionElements(sessionID string, updateNo int, mentionModeEnabl
 		return elements
 	}
 	return []map[string]any{larkFlowShortcutActionElement(columns...)}
+}
+
+func larkAssistantModeButtonColumn(sessionID string, updateNo int, enabled bool) map[string]any {
+	label := "助理模式：关"
+	if enabled {
+		label = "助理模式：开"
+	}
+	return map[string]any{
+		"tag": "column", "width": "auto", "vertical_spacing": "8px",
+		"elements": []map[string]any{{
+			"tag": "button", "type": "default", "size": "tiny", "width": "default",
+			"text": map[string]any{"tag": "plain_text", "content": label},
+			"behaviors": []map[string]any{{"type": "callback", "value": map[string]any{
+				"iris_action": "toggle_assistant_mode", "session_id": sessionID, "update_no": updateNo,
+			}}},
+		}},
+	}
 }
 
 func larkRestartAgentButtonColumn(sessionID string) map[string]any {

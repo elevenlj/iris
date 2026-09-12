@@ -83,19 +83,21 @@ type SessionStartPreset struct {
 type larkPipelineInput struct {
 	Text                        string
 	MentionOpenID               string
+	AssistantName               string
 	PreserveRunningNotification bool
 }
 
 type larkRouteContext struct {
-	MessageID    string
-	ParentID     string
-	RootID       string
-	ChatID       string
-	ChatType     string
-	SenderOpenID string
-	MessageTime  time.Time
-	MentionedBot bool
-	Mentions     []*larkim.MentionEvent
+	MessageID     string
+	ParentID      string
+	RootID        string
+	ChatID        string
+	ChatType      string
+	SenderOpenID  string
+	MessageTime   time.Time
+	MentionedBot  bool
+	Mentions      []*larkim.MentionEvent
+	AssistantName string
 }
 
 type larkBotIdentity struct {
@@ -373,6 +375,8 @@ func (b *LarkReplyBridge) handleCardAction(ctx context.Context, action *callback
 		return b.handleCardToggleAutoSummary(ctx, value, openMessageID)
 	case "toggle_mention_mode":
 		return b.handleCardToggleMentionMode(ctx, value, openMessageID)
+	case "toggle_assistant_mode":
+		return b.handleCardToggleAssistantMode(ctx, value, openMessageID, operatorOpenID)
 	case "toggle_developer_mode":
 		return b.handleCardToggleDeveloperMode(ctx, value, openMessageID, operatorOpenID)
 	case "restart_agent":
@@ -777,6 +781,37 @@ func (b *LarkReplyBridge) handleCardToggleMentionMode(ctx context.Context, value
 	return larkCardToast("info", "已关闭艾特模式"), nil
 }
 
+func (b *LarkReplyBridge) handleCardToggleAssistantMode(ctx context.Context, value map[string]interface{}, openMessageID, operatorOpenID string) (*callback.CardActionTriggerResponse, error) {
+	b.mu.Lock()
+	developerOpenID := b.developerOpenID
+	b.mu.Unlock()
+	if developerOpenID == "" || strings.TrimSpace(operatorOpenID) != developerOpenID {
+		return larkCardToast("warning", "只有配置的开发者可以切换助理模式"), nil
+	}
+	sessionID, rt, blocked := b.resolveCardActionRuntime(value, openMessageID)
+	if blocked != nil {
+		return blocked, nil
+	}
+	sess := rt.Snapshot()
+	updated, ok, err := b.manager.UpdateAssistantMode(ctx, sessionID, !sess.AssistantModeEnabled)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return larkCardToast("warning", "会话不在线"), nil
+	}
+	updateNo, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value["update_no"])))
+	go func() {
+		if err := rt.RefreshNotificationControls(openMessageID, updateNo); err != nil {
+			log.Printf("lark card assistant mode patch failed session=%s: %v", sessionID, err)
+		}
+	}()
+	if updated.AssistantModeEnabled {
+		return larkCardToast("info", "已开启助理模式"), nil
+	}
+	return larkCardToast("info", "已关闭助理模式"), nil
+}
+
 func larkCardToast(kind, content string) *callback.CardActionTriggerResponse {
 	return &callback.CardActionTriggerResponse{Toast: &callback.Toast{Type: kind, Content: content}}
 }
@@ -859,6 +894,7 @@ func (b *LarkReplyBridge) HandleP2MessageReceive(ctx context.Context, event *lar
 		MessageTime:  parseLarkMillisecondTime(valueOf(msg.CreateTime)),
 		Mentions:     msg.Mentions,
 	}
+	routeCtx = b.prepareAssistantRoute(ctx, routeCtx, incoming)
 	if _, ignored := b.shouldIgnoreForMentionMode(ctx, routeCtx, incoming); ignored {
 		return nil
 	}
@@ -989,11 +1025,48 @@ func (b *LarkReplyBridge) shouldIgnoreForMentionMode(ctx context.Context, routeC
 	if err != nil || !ok || !sess.LarkMentionModeEnabled {
 		return sessionID, false
 	}
-	if b.routeContextMentionsBot(ctx, routeCtx) {
+	if b.routeContextMentionsBot(ctx, routeCtx) || routeCtx.AssistantName != "" {
 		return sessionID, false
 	}
 	log.Printf("lark reply bridge ignored message=%s session=%s reason=mention_mode_requires_bot_mention", routeCtx.MessageID, sessionID)
 	return sessionID, true
+}
+
+func (b *LarkReplyBridge) prepareAssistantRoute(ctx context.Context, routeCtx larkRouteContext, incoming larkIncomingMessage) larkRouteContext {
+	if routeCtx.AssistantName != "" || !isLarkGroupChatType(routeCtx.ChatType) || b == nil || b.manager == nil {
+		return routeCtx
+	}
+	b.mu.Lock()
+	developerOpenID := strings.TrimSpace(b.developerOpenID)
+	fetchDisplayName := b.fetchUserDisplayName
+	b.mu.Unlock()
+	if developerOpenID == "" || strings.TrimSpace(routeCtx.SenderOpenID) == developerOpenID || b.routeContextMentionsBot(ctx, routeCtx) || !routeContextMentionsOpenID(routeCtx, developerOpenID) {
+		return routeCtx
+	}
+	sessionID := b.mentionModeSessionID(ctx, routeCtx, incoming)
+	sess, ok, err := b.manager.GetSession(ctx, sessionID)
+	if err != nil || !ok || !sess.AssistantModeEnabled {
+		return routeCtx
+	}
+	routeCtx.AssistantName = "他"
+	if fetchDisplayName != nil {
+		if name, err := fetchDisplayName(ctx, developerOpenID); err == nil && strings.TrimSpace(name) != "" {
+			routeCtx.AssistantName = strings.TrimSpace(name)
+		} else if err != nil {
+			log.Printf("lark assistant developer name lookup failed open_id=%s: %v", developerOpenID, err)
+		}
+	}
+	return routeCtx
+}
+
+func routeContextMentionsOpenID(routeCtx larkRouteContext, openID string) bool {
+	openID = strings.TrimSpace(openID)
+	for _, mention := range routeCtx.Mentions {
+		if mention != nil && mention.Id != nil && strings.TrimSpace(valueOf(mention.Id.OpenId)) == openID {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *LarkReplyBridge) mentionModeSessionID(ctx context.Context, routeCtx larkRouteContext, incoming larkIncomingMessage) string {
@@ -1117,6 +1190,8 @@ func (b *LarkReplyBridge) RouteIncoming(ctx context.Context, messageID, parentID
 
 func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx larkRouteContext, incoming larkIncomingMessage) (string, error) {
 	messageID, parentID, rootID := routeCtx.MessageID, routeCtx.ParentID, routeCtx.RootID
+	routeCtx = b.prepareAssistantRoute(ctx, routeCtx, incoming)
+	incoming.Text = cleanLarkMentionKeys(incoming.Text, routeCtx.Mentions)
 	if sessionID, ignored := b.shouldIgnoreForMentionMode(ctx, routeCtx, incoming); ignored {
 		return sessionID, nil
 	}
@@ -1159,7 +1234,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 			return sessionID, nil
 		}
 		b.manager.EnsureBrowser(sessionID)
-		b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.SenderOpenID)
+		b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.SenderOpenID, routeCtx.AssistantName)
 		if err := SubmitStructuredInputWithMention(rt, inputParts[0], routeCtx.SenderOpenID); err != nil {
 			return sessionID, err
 		}
@@ -1169,7 +1244,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		b.notifyInputRunning(sessionID)
 		return sessionID, nil
 	}
-	if name, presetCodes, ok := b.parseLarkStartCommand(text); ok {
+	if name, presetCodes, ok := b.parseLarkStartCommand(text); ok && routeCtx.AssistantName == "" {
 		s, err := b.createLarkSessionForMessage(ctx, name, routeCtx)
 		if err == nil {
 			if updated, found, updateErr := b.manager.UpdateDeveloperMode(ctx, s.ID, true); updateErr == nil && found {
@@ -1205,7 +1280,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		return s.ID, err
 	}
 	sessionID := b.resolveSessionID(ctx, text, parentID, rootID, routeCtx.ChatID, routeCtx.ChatType)
-	if isStopCommand(text) {
+	if routeCtx.AssistantName == "" && isStopCommand(text) {
 		if sessionID == "" {
 			if err := b.replyLarkText(ctx, messageID, "未找到会话"); err != nil {
 				return "", err
@@ -1227,7 +1302,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		b.notifyInputRunning(sessionID)
 		return sessionID, nil
 	}
-	if isCurrentRoundCommand(text) {
+	if routeCtx.AssistantName == "" && isCurrentRoundCommand(text) {
 		if sessionID == "" {
 			if err := b.replyLarkText(ctx, messageID, "未找到会话"); err != nil {
 				return "", err
@@ -1271,11 +1346,11 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		rt, _ = b.manager.GetRuntime(sessionID)
 	}
 	b.manager.EnsureBrowser(sessionID)
-	if b.enqueueInputIfRuntimeBusy(rt, sessionID, inputParts, routeCtx.SenderOpenID) {
+	if b.enqueueInputIfRuntimeBusy(rt, sessionID, inputParts, routeCtx.SenderOpenID, routeCtx.AssistantName) {
 		defaultLarkMessageRegistry.remember(sessionID, messageID, parentID, rootID)
 		return sessionID, nil
 	}
-	b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.SenderOpenID)
+	b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.SenderOpenID, routeCtx.AssistantName)
 	if err := SubmitStructuredInputWithMention(rt, inputParts[0], routeCtx.SenderOpenID); err != nil {
 		return sessionID, err
 	}
@@ -1503,7 +1578,7 @@ func uniqueNonEmptyStrings(values []string) []string {
 	return out
 }
 
-func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionID string, parts []string, mentionOpenID string) bool {
+func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionID string, parts []string, mentionOpenID string, assistantName ...string) bool {
 	if rt == nil || sessionID == "" || len(parts) == 0 {
 		return false
 	}
@@ -1515,12 +1590,13 @@ func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionI
 		return false
 	}
 	rt.SetNotificationMentionOpenID(mentionOpenID)
+	rt.SetNotificationAssistantName(firstString(assistantName))
 	if starting {
 		rt.beginStartupNotification(mentionOpenID)
-		b.enqueuePipelineWithFirstMode(sessionID, parts, mentionOpenID, true)
+		b.enqueuePipelineWithFirstMode(sessionID, parts, mentionOpenID, true, assistantName...)
 	} else {
 		rt.MarkStructuredInputActivity(parts[0])
-		b.enqueuePipeline(sessionID, parts, mentionOpenID)
+		b.enqueuePipeline(sessionID, parts, mentionOpenID, assistantName...)
 		rt.NotifyInputRunning()
 	}
 	log.Printf("lark reply bridge queued input session=%s parts=%d reason=runtime_running", sessionID, len(parts))
@@ -1605,7 +1681,7 @@ func (b *LarkReplyBridge) routeAttachments(ctx context.Context, routeCtx larkRou
 		}
 		b.clearPendingFiles(sessionID)
 	}
-	b.enqueuePipeline(sessionID, parts[1:], routeCtx.SenderOpenID)
+	b.enqueuePipeline(sessionID, parts[1:], routeCtx.SenderOpenID, routeCtx.AssistantName)
 	if err := SubmitStructuredInputWithMention(rt, input+" "+text, routeCtx.SenderOpenID); err != nil {
 		return sessionID, err
 	}
@@ -1741,6 +1817,7 @@ func (b *LarkReplyBridge) ensureRouteRuntime(ctx context.Context, sessionID stri
 		if routeCtx.SenderOpenID != "" {
 			rt.SetNotificationMentionOpenID(routeCtx.SenderOpenID)
 		}
+		rt.SetNotificationAssistantName(routeCtx.AssistantName)
 		return rt, s, true, nil
 	}
 	rt, sess, ok, err := b.manager.RecoverRuntime(ctx, sessionID)
@@ -1754,6 +1831,7 @@ func (b *LarkReplyBridge) ensureRouteRuntime(ctx context.Context, sessionID stri
 	if routeCtx.SenderOpenID != "" {
 		rt.SetNotificationMentionOpenID(routeCtx.SenderOpenID)
 	}
+	rt.SetNotificationAssistantName(routeCtx.AssistantName)
 	if strings.TrimSpace(sess.LastMode) == SessionModeAgent && strings.TrimSpace(sess.LastAgentResumeCommand) != "" {
 		time.Sleep(1200 * time.Millisecond)
 	}
@@ -2111,6 +2189,7 @@ func (b *LarkReplyBridge) OnNotificationSent(sessionID string) {
 		return
 	}
 	b.manager.EnsureBrowser(sessionID)
+	rt.SetNotificationAssistantName(next.AssistantName)
 	var err error
 	if next.PreserveRunningNotification {
 		rt.createNewRunningNotification(next.MentionOpenID)
@@ -2138,7 +2217,7 @@ func (b *LarkReplyBridge) notifyInputRunning(sessionID string) {
 }
 
 func (b *LarkReplyBridge) scheduleAutoSummary(rt *RuntimeSession, originalInput string) {
-	if b == nil || rt == nil || !rt.AutoSummaryEnabled() || !shouldScheduleAutoSummary(originalInput) {
+	if b == nil || rt == nil || rt.NotificationAssistantName() != "" || !rt.AutoSummaryEnabled() || !shouldScheduleAutoSummary(originalInput) {
 		return
 	}
 	b.mu.Lock()
@@ -2172,11 +2251,11 @@ func shouldScheduleAutoSummary(input string) bool {
 	return !strings.HasPrefix(input, "/") && !strings.HasPrefix(input, "／")
 }
 
-func (b *LarkReplyBridge) enqueuePipeline(sessionID string, parts []string, mentionOpenID string) {
-	b.enqueuePipelineWithFirstMode(sessionID, parts, mentionOpenID, false)
+func (b *LarkReplyBridge) enqueuePipeline(sessionID string, parts []string, mentionOpenID string, assistantName ...string) {
+	b.enqueuePipelineWithFirstMode(sessionID, parts, mentionOpenID, false, assistantName...)
 }
 
-func (b *LarkReplyBridge) enqueuePipelineWithFirstMode(sessionID string, parts []string, mentionOpenID string, preserveFirstRunningNotification bool) {
+func (b *LarkReplyBridge) enqueuePipelineWithFirstMode(sessionID string, parts []string, mentionOpenID string, preserveFirstRunningNotification bool, assistantName ...string) {
 	if sessionID == "" || len(parts) == 0 {
 		return
 	}
@@ -2186,6 +2265,7 @@ func (b *LarkReplyBridge) enqueuePipelineWithFirstMode(sessionID string, parts [
 			cleaned = append(cleaned, larkPipelineInput{
 				Text:                        part,
 				MentionOpenID:               strings.TrimSpace(mentionOpenID),
+				AssistantName:               firstString(assistantName),
 				PreserveRunningNotification: preserveFirstRunningNotification && len(cleaned) == 0,
 			})
 		}
@@ -2196,6 +2276,13 @@ func (b *LarkReplyBridge) enqueuePipelineWithFirstMode(sessionID string, parts [
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.pipelines[sessionID] = append(b.pipelines[sessionID], cleaned...)
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(values[0])
 }
 
 func (b *LarkReplyBridge) popPipeline(sessionID string) larkPipelineInput {
@@ -2736,6 +2823,17 @@ func larkUserOpenID(user *larkim.UserId) string {
 
 func cleanLarkText(text string) string {
 	text = regexp.MustCompile(`<at[^>]*>.*?</at>`).ReplaceAllString(text, "")
+	return strings.TrimSpace(text)
+}
+
+func cleanLarkMentionKeys(text string, mentions []*larkim.MentionEvent) string {
+	for _, mention := range mentions {
+		if mention != nil {
+			if key := strings.TrimSpace(valueOf(mention.Key)); key != "" {
+				text = strings.ReplaceAll(text, key, "")
+			}
+		}
+	}
 	return strings.TrimSpace(text)
 }
 

@@ -2293,6 +2293,9 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 	if !strings.Contains(content, `"content":"艾特模式：关"`) || !strings.Contains(content, `"iris_action":"toggle_mention_mode"`) {
 		t.Fatalf("card content should include mention mode button, got %s", content)
 	}
+	if !strings.Contains(content, `"content":"助理模式：关"`) || !strings.Contains(content, `"iris_action":"toggle_assistant_mode"`) {
+		t.Fatalf("card content should include assistant mode button, got %s", content)
+	}
 	if !strings.Contains(content, "删除会话") || !strings.Contains(content, `"iris_action":"delete_session"`) || !strings.Contains(content, `"type":"danger"`) {
 		t.Fatalf("card content should include prominent delete button, got %s", content)
 	}
@@ -2323,7 +2326,7 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 	if len(systemRows) != 1 {
 		t.Fatalf("system shortcut buttons should use one flowing row, got %#v", systemRows)
 	}
-	wantSystemColumns := []int{5}
+	wantSystemColumns := []int{6}
 	for i, row := range systemRows {
 		columns, _ := row["columns"].([]any)
 		if row["flex_mode"] != "flow" || len(columns) != wantSystemColumns[i] {
@@ -2383,6 +2386,16 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 	}
 	if !strings.Contains(mentionModeEnabled, `"content":"艾特模式：开"`) || strings.Contains(mentionModeEnabled, "停艾特") {
 		t.Fatalf("enabled mention mode card should show its current state, got %s", mentionModeEnabled)
+	}
+	assistantModeEnabled, err := larkNotificationCardContent(WaitingNotification{
+		SessionID: "sess-1", Name: "A", Content: "已处理", AssistantModeEnabled: true,
+		AssistantName: "申晗", DeveloperModeEnabled: true,
+	}, "ou_1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(assistantModeEnabled, `"content":"我是申晗的助理。"`) || strings.Contains(assistantModeEnabled, "toggle_assistant_mode") || strings.Index(assistantModeEnabled, "我是申晗的助理") > strings.Index(assistantModeEnabled, "已处理") {
+		t.Fatalf("assistant reply should lead with identity and hide technical controls, got %s", assistantModeEnabled)
 	}
 }
 

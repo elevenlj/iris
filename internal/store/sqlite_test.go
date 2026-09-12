@@ -67,7 +67,11 @@ func TestSQLiteSessionLifecycle(t *testing.T) {
 	if list[0].LarkMentionModeEnabled {
 		t.Fatalf("mention mode should default to disabled: %#v", list[0])
 	}
+	if list[0].AssistantModeEnabled {
+		t.Fatalf("assistant mode should default to disabled: %#v", list[0])
+	}
 	list[0].LarkMentionModeEnabled = true
+	list[0].AssistantModeEnabled = true
 	if err := st.UpdateSession(context.Background(), list[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +79,7 @@ func TestSQLiteSessionLifecycle(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("GetSession ok=%v err=%v", ok, err)
 	}
-	if !updated.LarkMentionModeEnabled {
-		t.Fatalf("mention mode should persist: %#v", updated)
+	if !updated.LarkMentionModeEnabled || !updated.AssistantModeEnabled {
+		t.Fatalf("mention and assistant modes should persist: %#v", updated)
 	}
 }

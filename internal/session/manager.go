@@ -860,6 +860,22 @@ func (m *Manager) UpdateLarkMentionMode(ctx context.Context, id string, enabled 
 	return s, true, err
 }
 
+func (m *Manager) UpdateAssistantMode(ctx context.Context, id string, enabled bool) (Session, bool, error) {
+	rt, ok := m.GetRuntime(id)
+	if !ok {
+		return Session{}, false, nil
+	}
+	rt.mu.Lock()
+	rt.session.AssistantModeEnabled = enabled
+	rt.session.UpdatedAt = time.Now().UTC()
+	sess := rt.session
+	rt.mu.Unlock()
+	if err := m.persist(ctx, sess); err != nil {
+		return Session{}, false, err
+	}
+	return sess, true, nil
+}
+
 func (m *Manager) UpdateDeveloperMode(ctx context.Context, id string, enabled bool) (Session, bool, error) {
 	rt, ok := m.GetRuntime(id)
 	if !ok {
@@ -1152,6 +1168,7 @@ type RuntimeSession struct {
 	lastNotifiedVisibleResponder      chan RuntimeEvent
 	lastNotifiedVisibleCols           uint16
 	notificationMentionOpenID         string
+	notificationAssistantName         string
 	notificationUpdateNo              int
 	notificationRunning               bool
 	notificationWindowInputText       string
@@ -2335,6 +2352,24 @@ func (rt *RuntimeSession) NotificationMentionOpenID() string {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	return rt.notificationMentionOpenID
+}
+
+func (rt *RuntimeSession) SetNotificationAssistantName(name string) {
+	if rt == nil {
+		return
+	}
+	rt.mu.Lock()
+	rt.notificationAssistantName = strings.TrimSpace(name)
+	rt.mu.Unlock()
+}
+
+func (rt *RuntimeSession) NotificationAssistantName() string {
+	if rt == nil {
+		return ""
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.notificationAssistantName
 }
 
 func (rt *RuntimeSession) CurrentRoundContent() string {
@@ -4594,6 +4629,8 @@ func (rt *RuntimeSession) decorateWaitingNotification(note WaitingNotification) 
 	}
 	sess := rt.Snapshot()
 	note.DeveloperModeEnabled = sess.DeveloperModeEnabled
+	note.AssistantModeEnabled = sess.AssistantModeEnabled
+	note.AssistantName = rt.NotificationAssistantName()
 	note.AgentKind = sess.LastAgentKind
 	if sessionSupportsWorkspaceSwitch(sess) {
 		note.WorkspaceOptions = rt.manager.WorkspaceOptionsForSession(sess)

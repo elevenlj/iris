@@ -31,6 +31,7 @@ type Session struct {
 	BridgeEnabled          bool      `json:"bridge_enabled,omitempty"`
 	LarkChatID             string    `json:"lark_chat_id,omitempty"`
 	LarkMentionModeEnabled bool      `json:"lark_mention_mode_enabled,omitempty"`
+	AssistantModeEnabled   bool      `json:"assistant_mode_enabled,omitempty"`
 	DeveloperModeEnabled   bool      `json:"developer_mode_enabled,omitempty"`
 	HistorySize            int64     `json:"history_size,omitempty"`
 	RecoveryKey            string    `json:"recovery_key,omitempty"`
@@ -88,6 +89,8 @@ type WaitingNotification struct {
 	AutoRefreshEnabled   bool
 	AutoSummaryEnabled   bool
 	MentionModeEnabled   bool
+	AssistantModeEnabled bool
+	AssistantName        string
 	DeveloperModeEnabled bool
 	WorkspaceOptions     []WorkspaceOption
 	AgentOptions         []AgentOption
