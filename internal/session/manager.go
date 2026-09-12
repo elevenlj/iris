@@ -2669,18 +2669,49 @@ func parseSnapshotSourceContinuity(source string) snapshotSourceContinuity {
 }
 
 func startupAgentComposerReady(snapshot, source, agentKind string) bool {
-	switch strings.ToLower(strings.TrimSpace(agentKind)) {
+	agentKind = strings.ToLower(strings.TrimSpace(agentKind))
+	switch agentKind {
 	case "codex", "claude", "aiden":
 	default:
 		return true
 	}
-	cursorLine := parseSnapshotSourceContinuity(source).cursorLine
+	metadata := parseSnapshotSourceContinuity(source)
+	cursorLine := metadata.cursorLine
 	lines := splitVisibleLines(snapshot)
-	if cursorLine < 0 || cursorLine >= len(lines) {
+	if cursorLine >= 0 && cursorLine < len(lines) {
+		if _, ready := submittedInputPromptText(lines[cursorLine]); ready {
+			return true
+		}
+	}
+	// Native Aiden's Ink UI parks its hidden cursor below the composer/footer.
+	// Only accept its framed composer, not a welcome banner or a historical prompt.
+	if agentKind != "aiden" || !metadata.valid || !strings.HasSuffix(metadata.base, ":buffer") {
 		return false
 	}
-	_, ready := submittedInputPromptText(lines[cursorLine])
-	return ready
+	for bottom := len(lines) - 1; bottom >= 2; bottom-- {
+		if !isPureHorizontalRuleLine(lines[bottom]) {
+			continue
+		}
+		prompt := strings.TrimSpace(lines[bottom-1])
+		if !isPureHorizontalRuleLine(lines[bottom-2]) || (prompt != ">" && !strings.HasPrefix(prompt, "> ")) {
+			return false
+		}
+		before := strings.Join(lines[max(0, bottom-12):bottom-2], "\n")
+		if !strings.Contains(before, "mode (shift + tab to toggle)") {
+			return false
+		}
+		footer := strings.TrimSpace(strings.Join(lines[bottom+1:], "\n"))
+		if footer != "" && !strings.HasPrefix(footer, "◯ IDE:") && !strings.HasPrefix(footer, "🔌 MCP") {
+			return false
+		}
+		for _, line := range lines[bottom+1:] {
+			if _, prompt := submittedInputPromptText(line); prompt || terminalInteractionOptionRE.MatchString(line) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func (rt *RuntimeSession) currentRoundContentWithFreshSnapshot(timeout time.Duration) (string, bool) {
