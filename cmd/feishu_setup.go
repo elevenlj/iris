@@ -27,30 +27,41 @@ type createdFeishuApp struct {
 	OwnerEmail string `json:"owner_email"`
 }
 
-// A dedicated, temporary browser profile keeps login cookies out of Iris config
-// and never reads or exports the user's normal browser profile.
-func createFeishuApp(ctx context.Context, name string) (createdFeishuApp, error) {
+// Reuse only Iris's own login profile, isolated per service data directory.
+// Never read or export the user's normal browser profile.
+func createFeishuApp(ctx context.Context, name, dataDir string) (createdFeishuApp, error) {
 	var result createdFeishuApp
 	chrome := findChrome()
 	if chrome == "" {
 		return result, errors.New("自动创建需要本机安装 Chrome")
 	}
-	profile, err := os.MkdirTemp("", "iris-feishu-setup-")
+	profile, err := feishuLoginProfile(dataDir)
 	if err != nil {
 		return result, err
 	}
-	defer os.RemoveAll(profile)
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	command := exec.CommandContext(ctx, chrome, "--user-data-dir="+profile, "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "https://open.feishu.cn/app")
+	command := exec.Command(chrome, "--user-data-dir="+profile, "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "https://open.feishu.cn/app")
 	if err := command.Start(); err != nil {
 		return result, err
 	}
-	defer func() { _ = command.Process.Kill(); _ = command.Wait() }()
+	done := make(chan struct{})
+	go func() { _ = command.Wait(); close(done) }()
+	defer closeFeishuBrowser(command, done, profile)
+	wait := func() error {
+		select {
+		case <-done:
+			return errors.New("飞书登录窗口已关闭或启动失败，请重新创建；已保存的登录状态会保留")
+		case <-ctx.Done():
+			return fmt.Errorf("飞书登录或创建超时/取消；如页面提示设备授权，请先在飞书客户端完成授权：%w", ctx.Err())
+		case <-time.After(time.Second):
+			return nil
+		}
+	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	var connection *websocket.Conn
 	for connection == nil {
-		if err := pauseSetup(ctx); err != nil {
+		if err := wait(); err != nil {
 			return result, err
 		}
 		data, err := os.ReadFile(filepath.Join(profile, "DevToolsActivePort"))
@@ -126,10 +137,10 @@ func createFeishuApp(ctx context.Context, name string) (createdFeishuApp, error)
 	}
 	for {
 		var ready bool
-		if err := evaluate("Boolean(window.csrfToken && window.user && window.user.id)", &ready); err == nil && ready {
+		if err := evaluate("['https://open.feishu.cn','https://open.larkoffice.com'].includes(location.origin) && Boolean(window.csrfToken && window.user && window.user.id)", &ready); err == nil && ready {
 			break
 		}
-		if err := pauseSetup(ctx); err != nil {
+		if err := wait(); err != nil {
 			return result, err
 		}
 	}
@@ -138,11 +149,54 @@ func createFeishuApp(ctx context.Context, name string) (createdFeishuApp, error)
 	return result, err
 }
 
-func pauseSetup(ctx context.Context) error {
+func feishuLoginProfile(dataDir string) (string, error) {
+	if dataDir == "" {
+		return "", errors.New("缺少飞书登录数据目录")
+	}
+	profile, err := filepath.Abs(filepath.Join(dataDir, "feishu-login"))
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(profile, 0700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(profile, 0700); err != nil {
+		return "", err
+	}
+	// This is a transient discovery file, not login data. Chrome writes a fresh
+	// endpoint on every launch; never connect to a previous process's port.
+	if err := os.Remove(filepath.Join(profile, "DevToolsActivePort")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	return profile, nil
+}
+
+// Let Chrome flush its login state before falling back to killing a stuck
+// process. The normal user browser is never addressed by this endpoint.
+func closeFeishuBrowser(command *exec.Cmd, done <-chan struct{}, profile string) {
 	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(time.Second):
-		return nil
+	case <-done:
+		return
+	default:
+	}
+	data, err := os.ReadFile(filepath.Join(profile, "DevToolsActivePort"))
+	parts := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if err == nil && len(parts) == 2 && strings.HasPrefix(parts[1], "/devtools/browser/") {
+		if _, err := strconv.ParseUint(parts[0], 10, 16); err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			conn, _, err := websocket.DefaultDialer.DialContext(ctx, "ws://127.0.0.1:"+parts[0]+parts[1], nil)
+			if err == nil {
+				_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
+				_ = conn.WriteJSON(map[string]any{"id": 1, "method": "Browser.close"})
+				_ = conn.Close()
+			}
+			cancel()
+		}
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		_ = command.Process.Kill()
+		<-done
 	}
 }

@@ -76,7 +76,7 @@ async function createBotWithQR() {
   const bot = readBot();
   botSavePending = true;
   $('bot-scan').disabled = true;
-  $('bot-error').textContent = '请在自动打开的飞书窗口扫码登录；登录后会自动创建应用、配置权限并验证连接。';
+  $('bot-error').textContent = '正在打开飞书窗口并检查登录状态；如已失效，请完成登录。登录后会自动创建应用、配置权限并验证连接。';
   try {
     const result = await api('/api/bots/create', {method:'POST',body:JSON.stringify(bot)});
     $('bot-dialog').close();

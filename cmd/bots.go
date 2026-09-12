@@ -53,7 +53,7 @@ func (s *botService) CreateBot(ctx context.Context, bot httpapi.BotConfig) (http
 	if _, err := validateDefaultWorkspaceDir(bot.DefaultWorkspaceDir); err != nil {
 		return bot, err
 	}
-	app, err := createFeishuApp(ctx, bot.Name)
+	app, err := createFeishuApp(ctx, bot.Name, s.dataDir)
 	if err != nil {
 		return bot, err
 	}
