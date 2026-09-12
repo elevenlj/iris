@@ -112,7 +112,7 @@ func TestConfiguredAidenCommandsUseUnderlyingCompletionKind(t *testing.T) {
 		wantKind   string
 		wantResume string
 	}{
-		{command: AidenAgentCommand, wantKind: "aiden", wantResume: "aiden --continue --permission-mode bypassPermissions"},
+		{command: AidenAgentCommand, wantKind: "aiden", wantResume: AidenAgentCommand},
 		{command: "aiden x codex --dangerously-bypass-approvals-and-sandbox", wantKind: "codex", wantResume: "aiden x codex resume --last"},
 		{command: "aiden x claude --dangerously-skip-permissions", wantKind: "claude", wantResume: "aiden x claude --continue --dangerously-skip-permissions"},
 	}
@@ -333,6 +333,19 @@ func TestPinAidenResumeCommand(t *testing.T) {
 	args := shellFields(got)
 	if !ok || !containsAdjacentArgs(args, "--resume", sessionID) || slicesContain(args, "--continue") || slicesContain(args, "--session-id") || strings.Join(args[:1], " ") != "aiden" {
 		t.Fatalf("pinAidenResumeCommand() = %q, %v", got, ok)
+	}
+}
+
+func TestNormalizeAidenRecoveryDoesNotReuseRoutedSession(t *testing.T) {
+	old := Session{LastAgentID: "aiden", LastAgentStartCommand: "aiden --session-id old-claude-id --permission-mode bypassPermissions", LastAgentResumeCommand: "aiden --resume old-claude-id --permission-mode bypassPermissions"}
+	got := normalizeAidenRecoveryCommands(old)
+	if got.LastAgentStartCommand != AidenAgentCommand || got.LastAgentResumeCommand != AidenAgentCommand {
+		t.Fatalf("legacy routed session must start fresh native Aiden: %#v", got)
+	}
+	got.LastAgentResumeCommand, _ = pinAidenResumeCommand(got.LastAgentStartCommand, "native-id")
+	resumed := normalizeAidenRecoveryCommands(got)
+	if resumed.LastAgentResumeCommand != got.LastAgentResumeCommand {
+		t.Fatal("native exact session ID lost on recovery")
 	}
 }
 

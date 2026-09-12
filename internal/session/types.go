@@ -82,6 +82,7 @@ type WaitingNotification struct {
 	Name                 string
 	Content              string
 	MessageID            string
+	InputMessageID       string
 	ChatID               string
 	MentionOpenID        string
 	UpdateNo             int

@@ -82,6 +82,7 @@ type SessionStartPreset struct {
 
 type larkPipelineInput struct {
 	Text                        string
+	InputMessageID              string
 	MentionOpenID               string
 	AssistantName               string
 	PreserveRunningNotification bool
@@ -1219,7 +1220,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		}
 	}
 	if len(incoming.Attachments) > 0 {
-		return b.routeAttachments(ctx, routeCtx, text, inputParts, incoming.Attachments)
+		return b.routeAttachments(ctx, routeCtx, text, inputParts, incoming.Attachments, routeCtx.MessageID)
 	}
 	if len(parts) == 0 {
 		return "", nil
@@ -1237,8 +1238,8 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 			return sessionID, nil
 		}
 		b.manager.EnsureBrowser(sessionID)
-		b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.SenderOpenID, routeCtx.AssistantName)
-		if err := SubmitStructuredInputWithMention(rt, inputParts[0], routeCtx.SenderOpenID); err != nil {
+		b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.SenderOpenID, routeCtx)
+		if err := SubmitStructuredInputWithMention(rt, inputParts[0], routeCtx.SenderOpenID, routeCtx.MessageID); err != nil {
 			return sessionID, err
 		}
 		b.scheduleAutoSummary(rt, text)
@@ -1275,7 +1276,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 					log.Printf("lark start presets failed session=%s codes=%q: %v", s.ID, presetCodes, presetErr)
 				}
 			}
-			b.enqueuePipeline(s.ID, parts[1:], routeCtx.SenderOpenID)
+			b.enqueuePipeline(s.ID, parts[1:], routeCtx.SenderOpenID, routeCtx)
 			if rt, found := b.manager.GetRuntime(s.ID); found && !rt.discardingStartupNotifications() {
 				rt.NotifyInputRunning()
 			}
@@ -1349,12 +1350,12 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		rt, _ = b.manager.GetRuntime(sessionID)
 	}
 	b.manager.EnsureBrowser(sessionID)
-	if b.enqueueInputIfRuntimeBusy(rt, sessionID, inputParts, routeCtx.SenderOpenID, routeCtx.AssistantName) {
+	if b.enqueueInputIfRuntimeBusy(rt, sessionID, inputParts, routeCtx.SenderOpenID, routeCtx) {
 		b.manager.messageRegistry().remember(sessionID, messageID, parentID, rootID)
 		return sessionID, nil
 	}
-	b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.SenderOpenID, routeCtx.AssistantName)
-	if err := SubmitStructuredInputWithMention(rt, inputParts[0], routeCtx.SenderOpenID); err != nil {
+	b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.SenderOpenID, routeCtx)
+	if err := SubmitStructuredInputWithMention(rt, inputParts[0], routeCtx.SenderOpenID, routeCtx.MessageID); err != nil {
 		return sessionID, err
 	}
 	b.scheduleAutoSummary(rt, text)
@@ -1425,7 +1426,8 @@ func (b *LarkReplyBridge) routeDirectContactMessage(ctx context.Context, routeCt
 	groupRoute.ChatType = "group"
 	b.recordAgentLarkContext(rt.Snapshot(), groupRoute)
 	if len(incoming.Attachments) > 0 {
-		return b.routeAttachments(ctx, groupRoute, incoming.Text, parts, incoming.Attachments)
+		// Completion belongs in the group, not as a reply to the private input.
+		return b.routeAttachments(ctx, groupRoute, incoming.Text, parts, incoming.Attachments, "")
 	}
 	if len(parts) == 0 {
 		return binding.SessionID, nil
@@ -1581,7 +1583,7 @@ func uniqueNonEmptyStrings(values []string) []string {
 	return out
 }
 
-func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionID string, parts []string, mentionOpenID string, assistantName ...string) bool {
+func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionID string, parts []string, mentionOpenID string, origin ...larkRouteContext) bool {
 	if rt == nil || sessionID == "" || len(parts) == 0 {
 		return false
 	}
@@ -1593,20 +1595,20 @@ func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionI
 		return false
 	}
 	rt.SetNotificationMentionOpenID(mentionOpenID)
-	rt.SetNotificationAssistantName(firstString(assistantName))
+	rt.SetNotificationAssistantName(pipelineOrigin(origin).AssistantName)
 	if starting {
 		rt.beginStartupNotification(mentionOpenID)
-		b.enqueuePipelineWithFirstMode(sessionID, parts, mentionOpenID, true, assistantName...)
+		b.enqueuePipelineWithFirstMode(sessionID, parts, mentionOpenID, true, origin...)
 	} else {
 		rt.MarkStructuredInputActivity(parts[0])
-		b.enqueuePipeline(sessionID, parts, mentionOpenID, assistantName...)
+		b.enqueuePipeline(sessionID, parts, mentionOpenID, origin...)
 		rt.NotifyInputRunning()
 	}
 	log.Printf("lark reply bridge queued input session=%s parts=%d reason=runtime_running", sessionID, len(parts))
 	return true
 }
 
-func (b *LarkReplyBridge) routeAttachments(ctx context.Context, routeCtx larkRouteContext, text string, parts []string, refs []larkAttachmentRef) (string, error) {
+func (b *LarkReplyBridge) routeAttachments(ctx context.Context, routeCtx larkRouteContext, text string, parts []string, refs []larkAttachmentRef, inputMessageID string) (string, error) {
 	messageID, parentID, rootID := routeCtx.MessageID, routeCtx.ParentID, routeCtx.RootID
 	if len(parts) > 0 {
 		text = parts[0]
@@ -1684,8 +1686,10 @@ func (b *LarkReplyBridge) routeAttachments(ctx context.Context, routeCtx larkRou
 		}
 		b.clearPendingFiles(sessionID)
 	}
-	b.enqueuePipeline(sessionID, parts[1:], routeCtx.SenderOpenID, routeCtx.AssistantName)
-	if err := SubmitStructuredInputWithMention(rt, input+" "+text, routeCtx.SenderOpenID); err != nil {
+	origin := routeCtx
+	origin.MessageID = inputMessageID
+	b.enqueuePipeline(sessionID, parts[1:], routeCtx.SenderOpenID, origin)
+	if err := SubmitStructuredInputWithMention(rt, input+" "+text, routeCtx.SenderOpenID, inputMessageID); err != nil {
 		return sessionID, err
 	}
 	b.scheduleAutoSummary(rt, text)
@@ -2195,10 +2199,10 @@ func (b *LarkReplyBridge) OnNotificationSent(sessionID string) {
 	rt.SetNotificationAssistantName(next.AssistantName)
 	var err error
 	if next.PreserveRunningNotification {
-		rt.createNewRunningNotification(next.MentionOpenID)
-		err = SubmitQueuedStructuredInputWithMention(rt, next.Text, next.MentionOpenID)
+		rt.createNewRunningNotification(next.MentionOpenID, next.InputMessageID)
+		err = SubmitQueuedStructuredInputWithMention(rt, next.Text, next.MentionOpenID, next.InputMessageID)
 	} else {
-		err = SubmitStructuredInputWithMention(rt, next.Text, next.MentionOpenID)
+		err = SubmitStructuredInputWithMention(rt, next.Text, next.MentionOpenID, next.InputMessageID)
 	}
 	if err != nil {
 		log.Printf("lark reply bridge failed to continue pipeline for %s: %v", sessionID, err)
@@ -2254,11 +2258,11 @@ func shouldScheduleAutoSummary(input string) bool {
 	return !strings.HasPrefix(input, "/") && !strings.HasPrefix(input, "／")
 }
 
-func (b *LarkReplyBridge) enqueuePipeline(sessionID string, parts []string, mentionOpenID string, assistantName ...string) {
-	b.enqueuePipelineWithFirstMode(sessionID, parts, mentionOpenID, false, assistantName...)
+func (b *LarkReplyBridge) enqueuePipeline(sessionID string, parts []string, mentionOpenID string, origin ...larkRouteContext) {
+	b.enqueuePipelineWithFirstMode(sessionID, parts, mentionOpenID, false, origin...)
 }
 
-func (b *LarkReplyBridge) enqueuePipelineWithFirstMode(sessionID string, parts []string, mentionOpenID string, preserveFirstRunningNotification bool, assistantName ...string) {
+func (b *LarkReplyBridge) enqueuePipelineWithFirstMode(sessionID string, parts []string, mentionOpenID string, preserveFirstRunningNotification bool, origin ...larkRouteContext) {
 	if sessionID == "" || len(parts) == 0 {
 		return
 	}
@@ -2268,7 +2272,8 @@ func (b *LarkReplyBridge) enqueuePipelineWithFirstMode(sessionID string, parts [
 			cleaned = append(cleaned, larkPipelineInput{
 				Text:                        part,
 				MentionOpenID:               strings.TrimSpace(mentionOpenID),
-				AssistantName:               firstString(assistantName),
+				AssistantName:               pipelineOrigin(origin).AssistantName,
+				InputMessageID:              pipelineOrigin(origin).MessageID,
 				PreserveRunningNotification: preserveFirstRunningNotification && len(cleaned) == 0,
 			})
 		}
@@ -2279,6 +2284,13 @@ func (b *LarkReplyBridge) enqueuePipelineWithFirstMode(sessionID string, parts [
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.pipelines[sessionID] = append(b.pipelines[sessionID], cleaned...)
+}
+
+func pipelineOrigin(values []larkRouteContext) larkRouteContext {
+	if len(values) == 0 {
+		return larkRouteContext{}
+	}
+	return values[0]
 }
 
 func firstString(values []string) string {
@@ -2898,17 +2910,17 @@ func SubmitStructuredInputFrom(rt *RuntimeSession, text string, responder chan R
 	return submitStructuredInputWithMentionFrom(rt, text, "", true, responder)
 }
 
-func SubmitStructuredInputWithMention(rt *RuntimeSession, text string, mentionOpenID string) error {
-	return submitStructuredInputWithMentionFrom(rt, text, mentionOpenID, true, nil)
+func SubmitStructuredInputWithMention(rt *RuntimeSession, text string, mentionOpenID string, inputMessageID ...string) error {
+	return submitStructuredInputWithMentionFrom(rt, text, mentionOpenID, true, nil, inputMessageID...)
 }
 
-func SubmitQueuedStructuredInputWithMention(rt *RuntimeSession, text string, mentionOpenID string) error {
+func SubmitQueuedStructuredInputWithMention(rt *RuntimeSession, text string, mentionOpenID string, inputMessageID ...string) error {
 	if rt == nil {
 		return fmt.Errorf("runtime not found")
 	}
 	text = strings.TrimRight(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n"), "\n")
 	pressEnter := structuredInputShouldPressEnter(rt, text)
-	return submitStructuredInputWithMode(rt, text, mentionOpenID, true, pressEnter, nil, true)
+	return submitStructuredInputWithMode(rt, text, mentionOpenID, true, pressEnter, nil, true, inputMessageID...)
 }
 
 func SubmitSilentStructuredInput(rt *RuntimeSession, text string) error {
@@ -2919,16 +2931,16 @@ func SubmitTerminalInteractionInputWithMention(rt *RuntimeSession, text string, 
 	return submitStructuredInputWithMode(rt, text, mentionOpenID, true, false, nil, false)
 }
 
-func submitStructuredInputWithMentionFrom(rt *RuntimeSession, text string, mentionOpenID string, trackActivity bool, responder chan RuntimeEvent) error {
+func submitStructuredInputWithMentionFrom(rt *RuntimeSession, text string, mentionOpenID string, trackActivity bool, responder chan RuntimeEvent, inputMessageID ...string) error {
 	if rt == nil {
 		return fmt.Errorf("runtime not found")
 	}
 	text = strings.TrimRight(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n"), "\n")
 	pressEnter := structuredInputShouldPressEnter(rt, text)
-	return submitStructuredInputWithMode(rt, text, mentionOpenID, trackActivity, pressEnter, responder, false)
+	return submitStructuredInputWithMode(rt, text, mentionOpenID, trackActivity, pressEnter, responder, false, inputMessageID...)
 }
 
-func submitStructuredInputWithMode(rt *RuntimeSession, text string, mentionOpenID string, trackActivity bool, pressEnter bool, responder chan RuntimeEvent, preserveRunningNotification bool) error {
+func submitStructuredInputWithMode(rt *RuntimeSession, text string, mentionOpenID string, trackActivity bool, pressEnter bool, responder chan RuntimeEvent, preserveRunningNotification bool, inputMessageID ...string) error {
 	if rt == nil {
 		return fmt.Errorf("runtime not found")
 	}
@@ -2951,7 +2963,7 @@ func submitStructuredInputWithMode(rt *RuntimeSession, text string, mentionOpenI
 		// before changing the selection so menu transitions remain diffable.
 		rt.PrepareInputSnapshotBaselineFrom(responder)
 		rt.SetNotificationMentionOpenID(mentionOpenID)
-		rt.MarkStructuredInputActivity(text)
+		rt.markStructuredInputActivity(text, nil, false, inputMessageID...)
 	}
 	if _, err := rt.terminal.Write([]byte(text)); err != nil {
 		return err
@@ -2970,9 +2982,9 @@ func submitStructuredInputWithMode(rt *RuntimeSession, text string, mentionOpenI
 		rt.PrepareInputSnapshotBaselineFrom(responder)
 		rt.SetNotificationMentionOpenID(mentionOpenID)
 		if preserveRunningNotification {
-			rt.markStructuredInputActivityPreservingRunningNotification(text, previousRoundUnfinished)
+			rt.markStructuredInputActivityPreservingRunningNotification(text, previousRoundUnfinished, inputMessageID...)
 		} else {
-			rt.markStructuredInputActivityWithPreviousRoundState(text, previousRoundUnfinished)
+			rt.markStructuredInputActivityWithPreviousRoundState(text, previousRoundUnfinished, inputMessageID...)
 		}
 	}
 	enter := structuredInputEnterSequence

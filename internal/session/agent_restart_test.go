@@ -301,15 +301,11 @@ func TestRestartAgentStartsFreshAidenSessions(t *testing.T) {
 			if len(writes) != 1 {
 				t.Fatalf("restart writes = %#v", writes)
 			}
-			if test.agentID == "aiden" {
-				if !strings.Contains(writes[0], "--session-id") || !strings.Contains(writes[0], "bypassPermissions") || strings.Contains(writes[0], "--continue") {
-					t.Fatalf("Aiden restart command = %q", writes[0])
-				}
-			} else if writes[0] != test.command+"\r" {
+			if writes[0] != test.command+"\r" {
 				t.Fatalf("restart writes = %#v", writes)
 			}
 			got := rt.Snapshot()
-			if got.LastAgentKind != test.runtimeKind || (test.agentID == "aiden" && (!strings.Contains(got.LastAgentResumeCommand, "--resume") || strings.Contains(got.LastAgentResumeCommand, "--continue"))) || (test.agentID != "aiden" && !strings.Contains(got.LastAgentResumeCommand, "--continue")) {
+			if got.LastAgentKind != test.runtimeKind || (test.agentID == "aiden" && strings.Join(shellFields(got.LastAgentResumeCommand), " ") != AidenAgentCommand) || (test.agentID != "aiden" && !strings.Contains(got.LastAgentResumeCommand, "--continue")) {
 				t.Fatalf("restart state = %#v", got)
 			}
 		})
@@ -319,7 +315,7 @@ func TestRestartAgentStartsFreshAidenSessions(t *testing.T) {
 func TestRestartAgentResumesExactAidenSession(t *testing.T) {
 	terminal := newControlledForegroundTerminal()
 	sessionID := "019f5153-6e7f-7742-9f61-3ffe1530d61c"
-	resumeCommand := "aiden --resume " + sessionID + " --permission-mode bypassPermissions"
+	resumeCommand := "AIDEN_USE_1X_AGENT=1 aiden --resume " + sessionID + " --permission-mode agentFull"
 	rt := &RuntimeSession{
 		terminal: terminal,
 		session: Session{ID: "sess-aiden-exact", Live: true, LastMode: SessionModeAgent, LastAgentID: "aiden", LastAgentKind: "aiden",

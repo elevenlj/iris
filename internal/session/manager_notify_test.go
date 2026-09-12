@@ -2066,8 +2066,8 @@ func TestLarkNotificationCardContentMentionsRoundSender(t *testing.T) {
 	if strings.Contains(content, `ou_owner`) {
 		t.Fatalf("card content should not mention fallback receiver when asker is known, got %s", content)
 	}
-	tip, err := larkUpdateTipCardContent(1, larkNotificationMentionID(note, "ou_owner"), true)
-	if err != nil || !strings.Contains(tip, `\u003cat id=ou_asker\u003e\u003c/at\u003e`) || strings.Contains(tip, `ou_owner`) {
+	tip, err := larkUpdateTipTextContent(larkNotificationMentionID(note, "ou_owner"), true)
+	if err != nil || !strings.Contains(tip, `\u003cat user_id=\"ou_asker\"\u003e\u003c/at\u003e`) || strings.Contains(tip, `ou_owner`) {
 		t.Fatalf("completion tip should mention the same asker as the card, got %s err=%v", tip, err)
 	}
 }
@@ -2639,8 +2639,8 @@ func TestLarkUpdateWaitingSendsTaskCompletedTip(t *testing.T) {
 	if !result.TipSent || sent != 1 {
 		t.Fatalf("card completion should create one completion-tip message, got result=%#v sent=%d", result, sent)
 	}
-	content, err := larkUpdateTipCardContent(2, "", false)
-	if err != nil || !strings.Contains(content, `"content":"任务已完成"`) || strings.Contains(content, "已更新") {
+	content, err := larkUpdateTipTextContent("", false)
+	if err != nil || content != `{"text":"任务已完成"}` {
 		t.Fatalf("completion tip content is wrong: content=%s err=%v", content, err)
 	}
 }

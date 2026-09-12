@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -210,6 +211,10 @@ func (n *LarkAppNotifier) NotifyWaiting(note WaitingNotification) (WaitingNotifi
 	defer state.mu.Unlock()
 	key := note.SessionID + "\x00" + note.ChatID
 	previous := state.latest[key]
+	// Keep the input bound to this card, including after restart or a later input.
+	if note.MessageID != "" && note.MessageID == previous.MessageID {
+		note.InputMessageID = previous.InputMessageID
+	}
 	if state.recalled[note.MessageID] {
 		return WaitingNotificationResult{MessageID: note.MessageID, Updated: true}, nil
 	}
@@ -1245,7 +1250,7 @@ func (n *LarkAppNotifier) updateWaiting(note WaitingNotification, content string
 	}
 	tipSent := false
 	if note.UpdateNo > 0 && !note.SuppressUpdateTip {
-		if err := n.sendUpdateTipOnce(note.MessageID, note.ChatID, note.UpdateNo, larkNotificationMentionID(note, n.receiveID)); err == nil {
+		if err := n.sendUpdateTipOnce(note); err == nil {
 			tipSent = true
 		}
 	}
@@ -1291,13 +1296,15 @@ func (n *LarkAppNotifier) UpdateWaitingRunning(note WaitingNotification, running
 	}
 	key := note.SessionID + "\x00" + note.ChatID
 	if !note.Disabled && state.latest[key].MessageID == note.MessageID {
+		note.InputMessageID = state.latest[key].InputMessageID
 		state.latest[key] = note
 		n.persistCards(state)
 	}
 	return nil
 }
 
-func (n *LarkAppNotifier) sendUpdateTipOnce(messageID string, chatID string, updateNo int, mentionID string) error {
+func (n *LarkAppNotifier) sendUpdateTipOnce(note WaitingNotification) error {
+	messageID, chatID, updateNo := note.MessageID, note.ChatID, note.UpdateNo
 	if messageID == "" || updateNo <= 0 {
 		return nil
 	}
@@ -1318,11 +1325,11 @@ func (n *LarkAppNotifier) sendUpdateTipOnce(messageID string, chatID string, upd
 
 	send := n.sendUpdateTip
 	if n.tipSender != nil {
-		send = func(messageID string, chatID string, updateNo int, _ string) error {
+		send = func(_ WaitingNotification) error {
 			return n.tipSender(messageID, chatID, updateNo)
 		}
 	}
-	if err := retryLarkVoid(func() error { return send(messageID, chatID, updateNo, mentionID) }); err != nil {
+	if err := retryLarkVoid(func() error { return send(note) }); err != nil {
 		return err
 	}
 
@@ -1335,12 +1342,46 @@ func (n *LarkAppNotifier) sendUpdateTipOnce(messageID string, chatID string, upd
 	return nil
 }
 
-func (n *LarkAppNotifier) sendUpdateTip(messageID string, chatID string, updateNo int, mentionID string) error {
-	content, err := larkUpdateTipCardContent(updateNo, mentionID, n.mention)
+func (n *LarkAppNotifier) sendUpdateTip(note WaitingNotification) error {
+	content, err := larkUpdateTipTextContent(larkNotificationMentionID(note, n.receiveID), n.mention)
 	if err != nil {
 		return err
 	}
-	receiveID := strings.TrimSpace(chatID)
+	uuid := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%d", n.appID, note.MessageID, note.UpdateNo))))[:32]
+	if inputID := strings.TrimSpace(note.InputMessageID); inputID != "" {
+		req := larkim.NewReplyMessageReqBuilder().MessageId(inputID).Body(
+			larkim.NewReplyMessageReqBodyBuilder().MsgType("text").Content(content).ReplyInThread(false).Uuid(uuid).Build(),
+		).Build()
+		call := func(token string) (*larkim.ReplyMessageResp, error) {
+			if token == "" {
+				return n.client.Im.V1.Message.Reply(context.Background(), req)
+			}
+			if n.uncachedClient == nil {
+				return nil, errors.New("lark uncached client is not configured")
+			}
+			return n.uncachedClient.Im.V1.Message.Reply(context.Background(), req, larkcore.WithTenantAccessToken(token))
+		}
+		token := n.tenantTokenSnapshot()
+		resp, err := call(token)
+		if err == nil && resp != nil && invalidLarkAccessTokenCode(resp.Code) {
+			token, err = n.refreshTenantToken(token)
+			if err == nil {
+				resp, err = call(token)
+			}
+		}
+		if err != nil {
+			return err
+		}
+		if resp == nil {
+			return errors.New("empty lark completion reply response")
+		}
+		if !resp.Success() {
+			return fmt.Errorf("lark completion reply API returned code %d: %s", resp.Code, resp.Msg)
+		}
+		return nil
+	}
+	// Terminal-only inputs have no original Feishu message; never quote a stale one.
+	receiveID := strings.TrimSpace(note.ChatID)
 	receiveIDType := "chat_id"
 	if receiveID == "" {
 		receiveID = strings.TrimSpace(n.receiveID)
@@ -1350,7 +1391,7 @@ func (n *LarkAppNotifier) sendUpdateTip(messageID string, chatID string, updateN
 		return nil
 	}
 	req := larkim.NewCreateMessageReqBuilder().ReceiveIdType(receiveIDType).Body(
-		larkim.NewCreateMessageReqBodyBuilder().ReceiveId(receiveID).MsgType("interactive").Content(content).Build(),
+		larkim.NewCreateMessageReqBodyBuilder().ReceiveId(receiveID).MsgType("text").Content(content).Uuid(uuid).Build(),
 	).Build()
 	resp, err := n.createMessage(req)
 	if err != nil {
@@ -1467,16 +1508,12 @@ func invalidLarkAccessTokenCode(code int) bool {
 	return code == 99991663
 }
 
-func larkUpdateTipCardContent(_ int, receiveID string, mention bool) (string, error) {
-	elements := []map[string]any{}
+func larkUpdateTipTextContent(receiveID string, mention bool) (string, error) {
+	text := "任务已完成"
 	if mention && strings.TrimSpace(receiveID) != "" {
-		elements = append(elements, map[string]any{"tag": "markdown", "content": "<at id=" + strings.TrimSpace(receiveID) + "></at>"})
+		text = `<at user_id="` + strings.TrimSpace(receiveID) + `"></at> ` + text
 	}
-	elements = append(elements, map[string]any{"tag": "note", "elements": []map[string]any{{"tag": "plain_text", "content": "任务已完成"}}})
-	b, err := json.Marshal(map[string]any{
-		"config":   map[string]any{"wide_screen_mode": false},
-		"elements": elements,
-	})
+	b, err := json.Marshal(map[string]string{"text": text})
 	return string(b), err
 }
 

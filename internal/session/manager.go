@@ -525,9 +525,6 @@ func (m *Manager) CreateSession(ctx context.Context, name string) (Session, erro
 	rt.runRecoveryEnvironmentSetup()
 	rt.runPreStartCommand()
 	if agent.Command != "" {
-		if agent.ID == "aiden" || agent.Kind == "aiden" {
-			agent.Command, _ = newAidenAgentCommands(agent.Command)
-		}
 		workspaceShellPath := m.defaultSessionWorkspaceShellPath()
 		_, _ = rt.terminal.Write([]byte("mkdir -p " + workspaceShellPath + "\r"))
 		rt.RecordShellCommandForRecovery("cd " + shellQuote(workspaceDir))
@@ -1218,6 +1215,7 @@ type RuntimeSession struct {
 	inputBracketedPaste               bool
 	lastNotifiedRoundHash             string
 	lastNotifiedMessageID             string
+	notificationInputMessageID        string
 	lastNotifiedContent               string
 	lastNotifiedVisibleSnapshot       string
 	lastNotifiedVisibleSnapshotSource string
@@ -1586,11 +1584,11 @@ func (rt *RuntimeSession) restartAgent(options agentRestartOptions) error {
 	agentKind := strings.TrimSpace(rt.session.LastAgentKind)
 	agentID := strings.TrimSpace(rt.session.LastAgentID)
 	isAiden := agentID == "aiden" || agentKind == "aiden"
-	hadExactAidenResume := claudeResumeSessionID(rt.session.LastAgentResumeCommand) != ""
 	if isAiden {
 		rt.session = normalizeAidenRecoveryCommands(rt.session)
 		startCommand = strings.TrimSpace(rt.session.LastAgentStartCommand)
 	}
+	hadExactAidenResume := claudeResumeSessionID(rt.session.LastAgentResumeCommand) != ""
 	command := startCommand
 	if command == "" && rt.manager != nil {
 		agent, _ := rt.manager.AgentConfig()
@@ -1671,9 +1669,6 @@ func (rt *RuntimeSession) switchAgent(optionID string, createStartupNotification
 		followUp = &agentRestartFollowUp{prompt: followUpPrompt, mentionOpenID: startupMentionOpenID}
 	}
 	command := option.Command
-	if option.ID == "aiden" || option.Kind == "aiden" {
-		command, _ = newAidenAgentCommands(command)
-	}
 	if err := rt.restartAgentAfterConfirmedExit(terminal, command, option.ID, option.Kind, command, "", followUp); err != nil {
 		return AgentOption{}, err
 	}
@@ -1961,6 +1956,7 @@ func (rt *RuntimeSession) beginStartupNotification(mentionOpenID string) string 
 		Name:                rt.session.Name,
 		Content:             StartupNotificationPlaceholder,
 		ChatID:              rt.session.LarkChatID,
+		InputMessageID:      rt.notificationInputMessageID,
 		MentionOpenID:       rt.startupNotificationMentionOpenID,
 		SuppressUpdateTip:   true,
 		Startup:             true,
@@ -2029,6 +2025,7 @@ func (rt *RuntimeSession) finishStartupNotification(content string, failed bool)
 		Content:             content,
 		MessageID:           messageID,
 		ChatID:              rt.session.LarkChatID,
+		InputMessageID:      rt.notificationInputMessageID,
 		MentionOpenID:       rt.startupNotificationMentionOpenID,
 		UpdateNo:            rt.startupNotificationUpdateNo + 1,
 		SuppressUpdateTip:   true,
@@ -2791,6 +2788,7 @@ func (rt *RuntimeSession) disabledNotificationLocked(messageID string) (WaitingN
 		Content:            content,
 		MessageID:          messageID,
 		ChatID:             rt.session.LarkChatID,
+		InputMessageID:     rt.notificationInputMessageID,
 		MentionOpenID:      rt.notificationMentionOpenID,
 		UpdateNo:           rt.notificationUpdateNo,
 		Running:            false,
@@ -3050,15 +3048,15 @@ func (rt *RuntimeSession) MarkStructuredInputActivity(text string) {
 	rt.markStructuredInputActivity(text, nil, false)
 }
 
-func (rt *RuntimeSession) markStructuredInputActivityWithPreviousRoundState(text string, previousRoundUnfinished bool) {
-	rt.markStructuredInputActivity(text, &previousRoundUnfinished, false)
+func (rt *RuntimeSession) markStructuredInputActivityWithPreviousRoundState(text string, previousRoundUnfinished bool, inputMessageID ...string) {
+	rt.markStructuredInputActivity(text, &previousRoundUnfinished, false, inputMessageID...)
 }
 
-func (rt *RuntimeSession) markStructuredInputActivityPreservingRunningNotification(text string, previousRoundUnfinished bool) {
-	rt.markStructuredInputActivity(text, &previousRoundUnfinished, true)
+func (rt *RuntimeSession) markStructuredInputActivityPreservingRunningNotification(text string, previousRoundUnfinished bool, inputMessageID ...string) {
+	rt.markStructuredInputActivity(text, &previousRoundUnfinished, true, inputMessageID...)
 }
 
-func (rt *RuntimeSession) markStructuredInputActivity(text string, previousRoundUnfinishedOverride *bool, preserveRunningNotification bool) {
+func (rt *RuntimeSession) markStructuredInputActivity(text string, previousRoundUnfinishedOverride *bool, preserveRunningNotification bool, inputMessageID ...string) {
 	rt.mu.Lock()
 	if rt.closed {
 		rt.mu.Unlock()
@@ -3080,6 +3078,7 @@ func (rt *RuntimeSession) markStructuredInputActivity(text string, previousRound
 	} else {
 		disabledNote, disabledOK = rt.markInputActivityLockedWithPreviousRoundState(true, previousInput, rt.session.Status == StatusRunning && strings.TrimSpace(previousInput) != "" && rt.snapshotAtRoundStartSet, preserveRunningNotification)
 	}
+	rt.notificationInputMessageID = firstString(inputMessageID)
 	s := rt.session
 	sessionID := rt.session.ID
 	reportBrowserActive := rt.browserOwnsCurrentRoundLocked()
@@ -3147,6 +3146,9 @@ func minDuration(a, b time.Duration) time.Duration {
 }
 
 func (rt *RuntimeSession) markInputActivityLocked(submitted bool, previousInput string) (WaitingNotification, bool) {
+	if submitted {
+		rt.notificationInputMessageID = "" // Local terminal input has no Feishu message to quote.
+	}
 	previousRoundUnfinished := rt.session.Status == StatusRunning && strings.TrimSpace(previousInput) != "" && rt.snapshotAtRoundStartSet
 	return rt.markInputActivityLockedWithPreviousRoundState(submitted, previousInput, previousRoundUnfinished, false)
 }
@@ -3216,7 +3218,7 @@ func (rt *RuntimeSession) NotifyInputRunning() {
 	rt.NotifyInputRunningOnMessage("")
 }
 
-func (rt *RuntimeSession) createNewRunningNotification(mentionOpenID string) {
+func (rt *RuntimeSession) createNewRunningNotification(mentionOpenID string, inputMessageID ...string) {
 	if rt == nil {
 		return
 	}
@@ -3232,6 +3234,7 @@ func (rt *RuntimeSession) createNewRunningNotification(mentionOpenID string) {
 	rt.notificationRunning = false
 	rt.autoRefreshMessageID = ""
 	rt.notificationMentionOpenID = strings.TrimSpace(mentionOpenID)
+	rt.notificationInputMessageID = firstString(inputMessageID)
 	rt.mu.Unlock()
 
 	rt.NotifyInputRunning()
@@ -3283,6 +3286,7 @@ func (rt *RuntimeSession) NotifyInputRunningOnMessage(messageID string) {
 		Content:             content,
 		MessageID:           rt.lastNotifiedMessageID,
 		ChatID:              rt.session.LarkChatID,
+		InputMessageID:      rt.notificationInputMessageID,
 		MentionOpenID:       rt.notificationMentionOpenID,
 		UpdateNo:            rt.notificationUpdateNo,
 		Running:             true,
@@ -3393,6 +3397,7 @@ func (rt *RuntimeSession) refreshStartupNotification(messageID string, refreshCo
 		Content:             content,
 		MessageID:           messageID,
 		ChatID:              rt.session.LarkChatID,
+		InputMessageID:      rt.notificationInputMessageID,
 		MentionOpenID:       rt.startupNotificationMentionOpenID,
 		UpdateNo:            updateNo,
 		SuppressUpdateTip:   true,
@@ -3531,6 +3536,7 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 		Content:             content,
 		MessageID:           messageID,
 		ChatID:              rt.session.LarkChatID,
+		InputMessageID:      rt.notificationInputMessageID,
 		MentionOpenID:       rt.notificationMentionOpenID,
 		UpdateNo:            updateNo,
 		Running:             running,
@@ -4621,6 +4627,7 @@ func (rt *RuntimeSession) markNotificationRunningLocked() (WaitingNotification, 
 		Content:             content,
 		MessageID:           rt.lastNotifiedMessageID,
 		ChatID:              rt.session.LarkChatID,
+		InputMessageID:      rt.notificationInputMessageID,
 		MentionOpenID:       rt.notificationMentionOpenID,
 		UpdateNo:            rt.notificationUpdateNo,
 		Running:             true,
@@ -4652,6 +4659,7 @@ func (rt *RuntimeSession) markNotificationWaitingLocked() (WaitingNotification, 
 		Content:             rt.lastNotifiedContent,
 		MessageID:           rt.lastNotifiedMessageID,
 		ChatID:              rt.session.LarkChatID,
+		InputMessageID:      rt.notificationInputMessageID,
 		MentionOpenID:       rt.notificationMentionOpenID,
 		UpdateNo:            rt.notificationUpdateNo,
 		Running:             false,
@@ -4828,7 +4836,7 @@ func (rt *RuntimeSession) waitingNotificationCandidateLocked() (WaitingNotificat
 		}
 		interaction := rt.notificationInteractionLocked(rt.lastNotifiedMessageID)
 		agentContext := rt.notificationAgentContextLocked()
-		return WaitingNotification{SessionID: rt.session.ID, Name: rt.session.Name, Content: hookContent, ChatID: rt.session.LarkChatID, MentionOpenID: rt.notificationMentionOpenID, AutoSummaryEnabled: rt.autoSummaryEnabled, MentionModeEnabled: rt.session.LarkMentionModeEnabled, SnapshotSource: "codex_hook:last_assistant_message", Interaction: interaction, AgentContext: agentContext}, contentHash, true, "ready"
+		return WaitingNotification{SessionID: rt.session.ID, Name: rt.session.Name, Content: hookContent, ChatID: rt.session.LarkChatID, InputMessageID: rt.notificationInputMessageID, MentionOpenID: rt.notificationMentionOpenID, AutoSummaryEnabled: rt.autoSummaryEnabled, MentionModeEnabled: rt.session.LarkMentionModeEnabled, SnapshotSource: "codex_hook:last_assistant_message", Interaction: interaction, AgentContext: agentContext}, contentHash, true, "ready"
 	}
 	if rt.visibleSnapshotStaleForCurrentRoundLocked() {
 		return WaitingNotification{}, "", false, "stale_visible_snapshot"
@@ -4848,7 +4856,7 @@ func (rt *RuntimeSession) waitingNotificationCandidateLocked() (WaitingNotificat
 	}
 	interaction := rt.notificationInteractionLocked(rt.lastNotifiedMessageID)
 	agentContext := rt.notificationAgentContextLocked()
-	return WaitingNotification{SessionID: rt.session.ID, Name: rt.session.Name, Content: content, ChatID: rt.session.LarkChatID, MentionOpenID: rt.notificationMentionOpenID, AutoSummaryEnabled: rt.autoSummaryEnabled, MentionModeEnabled: rt.session.LarkMentionModeEnabled, SnapshotSource: rt.visibleSnapshotSource, Interaction: interaction, AgentContext: agentContext}, contentHash, true, "ready"
+	return WaitingNotification{SessionID: rt.session.ID, Name: rt.session.Name, Content: content, ChatID: rt.session.LarkChatID, InputMessageID: rt.notificationInputMessageID, MentionOpenID: rt.notificationMentionOpenID, AutoSummaryEnabled: rt.autoSummaryEnabled, MentionModeEnabled: rt.session.LarkMentionModeEnabled, SnapshotSource: rt.visibleSnapshotSource, Interaction: interaction, AgentContext: agentContext}, contentHash, true, "ready"
 }
 
 func (rt *RuntimeSession) fallbackWaitingNotificationCandidateLocked() (WaitingNotification, string, bool, string) {
@@ -4880,7 +4888,7 @@ func (rt *RuntimeSession) fallbackWaitingNotificationCandidateLocked() (WaitingN
 	}
 	interaction := rt.notificationInteractionLocked(rt.lastNotifiedMessageID)
 	agentContext := rt.notificationAgentContextLocked()
-	return WaitingNotification{SessionID: rt.session.ID, Name: rt.session.Name, Content: content, ChatID: rt.session.LarkChatID, MentionOpenID: rt.notificationMentionOpenID, AutoSummaryEnabled: rt.autoSummaryEnabled, MentionModeEnabled: rt.session.LarkMentionModeEnabled, SnapshotSource: source, Interaction: interaction, AgentContext: agentContext}, contentHash, true, "ready"
+	return WaitingNotification{SessionID: rt.session.ID, Name: rt.session.Name, Content: content, ChatID: rt.session.LarkChatID, InputMessageID: rt.notificationInputMessageID, MentionOpenID: rt.notificationMentionOpenID, AutoSummaryEnabled: rt.autoSummaryEnabled, MentionModeEnabled: rt.session.LarkMentionModeEnabled, SnapshotSource: source, Interaction: interaction, AgentContext: agentContext}, contentHash, true, "ready"
 }
 
 func (rt *RuntimeSession) startupFallbackWaitingNotificationCandidateLocked() (WaitingNotification, string, bool) {
@@ -4911,6 +4919,7 @@ func (rt *RuntimeSession) startupFallbackWaitingNotificationCandidateLocked() (W
 		Content:             content,
 		MessageID:           rt.startupNotificationMessageID,
 		ChatID:              rt.session.LarkChatID,
+		InputMessageID:      rt.notificationInputMessageID,
 		MentionOpenID:       rt.startupNotificationMentionOpenID,
 		UpdateNo:            updateNo,
 		SuppressUpdateTip:   true,
@@ -4942,6 +4951,7 @@ func (rt *RuntimeSession) fallbackTailWaitingNotificationCandidateLocked() (Wait
 		Name:               rt.session.Name,
 		Content:            content,
 		ChatID:             rt.session.LarkChatID,
+		InputMessageID:     rt.notificationInputMessageID,
 		MentionOpenID:      rt.notificationMentionOpenID,
 		AutoSummaryEnabled: rt.autoSummaryEnabled,
 		MentionModeEnabled: rt.session.LarkMentionModeEnabled,
@@ -4977,6 +4987,7 @@ func (rt *RuntimeSession) emptyWaitingNotificationCandidateLocked() (WaitingNoti
 		Name:               rt.session.Name,
 		Content:            content,
 		ChatID:             rt.session.LarkChatID,
+		InputMessageID:     rt.notificationInputMessageID,
 		MentionOpenID:      rt.notificationMentionOpenID,
 		AutoSummaryEnabled: rt.autoSummaryEnabled,
 		MentionModeEnabled: rt.session.LarkMentionModeEnabled,

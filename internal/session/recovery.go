@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -23,46 +24,15 @@ func newRecoveryKey() string {
 	return strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
 }
 
-func newAgentSessionID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return ""
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	key := hex.EncodeToString(b[:])
-	return key[:8] + "-" + key[8:12] + "-" + key[12:16] + "-" + key[16:20] + "-" + key[20:]
-}
-
-func newAidenAgentCommands(command string) (string, string) {
-	sessionID := newAgentSessionID()
-	argv := shellFields(command)
-	envEnd := 0
-	for envEnd < len(argv) && isShellEnvAssignment(argv[envEnd]) {
-		envEnd++
-	}
-	if sessionID == "" || envEnd >= len(argv) || shellCommandBase(argv[envEnd]) != "aiden" || (envEnd+1 < len(argv) && argv[envEnd+1] == "x") {
-		return command, ""
-	}
-	argv = append(argv[:envEnd+1], append([]string{"--session-id", sessionID}, argv[envEnd+1:]...)...)
-	start := joinShellCommand(argv[envEnd:])
-	if envEnd > 0 {
-		start = strings.TrimSpace(joinEnvAssignments(argv[:envEnd]) + " " + start)
-	}
-	resume, _ := pinAidenResumeCommand(start, sessionID)
-	return start, resume
-}
-
 func normalizeAidenRecoveryCommands(sess Session) Session {
 	if !strings.EqualFold(strings.TrimSpace(sess.LastAgentID), "aiden") && !strings.EqualFold(strings.TrimSpace(sess.LastAgentKind), "aiden") {
 		return sess
 	}
-	sess.LastAgentStartCommand = strings.ReplaceAll(sess.LastAgentStartCommand, "agentFull", "bypassPermissions")
-	sess.LastAgentResumeCommand = strings.ReplaceAll(sess.LastAgentResumeCommand, "agentFull", "bypassPermissions")
-	if claudeResumeSessionID(sess.LastAgentResumeCommand) != "" {
+	// Legacy bare Aiden could launch Claude/Codex; those IDs cannot resume native Aiden.
+	if slices.Contains(shellFields(sess.LastAgentStartCommand), "AIDEN_USE_1X_AGENT=1") && claudeResumeSessionID(sess.LastAgentResumeCommand) != "" {
 		return sess
 	}
-	sess.LastAgentStartCommand, sess.LastAgentResumeCommand = newAidenAgentCommands(AidenAgentCommand)
+	sess.LastAgentStartCommand, sess.LastAgentResumeCommand = AidenAgentCommand, AidenAgentCommand
 	return sess
 }
 
@@ -407,6 +377,13 @@ type agentInfo struct {
 }
 
 func agentLaunchInfo(argv []string) (agentInfo, bool) {
+	if len(argv) > 0 && isShellEnvAssignment(argv[0]) {
+		info, ok := agentLaunchInfo(argv[1:])
+		if ok {
+			info.ResumeCommand = joinEnvAssignments(argv[:1]) + " " + info.ResumeCommand
+		}
+		return info, ok
+	}
 	if len(argv) == 0 {
 		return agentInfo{}, false
 	}
@@ -479,7 +456,13 @@ func claudeAgentInfoWithPrefix(command []string, args []string) (agentInfo, bool
 }
 
 func aidenAgentInfo(command string, args []string) (agentInfo, bool) {
-	return resumableAgentInfo("aiden", []string{command}, args)
+	info, ok := resumableAgentInfo("aiden", []string{command}, args)
+	if ok && !hasResumeLikeArg(args) {
+		// Native Aiden has no --session-id. Pin its real ID on the completion hook;
+		// until then restart fresh, never select the directory's latest session.
+		info.ResumeCommand = joinShellCommand(append([]string{command}, args...))
+	}
+	return info, ok
 }
 
 func resumableAgentInfo(kind string, command, args []string) (agentInfo, bool) {

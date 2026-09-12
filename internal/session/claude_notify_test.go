@@ -184,7 +184,8 @@ func TestCompleteAgentTurnSupportsNativeAiden(t *testing.T) {
 			RecoveryKey:            "hook-token",
 			LastMode:               SessionModeAgent,
 			LastAgentKind:          "aiden",
-			LastAgentResumeCommand: "aiden --continue --permission-mode bypassPermissions",
+			LastAgentStartCommand:  AidenAgentCommand,
+			LastAgentResumeCommand: AidenAgentCommand,
 		},
 	}
 	manager.sessions[rt.session.ID] = rt
@@ -193,7 +194,7 @@ func TestCompleteAgentTurnSupportsNativeAiden(t *testing.T) {
 	if err != nil || !accepted || got.Status != StatusWaiting || !rt.agentTurnHookVerified {
 		t.Fatalf("Aiden completion accepted=%v err=%v state=%#v", accepted, err, got)
 	}
-	if args := shellFields(got.LastAgentResumeCommand); !containsAdjacentArgs(args, "--resume", aidenSessionID) || slicesContain(args, "--continue") {
+	if args := shellFields(got.LastAgentResumeCommand); !containsAdjacentArgs(args, "--resume", aidenSessionID) || slicesContain(args, "--continue") || !slicesContain(args, "AIDEN_USE_1X_AGENT=1") {
 		t.Fatalf("Aiden resume command = %q", got.LastAgentResumeCommand)
 	}
 }

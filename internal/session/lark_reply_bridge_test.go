@@ -412,6 +412,23 @@ func TestLarkReplyBridgeDirectContactCreatesAndReusesAssistantGroup(t *testing.T
 	if !strings.Contains(joined, "oc-contact:小林：我想约个时间") || !strings.Contains(joined, "oc-contact:小林：明天下午可以吗") {
 		t.Fatalf("private messages should be forwarded into the contact group: %#v", messages)
 	}
+	bridge.downloadFile = func(_ context.Context, messageID, _ string, ref larkAttachmentRef) (pendingLarkAttachment, error) {
+		if messageID != "m-contact-image" {
+			t.Fatalf("download source = %q", messageID)
+		}
+		return pendingLarkAttachment{Kind: ref.Kind, Path: "/tmp/contact.png"}, nil
+	}
+	content := `{"content":[[{"tag":"img","image_key":"img_a"},{"tag":"text","text":"请分析图片"}]]}`
+	if err := bridge.HandleP2MessageReceive(context.Background(), p2MessageWithChat("m-contact-image", "", "", "post", content, "p2p", "oc-direct", "ou-user")); err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := manager.GetRuntime(binding.SessionID)
+	rt.mu.Lock()
+	source := rt.notificationInputMessageID
+	rt.mu.Unlock()
+	if source != "" {
+		t.Fatalf("group completion must not reply in the private chat: %q", source)
+	}
 }
 
 func TestLarkContactConversationNameUsesFullOpenIDFallback(t *testing.T) {
@@ -1475,6 +1492,14 @@ func TestLarkReplyBridgeMultiImageWithTextSubmitsImmediately(t *testing.T) {
 	if len(replies) != 0 {
 		t.Fatalf("image+text should not send upload-success reply, got %#v", replies)
 	}
+	sessionID, _ := manager.messageRegistry().lookup("m-images-text")
+	rt, _ := manager.GetRuntime(sessionID)
+	rt.mu.Lock()
+	source := rt.notificationInputMessageID
+	rt.mu.Unlock()
+	if source != "m-images-text" {
+		t.Fatalf("image+text completion source = %q", source)
+	}
 }
 
 func TestLarkReplyBridgeImageMessageWithTextSubmitsImmediately(t *testing.T) {
@@ -1917,10 +1942,10 @@ func TestLarkReplyBridgeCreatesOneRunningCardPerQueuedRecoveryInput(t *testing.T
 	rt.mu.Unlock()
 	rt.beginStartupNotification("ou-clicker")
 
-	if !bridge.enqueueInputIfRuntimeBusy(rt, sess.ID, []string{"第一条"}, "ou-first") {
+	if !bridge.enqueueInputIfRuntimeBusy(rt, sess.ID, []string{"第一条"}, "ou-first", larkRouteContext{MessageID: "input-first"}) {
 		t.Fatal("first recovery input should be queued")
 	}
-	if !bridge.enqueueInputIfRuntimeBusy(rt, sess.ID, []string{"第二条"}, "ou-second") {
+	if !bridge.enqueueInputIfRuntimeBusy(rt, sess.ID, []string{"第二条"}, "ou-second", larkRouteContext{MessageID: "input-second"}) {
 		t.Fatal("second recovery input should be queued")
 	}
 	bridge.mu.Lock()
@@ -1928,6 +1953,9 @@ func TestLarkReplyBridgeCreatesOneRunningCardPerQueuedRecoveryInput(t *testing.T
 	bridge.mu.Unlock()
 	if len(queued) != 2 || !queued[0].PreserveRunningNotification || !queued[1].PreserveRunningNotification {
 		t.Fatalf("queued recovery inputs = %#v", queued)
+	}
+	if queued[0].InputMessageID != "input-first" || queued[1].InputMessageID != "input-second" {
+		t.Fatalf("queued input sources = %#v", queued)
 	}
 	notes := notifier.notes()
 	if len(notes) != 1 || !notes[0].Startup {
@@ -1948,7 +1976,7 @@ func TestLarkReplyBridgeCreatesOneRunningCardPerQueuedRecoveryInput(t *testing.T
 	rt.mu.Unlock()
 	bridge.OnNotificationSent(sess.ID)
 	notes = notifier.notes()
-	if len(notes) != 2 || !notes[1].Running || notes[1].MentionOpenID != "ou-first" {
+	if len(notes) != 2 || !notes[1].Running || notes[1].MentionOpenID != "ou-first" || notes[1].InputMessageID != "input-first" {
 		t.Fatalf("first task card should be created when the first queued input starts, got %#v", notes)
 	}
 	bridge.mu.Lock()
@@ -1960,7 +1988,7 @@ func TestLarkReplyBridgeCreatesOneRunningCardPerQueuedRecoveryInput(t *testing.T
 
 	bridge.OnNotificationSent(sess.ID)
 	notes = notifier.notes()
-	if len(notes) != 3 || !notes[2].Running || notes[2].MentionOpenID != "ou-second" {
+	if len(notes) != 3 || !notes[2].Running || notes[2].MentionOpenID != "ou-second" || notes[2].InputMessageID != "input-second" {
 		t.Fatalf("second task card should be created when the second queued input starts, got %#v", notes)
 	}
 	written := launcher.terminals[0].writes()
