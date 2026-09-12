@@ -488,7 +488,10 @@ func (b *LarkReplyBridge) handleCardAgentSelect(value map[string]interface{}, op
 		return blocked, nil
 	}
 	sess := rt.Snapshot()
-	if !sess.DeveloperModeEnabled {
+	rt.mu.Lock()
+	startupCard := openMessageID != "" && openMessageID == rt.startupNotificationMessageID && !rt.notificationMessageFrozenLocked(openMessageID)
+	rt.mu.Unlock()
+	if !sess.DeveloperModeEnabled && !startupCard {
 		return larkCardToast("warning", "请先开启开发者模式"), nil
 	}
 	mentionOpenID := strings.TrimSpace(operatorOpenID)

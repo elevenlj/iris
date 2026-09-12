@@ -204,6 +204,36 @@ func TestLarkWorkspaceSelectorUsesCompactLayout(t *testing.T) {
 	}
 }
 
+func TestStartupCardShowsAgentAndWorkspaceSelectorsWithoutDeveloperMode(t *testing.T) {
+	note := WaitingNotification{
+		SessionID: "sess-startup", Startup: true, StartupComplete: true,
+		AgentID: "aiden-claude", AgentKind: "claude",
+		AgentOptions: []AgentOption{
+			{ID: "claude", Kind: "claude", Label: "Claude Code", Command: ClaudeAgentCommand},
+			{ID: "aiden-claude", Kind: "aiden-claude", Label: "Aiden X Claude Code", Command: AidenClaudeAgentCommand},
+		},
+		WorkspaceOptions: []WorkspaceOption{{Label: "默认目录", Value: "/tmp/project", Default: true}},
+		AgentContext:     &TerminalAgentContext{Directory: "/tmp/project"},
+	}
+	content, err := larkNotificationCardContent(note, "ou-owner", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{`"iris_action":"agent_select"`, `"initial_option":"aiden-claude"`, `"iris_action":"workspace_select"`, `"initial_option":"/tmp/project"`} {
+		if strings.Count(content, expected) != 1 {
+			t.Fatalf("startup card missing or duplicating %s: %s", expected, content)
+		}
+	}
+	note.Disabled = true
+	content, err = larkNotificationCardContent(note, "ou-owner", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(content, `"iris_action":"agent_select"`) || strings.Contains(content, `"iris_action":"workspace_select"`) {
+		t.Fatalf("old startup card still has selectors: %s", content)
+	}
+}
+
 func TestLarkWorkspaceSelectorMatchesTildeDirectory(t *testing.T) {
 	home := userHomeDir()
 	selected := filepath.Join(home, "Desktop", "develop", "go", "voip_intelligent_ivr")

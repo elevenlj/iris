@@ -2957,6 +2957,10 @@ func TestLarkReplyBridgeDisabledCardActionsAreBlockedEndToEnd(t *testing.T) {
 		value map[string]interface{}
 	}{
 		{
+			name:  "agent select",
+			value: map[string]interface{}{"iris_action": "agent_select"},
+		},
+		{
 			name: "shortcut",
 			value: map[string]interface{}{
 				"iris_action": "shortcut",
@@ -3037,6 +3041,42 @@ func TestLarkReplyBridgeDisabledCardActionsAreBlockedEndToEnd(t *testing.T) {
 				t.Fatalf("disabled card should not mutate runtime action state, auto=%v input=%q", autoRefreshEnabled, lastInputText)
 			}
 		})
+	}
+}
+
+func TestLarkReplyBridgeCompletedStartupCardCanSwitchAgent(t *testing.T) {
+	launcher := &recordingLauncher{}
+	manager := NewManager(nil, launcher)
+	manager.SetAgentConfig(AgentConfig{ID: "custom-first", Name: "First", Kind: "custom", Command: "first-agent"}, nil)
+	manager.SetAvailableAgentOptions([]AgentOption{
+		{ID: "custom-first", Label: "First", Kind: "custom", Command: "first-agent"},
+		{ID: "custom-next", Label: "Next", Kind: "custom", Command: "next-agent"},
+	})
+	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	sess, err := manager.CreateSession(context.Background(), "Iris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := manager.sessions[sess.ID]
+	t.Cleanup(rt.Close)
+	rt.mu.Lock()
+	rt.session.DeveloperModeEnabled = false
+	rt.startupNotifyMode = startupNotifyNormal // completed, no longer waiting for startup
+	rt.startupNotificationMessageID = "startup-card"
+	rt.mu.Unlock()
+	action := &callback.CallBackAction{Option: "custom-next", Value: map[string]interface{}{"iris_action": "agent_select", "session_id": sess.ID}}
+	before := len(launcher.terminals[0].writeParts())
+	resp, err := bridge.handleCardAction(context.Background(), action, "startup-card", "", "ou-member")
+	if err != nil || resp == nil || resp.Toast == nil || resp.Toast.Content != "正在切换至 Next" {
+		t.Fatalf("startup Agent selection failed: %#v, %v", resp, err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(launcher.terminals[0].writeParts()) < before+2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	parts := launcher.terminals[0].writeParts()
+	if len(parts) < before+2 || parts[before] != "\x03\x03" || parts[before+1] != "next-agent\r" {
+		t.Fatalf("startup Agent selection writes = %#v", parts)
 	}
 }
 

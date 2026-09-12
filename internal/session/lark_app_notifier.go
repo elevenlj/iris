@@ -294,8 +294,8 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 			if contextElement := larkTerminalAgentContextElement(note.AgentContext, larkNotificationAgentLabel(note)); contextElement != nil {
 				elements = append(elements, map[string]any{"tag": "hr"}, contextElement)
 			}
-			if workspaceElement := larkWorkspaceSelectElement(note.SessionID, note.WorkspaceOptions, note.AgentContext); workspaceElement != nil && !note.Disabled {
-				elements = append(elements, workspaceElement)
+			if selectorRow := larkAgentWorkspaceSelectorRow(note); selectorRow != nil && !note.Disabled {
+				elements = append(elements, selectorRow)
 			}
 		}
 		if !note.Disabled {
@@ -323,20 +323,7 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 				elements = append(elements, map[string]any{"tag": "hr"})
 				elements = append(elements, contextElement)
 			}
-			developerSelectors := make([]map[string]any, 0, 2)
-			currentAgentID := strings.TrimSpace(note.AgentID)
-			if currentAgentID == "" {
-				currentAgentID = strings.TrimSpace(note.AgentKind)
-			}
-			if agentElement := larkAgentSelectElement(note.SessionID, note.AgentOptions, currentAgentID); agentElement != nil {
-				developerSelectors = append(developerSelectors, agentElement)
-			}
-			if len(note.WorkspaceOptions) > 0 {
-				if workspaceElement := larkWorkspaceSelectElement(note.SessionID, note.WorkspaceOptions, note.AgentContext); workspaceElement != nil {
-					developerSelectors = append(developerSelectors, workspaceElement)
-				}
-			}
-			if selectorRow := larkDeveloperSelectorRow(developerSelectors...); selectorRow != nil {
+			if selectorRow := larkAgentWorkspaceSelectorRow(note); selectorRow != nil {
 				elements = append(elements, selectorRow)
 			}
 		}
@@ -436,6 +423,17 @@ func larkAgentSelectElement(sessionID string, agents []AgentOption, currentID st
 			},
 		}},
 	}
+}
+
+func larkAgentWorkspaceSelectorRow(note WaitingNotification) map[string]any {
+	currentAgentID := strings.TrimSpace(note.AgentID)
+	if currentAgentID == "" {
+		currentAgentID = strings.TrimSpace(note.AgentKind)
+	}
+	return larkDeveloperSelectorRow(
+		larkAgentSelectElement(note.SessionID, note.AgentOptions, currentAgentID),
+		larkWorkspaceSelectElement(note.SessionID, note.WorkspaceOptions, note.AgentContext),
+	)
 }
 
 func larkWorkspaceSelectElement(sessionID string, workspaces []WorkspaceOption, context *TerminalAgentContext) map[string]any {
