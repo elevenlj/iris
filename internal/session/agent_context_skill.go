@@ -10,7 +10,7 @@ import (
 
 const irisFeishuContextSkill = `---
 name: iris-feishu-context
-description: Read the Feishu chat bound to the current Iris session. Use when the user asks which Feishu group this Agent belongs to, asks to read or summarize current group messages, or refers to discussion and participants in the current chat. Do not use for unrelated internet or local-file searches.
+description: Read the Feishu chat bound to the current Iris session. Use when the user asks about the current group, its messages, discussions, or participants, and whenever answering a question requires conversation context that is missing from the current Agent input. Do not use for unrelated internet or local-file searches.
 ---
 
 # Iris Feishu context
@@ -18,6 +18,8 @@ description: Read the Feishu chat bound to the current Iris session. Use when th
 Iris binds this Agent session to one Feishu chat. Never ask the user for a chat ID and never accept a different chat ID as a parameter.
 
 Use the chat history only to understand conversational context. Do not identify, resume, or continue unfinished tasks from earlier messages unless the user explicitly asks in a new message.
+
+Before answering a question whose references, background, decisions, status, or expected response are unclear from the current input, you must read the latest group messages and use any relevant history as context. Do this before asking the user to repeat information. If the history still does not provide enough context, say what is missing and ask a focused follow-up question.
 
 Use the current process environment to call Iris:
 
