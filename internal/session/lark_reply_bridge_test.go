@@ -1720,16 +1720,25 @@ func TestLarkReplyBridgeIgnoresInteractiveCards(t *testing.T) {
 		reply = text
 		return nil
 	}
-
-	err := bridge.HandleP2MessageReceive(context.Background(), p2Message("m-card", "", "", "interactive", `{"title":"测试","elements":[{"tag":"div"}]}`))
-	if err != nil {
-		t.Fatal(err)
+	bridge.addReaction = func(context.Context, string, string) error { t.Fatal("ignored card received a reaction"); return nil }
+	bridge.fetchBotIdentity = func(context.Context) (larkBotIdentity, error) {
+		t.Fatal("ignored card triggered a bot lookup")
+		return larkBotIdentity{}, nil
+	}
+	for _, senderType := range []string{"user", "app", ""} {
+		for i := 0; i < 3; i++ {
+			event := p2MessageWithChat("m-card", "parent", "root", "interactive", `{"title":"测试","elements":[{"tag":"div"}]}`, "group", "chat", "sender")
+			event.Event.Sender.SenderType = strPtr(senderType)
+			if err := bridge.HandleP2MessageReceive(context.Background(), event); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	if len(launcher.terminals) != 0 {
 		t.Fatalf("interactive card should not create or write a terminal, got %d", len(launcher.terminals))
 	}
-	if !strings.Contains(reply, "收到转发卡片") {
-		t.Fatalf("interactive card should get an explanatory reply, got %q", reply)
+	if reply != "" {
+		t.Fatalf("interactive card should be silently ignored, got %q", reply)
 	}
 }
 

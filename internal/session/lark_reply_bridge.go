@@ -902,6 +902,11 @@ func (b *LarkReplyBridge) HandleP2MessageReceive(ctx context.Context, event *lar
 		return nil
 	}
 	msg := event.Event.Message
+	// Card messages (including other bots' updates) are not Agent input.
+	// Button interactions arrive through the separate card-action callback.
+	if valueOf(msg.MessageType) == "interactive" {
+		return nil
+	}
 	if b.isOwnLarkMessage(ctx, event.Event.Sender) {
 		return nil
 	}
@@ -931,12 +936,6 @@ func (b *LarkReplyBridge) HandleP2MessageReceive(ctx context.Context, event *lar
 	}
 	log.Printf("lark reply bridge received P2 message=%s chat=%s chat_type=%s msg_type=%s text_len=%d attachments=%d",
 		valueOf(msg.MessageId), valueOf(msg.ChatId), valueOf(msg.ChatType), messageType, len(incoming.Text), len(incoming.Attachments))
-	if isUnsupportedLarkForwardedCard(messageType) {
-		if err := b.replyLarkText(ctx, valueOf(msg.MessageId), "收到转发卡片，但飞书没有把卡片内容作为普通文本开放给机器人。请直接在原卡片所在会话操作，或把需要处理的内容复制成文本/截图后发送。"); err != nil {
-			return err
-		}
-		return nil
-	}
 	if incoming.Text == "" && len(incoming.Attachments) == 0 && strings.TrimSpace(valueOf(msg.ParentId)) == "" {
 		if mayContainUnsupportedLarkContent(messageType) {
 			if err := b.replyLarkText(ctx, valueOf(msg.MessageId), "收到消息，但当前无法读取其中的卡片或富媒体内容。请改为发送文本、图片或文件。"); err != nil {
@@ -1164,13 +1163,9 @@ func isLarkDirectChatType(chatType string) bool {
 	}
 }
 
-func isUnsupportedLarkForwardedCard(messageType string) bool {
-	return messageType == "interactive"
-}
-
 func mayContainUnsupportedLarkContent(messageType string) bool {
 	switch messageType {
-	case "interactive", "post", "share_chat", "share_user":
+	case "post", "share_chat", "share_user":
 		return true
 	default:
 		return false
