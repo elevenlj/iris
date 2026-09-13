@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -31,6 +32,7 @@ type larkBridgeWSClient struct {
 	retryEvery  time.Duration
 	connURL     func(context.Context) (string, error)
 	writeMu     sync.Mutex
+	status      atomic.Value // string; independent of the socket's lifetime
 }
 
 func newLarkBridgeWSClient(appID, appSecret string, handler *dispatcher.EventDispatcher, cardHandler func(context.Context, []byte) (*callback.CardActionTriggerResponse, error)) *larkBridgeWSClient {
@@ -45,12 +47,15 @@ func newLarkBridgeWSClient(appID, appSecret string, handler *dispatcher.EventDis
 }
 
 func (c *larkBridgeWSClient) Start(ctx context.Context) error {
+	c.status.Store("connecting")
+	defer c.status.Store("stopped")
 	for {
 		if err := c.connect(ctx); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			log.Printf("lark bridge ws connect failed: %v", err)
+			c.status.Store("reconnecting")
 			if err := c.waitBeforeReconnect(ctx); err != nil {
 				return err
 			}
@@ -63,6 +68,7 @@ func (c *larkBridgeWSClient) Start(ctx context.Context) error {
 		}
 		cancelPing()
 		_ = c.Close()
+		c.status.Store("reconnecting")
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -90,6 +96,7 @@ func (c *larkBridgeWSClient) waitBeforeReconnect(ctx context.Context) error {
 }
 
 func (c *larkBridgeWSClient) Close() error {
+	c.status.Store("disconnected")
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	if c.conn == nil {
@@ -124,6 +131,7 @@ func (c *larkBridgeWSClient) connect(ctx context.Context) error {
 	}
 	c.conn = conn
 	c.serviceID = u.Query().Get(larkws.ServiceID)
+	c.status.Store("connected")
 	log.Printf("lark bridge ws connected")
 	return nil
 }

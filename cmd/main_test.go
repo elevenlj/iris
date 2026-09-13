@@ -240,7 +240,7 @@ func TestRuntimeRegistryDiscoversAndStopsExactInstance(t *testing.T) {
 			_, _ = w.Write([]byte(`{"stopping":true}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"instance_id":"instance-1"}`))
+		_, _ = w.Write([]byte(`{"instance_id":"instance-1","bots":[{"id":"default","name":"Iris","status":"reconnecting"}]}`))
 	}))
 	defer server.Close()
 	parsed, err := url.Parse(server.URL)
@@ -259,6 +259,9 @@ func TestRuntimeRegistryDiscoversAndStopsExactInstance(t *testing.T) {
 	records, err := listActiveRuntimeRecords(dataDir)
 	if err != nil || len(records) != 1 || records[0].Port != port {
 		t.Fatalf("active records = %#v, %v", records, err)
+	}
+	if len(records[0].Bots) != 1 || records[0].Bots[0].Status != "reconnecting" {
+		t.Fatal("live service must retain disconnected bot status")
 	}
 	if err := stopRuntime(records[0]); err != nil {
 		t.Fatal(err)

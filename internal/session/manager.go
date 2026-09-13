@@ -510,19 +510,20 @@ func (m *Manager) createSession(ctx context.Context, name string, seed Session, 
 		return Session{}, err
 	}
 	sess := Session{
-		ID:                   id,
-		Name:                 name,
-		Status:               StatusRunning,
-		CreatedAt:            now,
-		UpdatedAt:            now,
-		Live:                 true,
-		RecoveryKey:          newRecoveryKey(),
-		LastMode:             SessionModeShell,
-		LastCWD:              workspaceDir,
-		LarkChatID:           seed.LarkChatID,
-		LarkTopicRootID:      seed.LarkTopicRootID,
-		LarkThreadID:         seed.LarkThreadID,
-		DeveloperModeEnabled: seed.DeveloperModeEnabled,
+		ID:                     id,
+		Name:                   name,
+		Status:                 StatusRunning,
+		CreatedAt:              now,
+		UpdatedAt:              now,
+		Live:                   true,
+		RecoveryKey:            newRecoveryKey(),
+		LastMode:               SessionModeShell,
+		LastCWD:                workspaceDir,
+		LarkChatID:             seed.LarkChatID,
+		LarkTopicRootID:        seed.LarkTopicRootID,
+		LarkThreadID:           seed.LarkThreadID,
+		DeveloperModeEnabled:   seed.DeveloperModeEnabled,
+		LarkMentionModeEnabled: seed.LarkMentionModeEnabled,
 	}
 	handle, err := m.launcher.Launch(context.Background())
 	if err != nil {

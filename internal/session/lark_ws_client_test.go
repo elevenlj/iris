@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
 
@@ -106,7 +108,15 @@ func TestLarkBridgeWSStartRetriesEndpointErrors(t *testing.T) {
 	client.retryEvery = time.Millisecond
 	var attempts atomic.Int32
 	client.connURL = func(context.Context) (string, error) {
-		if attempts.Add(1) >= 3 {
+		attempt := attempts.Add(1)
+		want := "reconnecting"
+		if attempt == 1 {
+			want = "connecting"
+		}
+		if client.status.Load() != want {
+			t.Errorf("connection status = %v, want %s", client.status.Load(), want)
+		}
+		if attempt >= 3 {
 			cancel()
 		}
 		return "", errors.New("temporary endpoint failure")
@@ -117,5 +127,52 @@ func TestLarkBridgeWSStartRetriesEndpointErrors(t *testing.T) {
 	}
 	if got := attempts.Load(); got < 3 {
 		t.Fatalf("endpoint should be retried, attempts=%d", got)
+	}
+	if client.status.Load() != "stopped" {
+		t.Fatal("cancelled connection must be stopped")
+	}
+}
+
+func TestLarkBridgeConnectionStatusTracksSocket(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _, _ = conn.ReadMessage()
+	}))
+	defer server.Close()
+	bridge := NewLarkReplyBridge("app", "secret", NewManager(nil, nil), t.TempDir())
+	if bridge.ConnectionStatus() != "stopped" {
+		t.Fatal("not started")
+	}
+	client := newLarkBridgeWSClient("app", "secret", nil, nil)
+	client.connURL = func(context.Context) (string, error) { return "ws" + server.URL[4:], nil }
+	bridge.wsClient = client
+	_, bridge.cancelStart = context.WithCancel(context.Background())
+	defer bridge.Stop()
+	if bridge.ConnectionStatus() != "connecting" {
+		t.Fatal("not connecting")
+	}
+	if err := client.connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if bridge.ConnectionStatus() != "connected" {
+		t.Fatal("not connected")
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if bridge.ConnectionStatus() != "disconnected" {
+		t.Fatal("not disconnected")
+	}
+	bridge.Stop()
+	if bridge.ConnectionStatus() != "stopped" {
+		t.Fatal("not stopped")
+	}
+	bridge.SetAppCredentials("", "")
+	if bridge.ConnectionStatus() != "unconfigured" {
+		t.Fatal("not unconfigured")
 	}
 }

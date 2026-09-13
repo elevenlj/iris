@@ -41,6 +41,13 @@ type Server struct {
 	runtimeVersion     string
 	runtimePID         int
 	runtimeStop        func()
+	runtimeBotStatuses func() []BotConnectionStatus
+}
+
+type BotConnectionStatus struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }
 
 func NewServer(manager *session.Manager, uploadsDir string, config ...ConfigService) *Server {
@@ -64,12 +71,13 @@ func NewServer(manager *session.Manager, uploadsDir string, config ...ConfigServ
 
 func (s *Server) Handler() http.Handler { return s.mux }
 
-func (s *Server) SetRuntimeControl(instanceID, token, version string, pid int, stop func()) {
+func (s *Server) SetRuntimeControl(instanceID, token, version string, pid int, stop func(), botStatuses func() []BotConnectionStatus) {
 	s.runtimeInstanceID = instanceID
 	s.runtimeToken = token
 	s.runtimeVersion = version
 	s.runtimePID = pid
 	s.runtimeStop = stop
+	s.runtimeBotStatuses = botStatuses
 }
 
 func (s *Server) routes() {
@@ -100,10 +108,15 @@ func (s *Server) handleRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
+		var bots []BotConnectionStatus
+		if s.runtimeBotStatuses != nil {
+			bots = s.runtimeBotStatuses()
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"instance_id": s.runtimeInstanceID,
 			"version":     s.runtimeVersion,
 			"pid":         s.runtimePID,
+			"bots":        bots,
 		}, nil)
 	case http.MethodDelete:
 		if s.runtimeStop == nil {

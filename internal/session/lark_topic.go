@@ -127,7 +127,7 @@ func (b *LarkReplyBridge) createTopicSession(ctx context.Context, route larkRout
 	if rootID == "" {
 		rootID = route.MessageID
 	}
-	seed := Session{LastCWD: parent.LastCWD, LarkChatID: route.ChatID, LarkTopicRootID: rootID, LarkThreadID: valueOf(resp.Data.ThreadId), DeveloperModeEnabled: parent.DeveloperModeEnabled}
+	seed := Session{LastCWD: parent.LastCWD, LarkChatID: route.ChatID, LarkTopicRootID: rootID, LarkThreadID: valueOf(resp.Data.ThreadId), DeveloperModeEnabled: parent.DeveloperModeEnabled, LarkMentionModeEnabled: true}
 	// Only copy the launch command. Recovery identity and Agent home are new.
 	agent := AgentConfig{ID: parent.LastAgentID, Kind: parent.LastAgentKind, Command: parent.LastAgentStartCommand}
 	sess, err := b.manager.createSession(ctx, name, seed, agent)

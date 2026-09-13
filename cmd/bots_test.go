@@ -36,6 +36,7 @@ func TestBotsIsolationPersistenceAndLegacyMigration(t *testing.T) {
 	cfg = syncLegacyDefaultAgent(cfg)
 	mgr := session.NewManager(st, nil, session.WithIsolatedMessageRegistry())
 	svc := &appConfigService{cfg: &cfg, path: filepath.Join(dir, "config.json"), manager: mgr}
+	svc.bridge = session.NewLarkReplyBridge(cfg.LarkAppID, cfg.LarkAppSecret, mgr, t.TempDir())
 	server := httpapi.NewServer(mgr, filepath.Join(dir, "uploads"), svc)
 	bots := newBotService(svc, server, dir)
 	server.SetBotService(bots)
@@ -64,6 +65,10 @@ func TestBotsIsolationPersistenceAndLegacyMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.Bots = append(cfg.Bots, other)
+	statuses := bots.ConnectionStatuses()
+	if len(statuses) != 2 || statuses[0].ID != "default" || statuses[0].Status != "stopped" || statuses[1].ID != other.ID || statuses[1].Status != "unconfigured" {
+		t.Fatalf("per-bot connection states mixed: %#v", statuses)
+	}
 	for path, want := range map[string]string{"/api/sessions": "legacy", "/bots/bot-test/api/sessions": "other"} {
 		rec := httptest.NewRecorder()
 		server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))

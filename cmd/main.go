@@ -300,7 +300,7 @@ func run() error {
 		case shutdownCh <- struct{}{}:
 		default:
 		}
-	})
+	}, bots.ConnectionStatuses)
 	if err := registerRuntimeRecord(controlDir, record); err != nil {
 		_ = listener.Close()
 		return err
@@ -444,9 +444,21 @@ func loadConfig(path string) Config {
 		_ = json.Unmarshal(b, &cfg)
 	}
 	cfg.Port = env("PORT", cfg.Port)
-	cfg.LarkAppID = env("LARK_APP_ID", cfg.LarkAppID)
-	cfg.LarkAppSecret = env("LARK_APP_SECRET", cfg.LarkAppSecret)
-	cfg.LarkNotifyReceiveID = env("LARK_NOTIFY_RECEIVE_ID", cfg.LarkNotifyReceiveID)
+	if len(cfg.Bots) > 0 {
+		// The saved default bot owns the root bridge, not legacy fields or Agent env.
+		cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkNotifyReceiveID = "", "", ""
+		for _, bot := range cfg.Bots {
+			if bot.ID == "default" {
+				cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkNotifyReceiveID = bot.AppID, bot.AppSecret, bot.ReceiveID
+				break
+			}
+		}
+	} else if cfg.LarkAppID == "" && cfg.LarkAppSecret == "" {
+		// Legacy environment bootstrap only; never mix or overwrite saved credentials.
+		cfg.LarkAppID = os.Getenv("LARK_APP_ID")
+		cfg.LarkAppSecret = os.Getenv("LARK_APP_SECRET")
+		cfg.LarkNotifyReceiveID = env("LARK_NOTIFY_RECEIVE_ID", cfg.LarkNotifyReceiveID)
+	}
 	cfg.LarkDefaultSessionName = env("LARK_DEFAULT_SESSION_NAME", cfg.LarkDefaultSessionName)
 	cfg.LarkSessionChatPrefix = env("LARK_SESSION_CHAT_PREFIX", cfg.LarkSessionChatPrefix)
 	cfg.LarkIgnoreMessagePrefix = env("LARK_IGNORE_MESSAGE_PREFIX", cfg.LarkIgnoreMessagePrefix)

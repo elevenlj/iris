@@ -107,7 +107,7 @@ iris --reset-settings-password
 
 单服务内新增机器人的数据位于当前服务数据目录下的 `bots/<机器人 ID>/`。原有机器人的数据库和上传文件原地保留，不重编号。旧版多进程的数据不会被静默删除或自动混合。
 
-迁移旧部署时仍可读取旧版环境变量，但新配置统一使用 `IRIS_HOME` 和 `IRIS_CONFIG_DIR`。
+飞书凭证优先使用已保存的机器人配置，其次使用旧版配置字段；仅在尚未配置机器人和凭证时，才读取旧版飞书环境变量用于首次接入。`iris restart` 不会继承调用方的 `LARK_APP_ID`、`LARK_APP_SECRET`、`LARK_NOTIFY_RECEIVE_ID`，避免 Agent 环境污染服务凭证。`iris status` 会分别显示服务运行信息和每个机器人的飞书连接状态。路径配置统一使用 `IRIS_HOME` 和 `IRIS_CONFIG_DIR`。
 
 ## 验证
 

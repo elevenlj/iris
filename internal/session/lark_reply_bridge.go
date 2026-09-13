@@ -230,6 +230,23 @@ func (b *LarkReplyBridge) Available() bool {
 	return b.apiClient != nil && b.appID != "" && b.appSecret != ""
 }
 
+func (b *LarkReplyBridge) ConnectionStatus() string {
+	if !b.Available() {
+		return "unconfigured"
+	}
+	b.startMu.Lock()
+	defer b.startMu.Unlock()
+	if b.cancelStart == nil {
+		return "stopped"
+	}
+	if b.wsClient != nil {
+		if status, ok := b.wsClient.status.Load().(string); ok {
+			return status
+		}
+	}
+	return "connecting"
+}
+
 func (b *LarkReplyBridge) Start(ctx context.Context) error {
 	if !b.Available() {
 		return nil
@@ -1054,6 +1071,10 @@ func (b *LarkReplyBridge) shouldIgnoreForMentionMode(ctx context.Context, routeC
 	}
 	sessionID := b.mentionModeSessionID(ctx, routeCtx, incoming)
 	if sessionID == "" {
+		// An unbound topic belongs to another conversation; do not interject unless addressed.
+		if routeCtx.ThreadID != "" && !b.routeContextMentionsBot(ctx, routeCtx) {
+			return "", true
+		}
 		return "", false
 	}
 	sess, ok, err := b.manager.GetSession(ctx, sessionID)

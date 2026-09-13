@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 type topicHTTPClient struct {
@@ -77,6 +78,9 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 		defer m.DeleteSession(ctx, id)
 		sess, _, _ := m.GetSession(ctx, id)
 		topics = append(topics, sess)
+		if !sess.LarkMentionModeEnabled {
+			t.Fatal("new topic must enable mention mode even when parent mode is off")
+		}
 		if id == main.ID || sess.LarkTopicRootID != messageID || sess.LarkThreadID != "omt-"+messageID || sess.LastCWD != parent.LastCWD || sess.LastAgentKind != parent.LastAgentKind || sess.LastAgentID != parent.LastAgentID || sess.RecoveryKey == parent.RecoveryKey {
 			t.Fatalf("incorrect topic inheritance: %#v parent=%#v", sess, parent)
 		}
@@ -112,6 +116,14 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 		question := []string{"followup-one", "followup-two"}[i]
 		event := p2MessageWithChat("input-"+question, topic.LarkTopicRootID, topic.LarkTopicRootID, "text", `{"text":"`+question+`"}`, "group", "oc-group", "ou-user")
 		event.Event.Message.ThreadId = strPtr(topic.LarkThreadID)
+		before := launcher.terminals[i+1].writes()
+		if err := b.HandleP2MessageReceive(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+		if got := launcher.terminals[i+1].writes(); got != before {
+			t.Fatal("unmentioned topic message was delivered")
+		}
+		event.Event.Message.Mentions = []*larkim.MentionEvent{{Id: &larkim.UserId{OpenId: strPtr("ou-self")}}}
 		if err := b.HandleP2MessageReceive(ctx, event); err != nil {
 			t.Fatal(err)
 		}
@@ -188,6 +200,35 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 	}
 	if got := b.resolveSessionID(ctx, topics[1].ID, "", "", "oc-group", "group", ""); got != "" {
 		t.Fatal("topic ID in ordinary group text bypassed isolation")
+	}
+}
+
+func TestUnboundTopicIgnoresMessagesForOtherBots(t *testing.T) {
+	for _, sender := range []string{"user", "app"} {
+		t.Run(sender, func(t *testing.T) {
+			bridge := NewLarkReplyBridge("app", "secret", NewManager(nil, nil, WithIsolatedMessageRegistry()), t.TempDir())
+			bridge.botIdentity = larkBotIdentity{OpenID: "ou-self"}
+			replies, reactions := 0, 0
+			bridge.replyText = func(context.Context, string, string) error { replies++; return nil }
+			bridge.addReaction = func(context.Context, string, string) error { reactions++; return nil }
+			for _, mention := range []string{"", "ou-other"} {
+				event := p2MessageWithChat("input-"+mention, "om-root", "om-root", "text", `{"text":"查到了吗"}`, "group", "oc-group", "ou-sender")
+				event.Event.Sender.SenderType = strPtr(sender)
+				event.Event.Message.ThreadId = strPtr("omt-other")
+				if mention != "" {
+					event.Event.Message.Mentions = []*larkim.MentionEvent{{Id: &larkim.UserId{OpenId: strPtr(mention)}}}
+				}
+				if err := bridge.HandleP2MessageReceive(context.Background(), event); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if replies != 0 || reactions != 0 {
+				t.Fatal("unaddressed bot replied or reacted in another topic")
+			}
+			if _, ignored := bridge.shouldIgnoreForMentionMode(context.Background(), larkRouteContext{ChatType: "group", ThreadID: "omt-other", MentionedBot: true}, larkIncomingMessage{}); ignored {
+				t.Fatal("explicit bot mention must still be handled")
+			}
+		})
 	}
 }
 

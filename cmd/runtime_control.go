@@ -12,23 +12,28 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/elevenlj/iris/internal/httpapi"
 )
 
 const runtimeControlHeader = "X-Iris-Control-Token"
 
 type runtimeRecord struct {
-	InstanceID string    `json:"instance_id"`
-	Token      string    `json:"token"`
-	Port       string    `json:"port"`
-	PID        int       `json:"pid"`
-	Version    string    `json:"version"`
-	StartedAt  time.Time `json:"started_at"`
-	ConfigDir  string    `json:"config_dir"`
-	Executable string    `json:"executable"`
+	InstanceID string                        `json:"instance_id"`
+	Token      string                        `json:"token"`
+	Port       string                        `json:"port"`
+	PID        int                           `json:"pid"`
+	Version    string                        `json:"version"`
+	StartedAt  time.Time                     `json:"started_at"`
+	ConfigDir  string                        `json:"config_dir"`
+	Executable string                        `json:"executable"`
+	Bots       []httpapi.BotConnectionStatus `json:"-"`
 }
 
 func newRuntimeRecord(port, configDir string) (runtimeRecord, error) {
@@ -138,7 +143,7 @@ func listActiveRuntimeRecords(dataDir string) ([]runtimeRecord, error) {
 			_ = os.Remove(path)
 			continue
 		}
-		if probeRuntime(client, record) != nil {
+		if probeRuntime(client, &record) != nil {
 			_ = os.Remove(path)
 			continue
 		}
@@ -152,7 +157,7 @@ func listActiveRuntimeRecords(dataDir string) ([]runtimeRecord, error) {
 	return records, nil
 }
 
-func probeRuntime(client *http.Client, record runtimeRecord) error {
+func probeRuntime(client *http.Client, record *runtimeRecord) error {
 	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:"+record.Port+"/api/runtime", nil)
 	if err != nil {
 		return err
@@ -167,7 +172,8 @@ func probeRuntime(client *http.Client, record runtimeRecord) error {
 		return fmt.Errorf("runtime status %s", resp.Status)
 	}
 	var status struct {
-		InstanceID string `json:"instance_id"`
+		InstanceID string                        `json:"instance_id"`
+		Bots       []httpapi.BotConnectionStatus `json:"bots"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 		return err
@@ -175,6 +181,7 @@ func probeRuntime(client *http.Client, record runtimeRecord) error {
 	if status.InstanceID != record.InstanceID {
 		return errors.New("runtime instance changed")
 	}
+	record.Bots = status.Bots
 	return nil
 }
 
@@ -196,16 +203,25 @@ func stopRuntime(record runtimeRecord) error {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
-		if probeRuntime(&http.Client{Timeout: 250 * time.Millisecond}, record) != nil {
+		if probeRuntime(&http.Client{Timeout: 250 * time.Millisecond}, &record) != nil {
 			return nil
 		}
 	}
 	return fmt.Errorf("端口 %s 的 Iris 未在 5 秒内退出", record.Port)
 }
 
-var launchRuntimeProcess = func(record runtimeRecord) error {
+func runtimeProcessCommand(record runtimeRecord) *exec.Cmd {
 	cmd := exec.Command(record.Executable, "--port", record.Port, "--config-dir", record.ConfigDir)
+	cmd.Env = slices.DeleteFunc(os.Environ(), func(entry string) bool {
+		key, _, _ := strings.Cut(entry, "=")
+		return key == "LARK_APP_ID" || key == "LARK_APP_SECRET" || key == "LARK_NOTIFY_RECEIVE_ID"
+	})
 	configureDetachedCommand(cmd)
+	return cmd
+}
+
+var launchRuntimeProcess = func(record runtimeRecord) error {
+	cmd := runtimeProcessCommand(record)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -225,7 +241,7 @@ func restartRuntime(dataDir string, record runtimeRecord) error {
 			continue
 		}
 		var current runtimeRecord
-		if json.Unmarshal(b, &current) == nil && current.InstanceID != record.InstanceID && probeRuntime(client, current) == nil {
+		if json.Unmarshal(b, &current) == nil && current.InstanceID != record.InstanceID && probeRuntime(client, &current) == nil {
 			return nil
 		}
 	}
@@ -305,6 +321,20 @@ func printRuntimeStatus(out io.Writer, records []runtimeRecord, autoPort string)
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\n", record.Port, record.PID, record.Version, formatUptime(time.Since(record.StartedAt)), auto)
 	}
 	_ = tw.Flush()
+	for _, record := range records {
+		fmt.Fprintf(out, "\n飞书连接（端口 %s）：\n", record.Port)
+		if record.Bots == nil {
+			fmt.Fprintln(out, "当前服务版本未提供连接状态。")
+			continue
+		}
+		if len(record.Bots) == 0 {
+			fmt.Fprintln(out, "未配置机器人。")
+			continue
+		}
+		for _, bot := range record.Bots {
+			fmt.Fprintf(out, "%s\t%s\t%s\n", bot.ID, strings.Join(strings.Fields(bot.Name), " "), bot.Status)
+		}
+	}
 }
 
 func formatUptime(d time.Duration) string {

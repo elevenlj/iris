@@ -37,7 +37,9 @@ func TestIrisFaviconIsEmbeddedAndLinkedOnEveryPage(t *testing.T) {
 func TestRuntimeControlRequiresLocalTokenAndStops(t *testing.T) {
 	stopped := make(chan struct{}, 1)
 	srv := NewServer(nil, "")
-	srv.SetRuntimeControl("instance-1", "secret", "1.2.3", 42, func() { stopped <- struct{}{} })
+	srv.SetRuntimeControl("instance-1", "secret", "1.2.3", 42, func() { stopped <- struct{}{} }, func() []BotConnectionStatus {
+		return []BotConnectionStatus{{ID: "default", Name: "Iris", Status: "reconnecting"}}
+	})
 	server := httptest.NewServer(srv.Handler())
 	defer server.Close()
 
@@ -46,6 +48,20 @@ func TestRuntimeControlRequiresLocalTokenAndStops(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unauthorized runtime status = %d", rec.Code)
+	}
+	req, _ = http.NewRequest(http.MethodGet, server.URL+"/api/runtime", nil)
+	req.Header.Set("X-Iris-Control-Token", "secret")
+	statusResp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		Bots []BotConnectionStatus `json:"bots"`
+	}
+	err = json.NewDecoder(statusResp.Body).Decode(&status)
+	_ = statusResp.Body.Close()
+	if err != nil || len(status.Bots) != 1 || status.Bots[0].Status != "reconnecting" {
+		t.Fatalf("bot connection status missing: %#v %v", status, err)
 	}
 
 	req, _ = http.NewRequest(http.MethodDelete, server.URL+"/api/runtime", nil)

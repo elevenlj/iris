@@ -136,6 +136,22 @@ func botEffectiveConfig(global Config, bot httpapi.BotConfig) Config {
 	return syncLegacyDefaultAgent(global)
 }
 
+func (s *botService) ConnectionStatuses() []httpapi.BotConnectionStatus {
+	s.root.mu.Lock()
+	defer s.root.mu.Unlock()
+	statuses := make([]httpapi.BotConnectionStatus, 0, len(s.root.cfg.Bots))
+	for _, bot := range s.root.cfg.Bots {
+		var bridge *session.LarkReplyBridge
+		if bot.ID == "default" {
+			bridge = s.root.bridge
+		} else if rt := s.runtimes[bot.ID]; rt != nil {
+			bridge = rt.bridge
+		}
+		statuses = append(statuses, httpapi.BotConnectionStatus{ID: bot.ID, Name: bot.Name, Status: bridge.ConnectionStatus()})
+	}
+	return statuses
+}
+
 func (s *botService) ListBots() []httpapi.BotConfig {
 	s.root.mu.Lock()
 	defer s.root.mu.Unlock()
