@@ -2,10 +2,7 @@ package main
 
 import (
 	"net"
-	"net/url"
 	"strings"
-
-	"github.com/elevenlj/iris/internal/session"
 )
 
 func dashboardURLForConfig(cfg Config) string {
@@ -16,17 +13,14 @@ func dashboardURLForConfig(cfg Config) string {
 }
 
 func detectedDashboardURL(cfg Config) string {
-	if cfg.DetectedDashboardURL != "" {
-		return cfg.DetectedDashboardURL
-	}
 	port := cfg.Port
 	if port == "" {
 		port = "8080"
 	}
 	interfaces, _ := net.Interfaces()
 	var ipv6 net.IP
-	// ponytail: on multi-homed hosts this is a best-effort fallback; the
-	// authenticated browser origin supersedes it once the dashboard is opened.
+	// ponytail: choose the first usable IPv4 on multi-homed hosts; explicit
+	// dashboard_url remains available when that interface is not reachable.
 	for _, iface := range interfaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
@@ -49,44 +43,4 @@ func detectedDashboardURL(cfg Config) string {
 		return "http://" + net.JoinHostPort(ipv6.String(), port)
 	}
 	return ""
-}
-
-// Called only for authenticated, same-origin browser requests. Learning the
-// browser's origin preserves TLS and public proxy ports without trusting
-// arbitrary X-Forwarded-* headers or headless loopback requests.
-func (s *appConfigService) ObserveDashboardURL(raw string) error {
-	raw, err := session.NormalizeDashboardURL(raw)
-	if err != nil || raw == "" {
-		return err
-	}
-	u, _ := url.Parse(raw)
-	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
-	ip := net.ParseIP(host)
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") ||
-		(ip != nil && (!ip.IsGlobalUnicast() || ip.IsLoopback() || ip.IsLinkLocalUnicast())) {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.cfg.DetectedDashboardURL == raw {
-		return nil
-	}
-	cfg := *s.cfg
-	cfg.DetectedDashboardURL = raw
-	if err := writeConfigFile(s.path, cfg); err != nil {
-		return err
-	}
-	*s.cfg = cfg
-	base := dashboardURLForConfig(cfg)
-	if err := s.manager.SetDashboardURL(base); err != nil {
-		return err
-	}
-	if s.bots != nil {
-		for _, rt := range s.bots.runtimes {
-			if err := rt.manager.SetDashboardURL(base); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }

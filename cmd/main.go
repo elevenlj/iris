@@ -60,7 +60,6 @@ var defaultLarkNotifyDropLineRules = session.LarkNotifyDropLineRules{
 
 type Config struct {
 	DashboardURL                    string                                `json:"dashboard_url,omitempty"`
-	DetectedDashboardURL            string                                `json:"detected_dashboard_url,omitempty"`
 	Bots                            []httpapi.BotConfig                   `json:"bots,omitempty"`
 	Port                            string                                `json:"port"`
 	AutoStartEnabled                bool                                  `json:"auto_start_enabled"`
