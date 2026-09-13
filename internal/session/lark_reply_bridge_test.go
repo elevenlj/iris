@@ -710,46 +710,165 @@ func TestLarkReplyBridgeRoutesByDedicatedChatID(t *testing.T) {
 }
 
 func TestLarkReplyBridgeGroupInputMentionsSender(t *testing.T) {
-	resetLarkRegistryForTest()
-	previousDelay := structuredInputEnterDelay
-	structuredInputEnterDelay = 0
-	defer func() { structuredInputEnterDelay = previousDelay }()
+	for _, senderType := range []string{"user", "app", ""} {
+		t.Run(senderType, func(t *testing.T) {
+			wantMention := "ou-bob"
+			if senderType == "app" {
+				wantMention = ""
+			}
+			resetLarkRegistryForTest()
+			previousDelay := structuredInputEnterDelay
+			structuredInputEnterDelay = 0
+			defer func() { structuredInputEnterDelay = previousDelay }()
 
-	launcher := &recordingLauncher{}
-	notifier := &recordingNotifier{messageID: "bot-running"}
-	manager := NewManager(nil, launcher, WithNotifier(notifier))
-	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
-	sess, err := manager.CreateSession(context.Background(), "Group")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok, err := manager.BindLarkChat(context.Background(), sess.ID, "oc-group"); err != nil || !ok {
-		t.Fatalf("BindLarkChat ok=%v err=%v", ok, err)
-	}
-	if _, ok, err := manager.UpdateNotifyOnWaiting(context.Background(), sess.ID, true); err != nil || !ok {
-		t.Fatalf("UpdateNotifyOnWaiting ok=%v err=%v", ok, err)
-	}
+			launcher := &recordingLauncher{}
+			notifier := &recordingNotifier{messageID: "bot-running"}
+			manager := NewManager(nil, launcher, WithNotifier(notifier))
+			bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+			bridge.botIdentity = larkBotIdentity{OpenID: "ou-self"}
+			bridge.addReaction = nil
+			sess, err := manager.CreateSession(context.Background(), "Group")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok, err := manager.BindLarkChat(context.Background(), sess.ID, "oc-group"); err != nil || !ok {
+				t.Fatalf("BindLarkChat ok=%v err=%v", ok, err)
+			}
+			if _, ok, err := manager.UpdateNotifyOnWaiting(context.Background(), sess.ID, true); err != nil || !ok {
+				t.Fatalf("UpdateNotifyOnWaiting ok=%v err=%v", ok, err)
+			}
 
-	err = bridge.HandleP2MessageReceive(context.Background(), p2MessageWithChat("m-group-mention", "", "", "text", `{"text":"pwd | whoami"}`, "group", "oc-group", "ou-bob"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	notes := notifier.notes()
-	if len(notes) == 0 {
-		t.Fatal("expected running notification")
-	}
-	got := notes[len(notes)-1]
-	if got.MentionOpenID != "ou-bob" || got.ChatID != "oc-group" || !got.Running {
-		t.Fatalf("group notification should mention sender, got %#v", got)
-	}
+			rtBefore, _ := manager.GetRuntime(sess.ID)
+			rtBefore.SetNotificationMentionOpenID("ou-old")
+			event := p2MessageWithChat("m-group-mention", "", "", "text", `{"text":"pwd | whoami"}`, "group", "oc-group", "ou-bob")
+			event.Event.Sender.SenderType = strPtr(senderType)
+			err = bridge.HandleP2MessageReceive(context.Background(), event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			notes := notifier.notes()
+			if len(notes) == 0 {
+				t.Fatal("expected running notification")
+			}
+			got := notes[len(notes)-1]
+			if got.MentionOpenID != wantMention || got.ChatID != "oc-group" || !got.Running {
+				t.Fatalf("group notification should mention sender, got %#v", got)
+			}
 
-	bridge.OnNotificationSent(sess.ID)
-	rt, ok := manager.GetRuntime(sess.ID)
-	if !ok {
-		t.Fatal("runtime not found")
+			bridge.OnNotificationSent(sess.ID)
+			rt, ok := manager.GetRuntime(sess.ID)
+			if !ok {
+				t.Fatal("runtime not found")
+			}
+			if got := rt.NotificationMentionOpenID(); got != wantMention {
+				t.Fatalf("pipeline input should keep sender mention, got %q", got)
+			}
+			manager.mu.RLock()
+			current := manager.larkAgentContexts[sess.ID]
+			manager.mu.RUnlock()
+			if current.LatestSenderID != "ou-bob" || current.LatestMessageID != "m-group-mention" {
+				t.Fatalf("sender identity or source lost: %#v", current)
+			}
+			if !strings.Contains(launcher.terminals[0].writes(), "pwd") || !strings.Contains(launcher.terminals[0].writes(), "whoami") {
+				t.Fatal("input or pipeline was not delivered")
+			}
+			for _, phase := range []string{"running", "complete"} {
+				note := got
+				note.Running = phase == "running"
+				note.SnapshotSource = "aiden_hook:last_assistant_message"
+				note.Content = "Agent reply <at id=ou-chosen></at>"
+				card, err := larkNotificationCardContent(note, "ou-developer", true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(card, "ou-bob") != (wantMention != "") {
+					t.Fatalf("%s card has incorrect automatic mention: %s", phase, card)
+				}
+				if !strings.Contains(card, "ou-chosen") {
+					t.Fatal("Agent-authored mention removed")
+				}
+			}
+			tip, err := larkUpdateTipTextContent(larkNotificationMentionID(got, "ou-developer"), true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(tip, "ou-bob") != (wantMention != "") || strings.Contains(tip, "ou-developer") {
+				t.Fatalf("completion tip has incorrect automatic mention: %s", tip)
+			}
+		})
 	}
-	if got := rt.NotificationMentionOpenID(); got != "ou-bob" {
-		t.Fatalf("pipeline input should keep sender mention, got %q", got)
+}
+
+func TestLarkReplyBridgeBotNotificationsDoNotMentionAcrossInputPaths(t *testing.T) {
+	for _, path := range []string{"start", "image", "image_text", "queued"} {
+		t.Run(path, func(t *testing.T) {
+			resetLarkRegistryForTest()
+			launcher := &recordingLauncher{}
+			notifier := &recordingNotifier{messageID: "notification"}
+			manager := NewManager(nil, launcher, WithNotifier(notifier))
+			bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+			bridge.botIdentity = larkBotIdentity{OpenID: "ou-self"}
+			bridge.addReaction = nil
+			bridge.replyText = func(context.Context, string, string) error { return nil }
+			bridge.downloadFile = func(_ context.Context, _, _ string, ref larkAttachmentRef) (pendingLarkAttachment, error) {
+				return pendingLarkAttachment{Kind: ref.Kind, Path: "/tmp/test.png"}, nil
+			}
+			messageType, content := "text", `{"text":"开始 Bot会话"}`
+			if path == "start" {
+				manager.SetAgentConfig(AgentConfig{Kind: "codex", Command: CodexAgentCommand}, nil)
+			} else {
+				sess, err := manager.CreateSession(context.Background(), "Bot会话")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, ok, err := manager.BindLarkChat(context.Background(), sess.ID, "oc-group"); err != nil || !ok {
+					t.Fatalf("bind: %v", err)
+				}
+				rt, _ := manager.GetRuntime(sess.ID)
+				rt.SetNotificationMentionOpenID("ou-old")
+				if path == "queued" {
+					rt.mu.Lock()
+					rt.session.Status, rt.session.LastMode = StatusRunning, SessionModeAgent
+					rt.session.NotifyOnWaiting = true
+					rt.startupNotifyMode = startupNotifyDiscard
+					rt.mu.Unlock()
+					content = `{"text":"next question"}`
+				} else {
+					messageType, content = "image", `{"image_key":"img_a"}`
+					if path == "image_text" {
+						content = `{"image_key":"img_a","text":"describe image"}`
+					}
+				}
+			}
+			event := p2MessageWithChat("bot-input", "", "", messageType, content, "group", "oc-group", "ou-peer")
+			event.Event.Sender.SenderType = strPtr("app")
+			if err := bridge.HandleP2MessageReceive(context.Background(), event); err != nil {
+				t.Fatal(err)
+			}
+			rt, ok := manager.GetRuntime("sess-1")
+			if !ok || rt.NotificationMentionOpenID() != "" {
+				t.Fatal("bot notification retained an automatic mention")
+			}
+			if path == "start" || path == "queued" {
+				notes := notifier.notes()
+				if len(notes) == 0 || !notes[0].Startup {
+					t.Fatal("startup notification missing")
+				}
+				for _, note := range notes {
+					if note.MentionOpenID != "" {
+						t.Fatalf("startup mentions bot: %#v", note)
+					}
+				}
+			}
+			if path == "queued" {
+				next := bridge.popPipeline("sess-1")
+				if next.Text != "next question" || next.MentionOpenID != "" || next.InputMessageID != "bot-input" {
+					t.Fatalf("queued origin/mention mismatch: %#v", next)
+				}
+			} else if path != "start" && !strings.Contains(launcher.terminals[0].writes(), "/tmp/test.png") {
+				t.Fatal("attachment not delivered")
+			}
+		})
 	}
 }
 

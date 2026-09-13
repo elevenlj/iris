@@ -95,10 +95,18 @@ type larkRouteContext struct {
 	ChatID        string
 	ChatType      string
 	SenderOpenID  string
+	SenderType    string
 	MessageTime   time.Time
 	MentionedBot  bool
 	Mentions      []*larkim.MentionEvent
 	AssistantName string
+}
+
+func (c larkRouteContext) notificationMentionOpenID() string {
+	if c.SenderType != "" && c.SenderType != "user" {
+		return ""
+	}
+	return c.SenderOpenID
 }
 
 type larkBotIdentity struct {
@@ -898,6 +906,9 @@ func (b *LarkReplyBridge) HandleP2MessageReceive(ctx context.Context, event *lar
 		MessageTime:  parseLarkMillisecondTime(valueOf(msg.CreateTime)),
 		Mentions:     msg.Mentions,
 	}
+	if event.Event.Sender != nil {
+		routeCtx.SenderType = strings.TrimSpace(valueOf(event.Event.Sender.SenderType))
+	}
 	routeCtx = b.prepareAssistantRoute(ctx, routeCtx, incoming)
 	if _, ignored := b.shouldIgnoreForMentionMode(ctx, routeCtx, incoming); ignored {
 		return nil
@@ -1243,8 +1254,8 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 			return sessionID, nil
 		}
 		b.manager.EnsureBrowser(sessionID)
-		b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.SenderOpenID, routeCtx)
-		if err := SubmitStructuredInputWithMention(rt, inputParts[0], routeCtx.SenderOpenID, routeCtx.MessageID); err != nil {
+		b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.notificationMentionOpenID(), routeCtx)
+		if err := SubmitStructuredInputWithMention(rt, inputParts[0], routeCtx.notificationMentionOpenID(), routeCtx.MessageID); err != nil {
 			return sessionID, err
 		}
 		b.scheduleAutoSummary(rt, text)
@@ -1281,7 +1292,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 					log.Printf("lark start presets failed session=%s codes=%q: %v", s.ID, presetCodes, presetErr)
 				}
 			}
-			b.enqueuePipeline(s.ID, parts[1:], routeCtx.SenderOpenID, routeCtx)
+			b.enqueuePipeline(s.ID, parts[1:], routeCtx.notificationMentionOpenID(), routeCtx)
 			if rt, found := b.manager.GetRuntime(s.ID); found && !rt.discardingStartupNotifications() {
 				rt.NotifyInputRunning()
 			}
@@ -1303,7 +1314,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 			}
 			return sessionID, nil
 		}
-		rt.SetNotificationMentionOpenID(routeCtx.SenderOpenID)
+		rt.SetNotificationMentionOpenID(routeCtx.notificationMentionOpenID())
 		if err := rt.WriteInput("\x03"); err != nil {
 			return sessionID, err
 		}
@@ -1355,12 +1366,12 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		rt, _ = b.manager.GetRuntime(sessionID)
 	}
 	b.manager.EnsureBrowser(sessionID)
-	if b.enqueueInputIfRuntimeBusy(rt, sessionID, inputParts, routeCtx.SenderOpenID, routeCtx) {
+	if b.enqueueInputIfRuntimeBusy(rt, sessionID, inputParts, routeCtx.notificationMentionOpenID(), routeCtx) {
 		b.manager.messageRegistry().remember(sessionID, messageID, parentID, rootID)
 		return sessionID, nil
 	}
-	b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.SenderOpenID, routeCtx)
-	if err := SubmitStructuredInputWithMention(rt, inputParts[0], routeCtx.SenderOpenID, routeCtx.MessageID); err != nil {
+	b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.notificationMentionOpenID(), routeCtx)
+	if err := SubmitStructuredInputWithMention(rt, inputParts[0], routeCtx.notificationMentionOpenID(), routeCtx.MessageID); err != nil {
 		return sessionID, err
 	}
 	b.scheduleAutoSummary(rt, text)
@@ -1370,7 +1381,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 }
 
 func (b *LarkReplyBridge) contactAssistantEnabled(routeCtx larkRouteContext) bool {
-	if !isLarkDirectChatType(routeCtx.ChatType) || strings.TrimSpace(routeCtx.SenderOpenID) == "" {
+	if !isLarkDirectChatType(routeCtx.ChatType) || strings.TrimSpace(routeCtx.notificationMentionOpenID()) == "" {
 		return false
 	}
 	b.mu.Lock()
@@ -1438,12 +1449,12 @@ func (b *LarkReplyBridge) routeDirectContactMessage(ctx context.Context, routeCt
 		return binding.SessionID, nil
 	}
 	b.manager.EnsureBrowser(binding.SessionID)
-	if b.enqueueInputIfRuntimeBusy(rt, binding.SessionID, parts, routeCtx.SenderOpenID) {
+	if b.enqueueInputIfRuntimeBusy(rt, binding.SessionID, parts, routeCtx.notificationMentionOpenID()) {
 		b.manager.messageRegistry().remember(binding.SessionID, routeCtx.MessageID)
 		return binding.SessionID, nil
 	}
-	b.enqueuePipeline(binding.SessionID, parts[1:], routeCtx.SenderOpenID)
-	if err := SubmitStructuredInputWithMention(rt, parts[0], routeCtx.SenderOpenID); err != nil {
+	b.enqueuePipeline(binding.SessionID, parts[1:], routeCtx.notificationMentionOpenID())
+	if err := SubmitStructuredInputWithMention(rt, parts[0], routeCtx.notificationMentionOpenID()); err != nil {
 		return binding.SessionID, err
 	}
 	b.scheduleAutoSummary(rt, parts[0])
@@ -1672,7 +1683,7 @@ func (b *LarkReplyBridge) routeAttachments(ctx context.Context, routeCtx larkRou
 	b.manager.EnsureBrowser(sessionID)
 	input := formatLarkAttachmentInput(files)
 	if strings.TrimSpace(text) == "" {
-		rt.SetNotificationMentionOpenID(routeCtx.SenderOpenID)
+		rt.SetNotificationMentionOpenID(routeCtx.notificationMentionOpenID())
 		if err := rt.WriteInput(input + " "); err != nil {
 			return sessionID, err
 		}
@@ -1693,8 +1704,8 @@ func (b *LarkReplyBridge) routeAttachments(ctx context.Context, routeCtx larkRou
 	}
 	origin := routeCtx
 	origin.MessageID = inputMessageID
-	b.enqueuePipeline(sessionID, parts[1:], routeCtx.SenderOpenID, origin)
-	if err := SubmitStructuredInputWithMention(rt, input+" "+text, routeCtx.SenderOpenID, inputMessageID); err != nil {
+	b.enqueuePipeline(sessionID, parts[1:], routeCtx.notificationMentionOpenID(), origin)
+	if err := SubmitStructuredInputWithMention(rt, input+" "+text, routeCtx.notificationMentionOpenID(), inputMessageID); err != nil {
 		return sessionID, err
 	}
 	b.scheduleAutoSummary(rt, text)
@@ -1739,7 +1750,7 @@ func (b *LarkReplyBridge) createDirectBotSessionForMessage(ctx context.Context, 
 		return s, err
 	}
 	if rt, ok := b.manager.GetRuntime(s.ID); ok {
-		rt.SetNotificationMentionOpenID(routeCtx.SenderOpenID)
+		rt.SetNotificationMentionOpenID(routeCtx.notificationMentionOpenID())
 	}
 	updated, err := b.bindSessionToLarkChat(ctx, s, routeCtx.ChatID)
 	if err != nil {
@@ -1758,7 +1769,7 @@ func (b *LarkReplyBridge) createLarkSessionForMessage(ctx context.Context, name 
 	if routeCtx.ChatID != "" && routeCtx.ChatType == "group" {
 		if rt, ok := b.manager.GetRuntime(s.ID); ok {
 			rt.RequireLarkChatForNotifications()
-			rt.SetNotificationMentionOpenID(routeCtx.SenderOpenID)
+			rt.SetNotificationMentionOpenID(routeCtx.notificationMentionOpenID())
 		}
 		updated, err := b.bindSessionToLarkChat(ctx, s, routeCtx.ChatID)
 		if err != nil {
@@ -1775,7 +1786,7 @@ func (b *LarkReplyBridge) createLarkSessionForMessage(ctx context.Context, name 
 	}
 	if rt, ok := b.manager.GetRuntime(s.ID); ok {
 		rt.RequireLarkChatForNotifications()
-		rt.SetNotificationMentionOpenID(routeCtx.SenderOpenID)
+		rt.SetNotificationMentionOpenID(routeCtx.notificationMentionOpenID())
 	}
 	log.Printf("lark reply bridge creating dedicated chat session=%s name=%q owner=%s", s.ID, s.Name, routeCtx.SenderOpenID)
 	chatID, err := b.createChat(ctx, s.ID, s.Name, routeCtx.SenderOpenID)
@@ -1827,7 +1838,7 @@ func (b *LarkReplyBridge) ensureRouteRuntime(ctx context.Context, sessionID stri
 		s := rt.Snapshot()
 		b.recordAgentLarkContext(s, routeCtx)
 		if routeCtx.SenderOpenID != "" {
-			rt.SetNotificationMentionOpenID(routeCtx.SenderOpenID)
+			rt.SetNotificationMentionOpenID(routeCtx.notificationMentionOpenID())
 		}
 		rt.SetNotificationAssistantName(routeCtx.AssistantName)
 		return rt, s, true, nil
@@ -1841,7 +1852,7 @@ func (b *LarkReplyBridge) ensureRouteRuntime(ctx context.Context, sessionID stri
 	}
 	b.recordAgentLarkContext(sess, routeCtx)
 	if routeCtx.SenderOpenID != "" {
-		rt.SetNotificationMentionOpenID(routeCtx.SenderOpenID)
+		rt.SetNotificationMentionOpenID(routeCtx.notificationMentionOpenID())
 	}
 	rt.SetNotificationAssistantName(routeCtx.AssistantName)
 	if strings.TrimSpace(sess.LastMode) == SessionModeAgent && strings.TrimSpace(sess.LastAgentResumeCommand) != "" {
