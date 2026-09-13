@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,20 +88,28 @@ func TestWorkspaceOptionsForSessionAlwaysStartsWithSharedDefault(t *testing.T) {
 	}
 }
 
-func TestSwitchWorkspaceSubmitsCDToSupportedAgents(t *testing.T) {
+func TestSwitchWorkspaceSubmitsAgentSpecificInput(t *testing.T) {
 	for _, test := range []struct {
 		name        string
 		configKind  string
 		runtimeKind string
 		command     string
+		wantPrefix  string
 	}{
-		{name: "Claude Code", configKind: "claude", runtimeKind: "claude", command: ClaudeAgentCommand},
-		{name: "Aiden", configKind: "aiden", runtimeKind: "aiden", command: AidenAgentCommand},
-		{name: "Aiden X Codex", configKind: "aiden-codex", runtimeKind: "codex", command: AidenCodexAgentCommand},
-		{name: "Aiden X Claude Code", configKind: "aiden-claude", runtimeKind: "claude", command: AidenClaudeAgentCommand},
+		{name: "Codex", configKind: "codex", runtimeKind: "codex", command: CodexAgentCommand, wantPrefix: "/cd "},
+		{name: "Claude Code", configKind: "claude", runtimeKind: "claude", command: ClaudeAgentCommand, wantPrefix: "后续任务切换到工作目录："},
+		{name: "Aiden", configKind: "aiden", runtimeKind: "aiden", command: AidenAgentCommand, wantPrefix: "/cd "},
+		{name: "Aiden X Codex", configKind: "aiden-codex", runtimeKind: "codex", command: AidenCodexAgentCommand, wantPrefix: "/cd "},
+		{name: "Aiden X Claude Code", configKind: "aiden-claude", runtimeKind: "claude", command: AidenClaudeAgentCommand, wantPrefix: "后续任务切换到工作目录："},
+		{name: "Custom Aiden X Claude", configKind: "custom", runtimeKind: "custom", command: "FOO=bar aiden x claude", wantPrefix: "后续任务切换到工作目录："},
+		{name: "Custom Claude", configKind: "custom", runtimeKind: "custom", command: "/usr/local/bin/claude --dangerously-skip-permissions", wantPrefix: "后续任务切换到工作目录："},
+		{name: "Claude wrapper", configKind: "claude", runtimeKind: "claude", command: "my-claude-wrapper", wantPrefix: "后续任务切换到工作目录："},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			workspace := t.TempDir()
+			workspace := filepath.Join(t.TempDir(), "项目 with spaces")
+			if err := os.Mkdir(workspace, 0700); err != nil {
+				t.Fatal(err)
+			}
 			terminal := &recordingTerminal{readCh: make(chan []byte)}
 			manager := NewManager(nil, nil)
 			manager.SetAgentConfig(AgentConfig{Kind: test.configKind, Command: test.command}, []WorkspaceOption{{Label: "项目", Value: workspace}})
@@ -115,7 +124,7 @@ func TestSwitchWorkspaceSubmitsCDToSupportedAgents(t *testing.T) {
 			if err != nil || !ok || got.LastCWD != workspace {
 				t.Fatalf("SwitchWorkspace() ok=%v err=%v session=%#v", ok, err, got)
 			}
-			if writes := terminal.writes(); !strings.Contains(writes, "/cd "+workspace+"\r") {
+			if writes := terminal.writes(); !strings.Contains(writes, test.wantPrefix+workspace+"\r") || (test.wantPrefix != "/cd " && strings.Contains(writes, "/cd ")) {
 				t.Fatalf("workspace input = %q", writes)
 			}
 		})

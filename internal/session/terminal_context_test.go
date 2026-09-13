@@ -81,6 +81,39 @@ func TestPendingWorkspaceSelectionOverridesStaleAidenCodexDirectory(t *testing.T
 	}
 }
 
+func TestNotificationWorkspaceSelectionUsesSavedDirectoryWithoutTerminalContext(t *testing.T) {
+	for _, kind := range []string{"aiden", "claude", "codex"} {
+		for _, pending := range []bool{false, true} {
+			t.Run(kind+map[bool]string{false: "/restored", true: "/just-switched"}[pending], func(t *testing.T) {
+				workspace := t.TempDir()
+				manager := NewManager(nil, nil)
+				manager.SetAgentConfig(AgentConfig{Kind: kind}, []WorkspaceOption{{Label: "event", Value: workspace}})
+				rt := &RuntimeSession{manager: manager, session: Session{ID: "sess-directory", LastAgentKind: kind, LastCWD: workspace}, visibleSnapshot: "已切换到：" + workspace}
+				if pending {
+					rt.pendingAgentDirectory = workspace
+				}
+				// This is also the card refresh path; no model/header can be parsed.
+				note := rt.decorateWaitingNotification(WaitingNotification{AgentContext: rt.notificationAgentContextLocked()})
+				if note.AgentContext == nil || note.AgentContext.Directory != compactTerminalDirectory(workspace) {
+					t.Fatalf("missing saved directory: %#v", note.AgentContext)
+				}
+				element := larkWorkspaceSelectElement(rt.session.ID, note.WorkspaceOptions, note.AgentContext)
+				columns := element["columns"].([]map[string]any)
+				selector := columns[0]["elements"].([]map[string]any)[1]
+				if selector["initial_option"] != workspace {
+					t.Fatalf("selected default instead of event: %#v", selector)
+				}
+				// A real terminal-reported directory still takes priority, without mutating shared context.
+				parsed := &TerminalAgentContext{Directory: "/another/project", Model: "gpt-5.6"}
+				note = rt.decorateWaitingNotification(WaitingNotification{AgentContext: parsed})
+				if note.AgentContext.Directory != parsed.Directory || note.AgentContext.Model != parsed.Model {
+					t.Fatal("terminal context overwritten")
+				}
+			})
+		}
+	}
+}
+
 func TestLarkNotificationCardRendersAgentContextBeforeButtons(t *testing.T) {
 	content, err := larkNotificationCardContent(WaitingNotification{
 		SessionID:            "sess-1",

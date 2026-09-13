@@ -671,7 +671,7 @@ func (m *Manager) WorkspaceOptionsForSession(_ Session) []WorkspaceOption {
 	return out
 }
 
-// sessionSupportsWorkspaceSwitch reports whether the active Agent can receive Iris's /cd control input.
+// sessionSupportsWorkspaceSwitch reports whether the active Agent supports Iris's workspace control input.
 func sessionSupportsWorkspaceSwitch(sess Session) bool {
 	switch strings.ToLower(strings.TrimSpace(sess.LastAgentKind)) {
 	case "codex", "claude", "aiden":
@@ -1045,6 +1045,9 @@ func (m *Manager) SwitchWorkspace(ctx context.Context, id, path string) (Session
 		return Session{}, true, errors.New("目录不存在或不可访问")
 	}
 	input := "/cd " + path
+	if agentKindForCommand(sess.LastAgentStartCommand, sess.LastAgentKind) == "claude" {
+		input = "后续任务切换到工作目录：" + path
+	}
 	if sessionSupportsWorkspaceSwitch(sess) {
 		if err := rt.beginControlInput(); err != nil {
 			return Session{}, true, err
@@ -4906,6 +4909,15 @@ func (rt *RuntimeSession) decorateWaitingNotification(note WaitingNotification) 
 	note.AgentKind = sess.LastAgentKind
 	if sessionSupportsWorkspaceSwitch(sess) {
 		note.WorkspaceOptions = rt.manager.WorkspaceOptionsForSession(sess)
+		// Aiden/Claude do not expose a Codex-style directory in their terminal UI.
+		// Use the persisted session directory for new cards and refreshes alike.
+		if sess.LastCWD != "" && (note.AgentContext == nil || strings.TrimSpace(note.AgentContext.Directory) == "") {
+			note.AgentContext = cloneTerminalAgentContext(note.AgentContext)
+			if note.AgentContext == nil {
+				note.AgentContext = &TerminalAgentContext{}
+			}
+			note.AgentContext.Directory = compactTerminalDirectory(sess.LastCWD)
+		}
 	}
 	note.AgentOptions = rt.manager.AvailableAgentOptions()
 	defaultAgent, _ := rt.manager.AgentConfig()
