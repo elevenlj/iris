@@ -51,6 +51,9 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 	b.fetchChatMetadata = func(context.Context, string) (LarkChatMetadata, error) {
 		return LarkChatMetadata{ChatName: "研发群"}, nil
 	}
+	b.fetchReferencedMessages = func(_ context.Context, id string) ([]larkReferencedMessage, error) {
+		return []larkReferencedMessage{{MessageID: id, MessageType: "text", Content: `{"text":"成都的天气回复"}`}}, nil
+	}
 	b.replyText = func(context.Context, string, string) error { return nil }
 	main, err := m.CreateSession(ctx, "main")
 	if err != nil {
@@ -71,9 +74,13 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 	question := "修复登录问题并检查完整上下文"
 	for i, command := range []string{"/t " + question, "/topic"} {
 		messageID := messageIDs[i]
-		id, err := b.RouteIncomingWithContext(ctx, larkRouteContext{MessageID: messageID, ChatID: "oc-group", ChatType: "group", SenderType: "user", SenderOpenID: "ou-user"}, larkIncomingMessage{Text: command})
+		// A normal group quote has parent/root IDs, but no thread ID.
+		id, err := b.RouteIncomingWithContext(ctx, larkRouteContext{MessageID: messageID, ParentID: "om-quoted-card", RootID: "om-quoted-root", ChatID: "oc-group", ChatType: "group", SenderType: "user", SenderOpenID: "ou-user"}, larkIncomingMessage{Text: command})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if id == "" {
+			t.Fatal("group quote must be allowed to create an independent topic")
 		}
 		defer m.DeleteSession(ctx, id)
 		sess, _, _ := m.GetSession(ctx, id)
@@ -91,6 +98,9 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 			t.Fatalf("topic launch: %s", got)
 		}
 		queued := b.popPipeline(id)
+		if !strings.Contains(queued.Text, "成都的天气回复") {
+			t.Fatal("quoted context must reach the new Agent")
+		}
 		if !strings.Contains(queued.Text, "scope=group") || !strings.Contains(queued.Text, "不要恢复或执行历史任务") || queued.InputMessageID != messageID {
 			t.Fatalf("context prompt missing: %#v", queued)
 		}
@@ -103,6 +113,15 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 	}
 	if topics[0].ID == topics[1].ID || topics[0].RecoveryKey == topics[1].RecoveryKey {
 		t.Fatal("topics share identity")
+	}
+	// Actual topic replies remain blocked, including events that omit root_id.
+	for _, root := range []string{"", topics[0].LarkTopicRootID} {
+		var reply string
+		b.replyText = func(_ context.Context, _ string, text string) error { reply = text; return nil }
+		id, err := b.RouteIncomingWithContext(ctx, larkRouteContext{MessageID: "nested-" + root, ChatID: "oc-group", ChatType: "group", RootID: root, ThreadID: topics[0].LarkThreadID, MentionedBot: true}, larkIncomingMessage{Text: "/t 北京呢"})
+		if err != nil || id != "" || !strings.Contains(reply, "请回到群里") || len(launcher.terminals) != 3 {
+			t.Fatalf("nested topic was not blocked: id=%s err=%v reply=%q", id, err, reply)
+		}
 	}
 	for _, note := range notifier.notes() {
 		if note.Startup && (note.TopicRootID == "" || note.ChatID != "oc-group") {

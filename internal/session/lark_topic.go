@@ -80,8 +80,8 @@ func (b *LarkReplyBridge) createTopicSession(ctx context.Context, route larkRout
 	if !isLarkGroupChatType(route.ChatType) || route.ChatID == "" || route.MessageID == "" {
 		return "", b.replyLarkText(ctx, route.MessageID, "请在群里使用 /t 问题 或 /topic 问题 创建话题。")
 	}
-	// A reply inside an existing topic cannot create another independent thread.
-	if route.ThreadID != "" || route.RootID != "" {
+	// Ordinary group quotes also have root_id; only thread_id identifies a topic.
+	if route.ThreadID != "" {
 		return "", b.replyLarkText(ctx, route.MessageID, "请回到群里发送 /t 问题，创建一个新的独立话题。")
 	}
 	b.groupSessionMu.Lock()
