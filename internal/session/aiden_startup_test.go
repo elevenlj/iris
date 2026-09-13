@@ -24,6 +24,78 @@ Serverconnecserver "slardar-mcp": McpError: MCP error      to view
 
 const aidenReadySource = "headless:buffer;continuity_version=2;render_epoch=1;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=-1"
 
+// Claude Code 2.1.270 / Aiden X Claude: the alternate-screen cursor is on
+// the input row ABOVE the visible suggestion, not on its prompt marker.
+const claudeReadySnapshot = `Claude Code v2.1.270
+SessionStart:startup hook error
+Failed with non-blocking status code: npm error code E404
+────────────────────────────────────────────────────────────
+- ��
+❯ Try "how do I log an error?"
+────────────────────────────────────────────────────────────
+⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents`
+
+func TestClaudeStartupRecognizesCursorInsideComposer(t *testing.T) {
+	source := strings.ReplaceAll(strings.Replace(aidenReadySource, "cursor_line=-1", "cursor_line=4", 1), "buffer_type=normal", "buffer_type=alternate")
+	for _, test := range []struct {
+		name, snapshot, source string
+		ready                  bool
+	}{
+		{"reported layout", claudeReadySnapshot, source, true},
+		{"blank input row", strings.ReplaceAll(claudeReadySnapshot, "- ��", ""), source, true},
+		{"non-breaking prompt space", strings.ReplaceAll(claudeReadySnapshot, "❯ ", "❯\u00a0"), source, true},
+		{"trailing empty rows", claudeReadySnapshot + "\n\n", source, true},
+		{"browser snapshot", claudeReadySnapshot, strings.Replace(source, "headless:", "browser:", 1), true},
+		{"normal buffer", claudeReadySnapshot, strings.Replace(source, "buffer_type=alternate", "buffer_type=normal", 1), true},
+		{"missing cursor", claudeReadySnapshot, strings.Replace(source, "cursor_line=4", "cursor_line=-1", 1), false},
+		{"cursor outside composer", claudeReadySnapshot, strings.Replace(source, "cursor_line=4", "cursor_line=2", 1), false},
+		{"missing metadata", claudeReadySnapshot, "headless:buffer", false},
+		{"DOM", claudeReadySnapshot, strings.Replace(source, ":buffer", ":dom", 1), false},
+		{"no mode footer", strings.ReplaceAll(claudeReadySnapshot, "bypass permissions on", "unknown"), source, false},
+		{"shell below old composer", claudeReadySnapshot + "\n$ ", source, false},
+		{"login below old composer", claudeReadySnapshot + "\nNot logged in · run /login", source, false},
+		{"approval below old composer", claudeReadySnapshot + "\n❯ 1. Allow\n  2. Deny", source, false},
+		{"new modal", claudeReadySnapshot + "\n─────────\nSelect model\n─────────", source, false},
+		{"trust modal", strings.ReplaceAll(claudeReadySnapshot, "⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents", "Enter to confirm · Esc to cancel"), source, false},
+	} {
+		for _, command := range []string{ClaudeAgentCommand, AidenClaudeAgentCommand} {
+			t.Run(test.name+"/"+command, func(t *testing.T) {
+				if got := startupAgentComposerReady(test.snapshot, test.source, agentKindForCommand(command, "custom")); got != test.ready {
+					t.Fatalf("ready = %v, want %v", got, test.ready)
+				}
+			})
+		}
+	}
+}
+
+func TestClaudeFramedComposerCompletesStartupCard(t *testing.T) {
+	notifier := &recordingNotifier{createMessageIDs: []string{"startup-card"}}
+	m := NewManager(nil, nil, WithNotifier(notifier))
+	released := make(chan string, 1)
+	m.SetNotificationSentHook(func(id string) { released <- id })
+	rt := &RuntimeSession{manager: m,
+		session: Session{ID: "claude-ready", Status: StatusWaiting, Live: true, NotifyOnWaiting: true,
+			LastMode: SessionModeAgent, LastAgentKind: "claude", LastAgentStartCommand: AidenClaudeAgentCommand},
+		startupNotifyMode: startupNotifyDiscard, notifyVersion: 1,
+		visibleSnapshot:       claudeReadySnapshot,
+		visibleSnapshotSource: strings.Replace(aidenReadySource, "cursor_line=-1", "cursor_line=4", 1),
+	}
+	rt.beginStartupNotification("")
+	rt.notifyIfStillWaitingForInteraction(1)
+	notes := notifier.notes()
+	if len(notes) != 2 || !notes[1].StartupComplete || notes[1].StartupInputEnabled || notes[1].MessageID != "startup-card" {
+		t.Fatalf("startup completion = %#v", notes)
+	}
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("queued input not released")
+	}
+	if rt.discardingStartupNotifications() {
+		t.Fatal("still starting")
+	}
+}
+
 func TestAidenStartupRecognizesFramedComposerWithoutCursor(t *testing.T) {
 	for _, test := range []struct {
 		name, snapshot, source, kind string

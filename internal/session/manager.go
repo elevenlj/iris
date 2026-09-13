@@ -2782,6 +2782,41 @@ func startupAgentComposerReady(snapshot, source, agentKind string) bool {
 			return true
 		}
 	}
+	// Claude's alternate-screen composer can place the hardware cursor on an
+	// empty input row above the suggestion. Recognize the enclosing input frame,
+	// not just the row containing the visible prompt marker.
+	if agentKind == "claude" && metadata.valid && isBufferSnapshotContinuityBase(metadata.base) {
+		for bottom := len(lines) - 2; bottom >= 2; bottom-- {
+			if !isPureHorizontalRuleLine(lines[bottom]) {
+				continue
+			}
+			footer := strings.ToLower(strings.TrimSpace(strings.Join(lines[bottom+1:], "\n")))
+			footer = strings.TrimLeft(footer, "⏵⏸▶▷> ")
+			if !(strings.HasPrefix(footer, "bypass permissions on (shift+tab to cycle)") ||
+				strings.HasPrefix(footer, "accept edits on (shift+tab to cycle)") ||
+				strings.HasPrefix(footer, "plan mode on (shift+tab to cycle)")) {
+				return false
+			}
+			// A modal or shell prompt below an old composer is not readiness.
+			if strings.Contains(footer, "\n") {
+				return false
+			}
+			top := bottom - 1
+			for top >= 0 && !isPureHorizontalRuleLine(lines[top]) {
+				top--
+			}
+			if top < 0 || cursorLine <= top || cursorLine >= bottom {
+				return false
+			}
+			for _, line := range lines[top+1 : bottom] {
+				trimmed := strings.TrimSpace(line)
+				if _, prompt := trimPromptPrefix(trimmed, "❯"); prompt {
+					return true
+				}
+			}
+			return false
+		}
+	}
 	// Native Aiden's Ink UI parks its hidden cursor below the composer/footer.
 	// Only accept its framed composer, not a welcome banner or a historical prompt.
 	if agentKind != "aiden" || !metadata.valid || !strings.HasSuffix(metadata.base, ":buffer") {
