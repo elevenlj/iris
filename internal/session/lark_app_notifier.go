@@ -1365,61 +1365,39 @@ func (n *LarkAppNotifier) sendUpdateTip(note WaitingNotification) error {
 		return err
 	}
 	uuid := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%d", n.appID, note.MessageID, note.UpdateNo))))[:32]
-	inputID := strings.TrimSpace(note.InputMessageID)
-	if inputID == "" {
-		inputID = note.TopicRootID
+	cardID := strings.TrimSpace(note.MessageID)
+	if cardID == "" {
+		return errors.New("completion tip requires an answer card ID")
 	}
-	if inputID != "" {
-		req := larkim.NewReplyMessageReqBuilder().MessageId(inputID).Body(
-			larkim.NewReplyMessageReqBodyBuilder().MsgType("text").Content(content).ReplyInThread(note.TopicRootID != "").Uuid(uuid).Build(),
-		).Build()
-		call := func(token string) (*larkim.ReplyMessageResp, error) {
-			if token == "" {
-				return n.client.Im.V1.Message.Reply(context.Background(), req)
-			}
-			if n.uncachedClient == nil {
-				return nil, errors.New("lark uncached client is not configured")
-			}
-			return n.uncachedClient.Im.V1.Message.Reply(context.Background(), req, larkcore.WithTenantAccessToken(token))
-		}
-		token := n.tenantTokenSnapshot()
-		resp, err := call(token)
-		if err == nil && resp != nil && invalidLarkAccessTokenCode(resp.Code) {
-			token, err = n.refreshTenantToken(token)
-			if err == nil {
-				resp, err = call(token)
-			}
-		}
-		if err != nil {
-			return err
-		}
-		if resp == nil {
-			return errors.New("empty lark completion reply response")
-		}
-		if !resp.Success() {
-			return fmt.Errorf("lark completion reply API returned code %d: %s", resp.Code, resp.Msg)
-		}
-		return nil
-	}
-	// Terminal-only inputs have no original Feishu message; never quote a stale one.
-	receiveID := strings.TrimSpace(note.ChatID)
-	receiveIDType := "chat_id"
-	if receiveID == "" {
-		receiveID = strings.TrimSpace(n.receiveID)
-		receiveIDType = "open_id"
-	}
-	if receiveID == "" {
-		return nil
-	}
-	req := larkim.NewCreateMessageReqBuilder().ReceiveIdType(receiveIDType).Body(
-		larkim.NewCreateMessageReqBodyBuilder().ReceiveId(receiveID).MsgType("text").Content(content).Uuid(uuid).Build(),
+
+	req := larkim.NewReplyMessageReqBuilder().MessageId(cardID).Body(
+		larkim.NewReplyMessageReqBodyBuilder().MsgType("text").Content(content).ReplyInThread(note.TopicRootID != "").Uuid(uuid).Build(),
 	).Build()
-	resp, err := n.createMessage(req)
+	call := func(token string) (*larkim.ReplyMessageResp, error) {
+		if token == "" {
+			return n.client.Im.V1.Message.Reply(context.Background(), req)
+		}
+		if n.uncachedClient == nil {
+			return nil, errors.New("lark uncached client is not configured")
+		}
+		return n.uncachedClient.Im.V1.Message.Reply(context.Background(), req, larkcore.WithTenantAccessToken(token))
+	}
+	token := n.tenantTokenSnapshot()
+	resp, err := call(token)
+	if err == nil && resp != nil && invalidLarkAccessTokenCode(resp.Code) {
+		token, err = n.refreshTenantToken(token)
+		if err == nil {
+			resp, err = call(token)
+		}
+	}
 	if err != nil {
 		return err
 	}
+	if resp == nil {
+		return errors.New("empty lark completion reply response")
+	}
 	if !resp.Success() {
-		return fmt.Errorf("lark completion tip message API returned code %d: %s", resp.Code, resp.Msg)
+		return fmt.Errorf("lark completion reply API returned code %d: %s", resp.Code, resp.Msg)
 	}
 	return nil
 }
@@ -1478,25 +1456,6 @@ func (n *LarkAppNotifier) patchMessage(req *larkim.PatchMessageReq) (*larkim.Pat
 	})
 }
 
-func (n *LarkAppNotifier) createMessage(req *larkim.CreateMessageReq) (*larkim.CreateMessageResp, error) {
-	return retryLarkCreateMessage(func() (*larkim.CreateMessageResp, error) {
-		if n == nil || n.client == nil {
-			return nil, errors.New("lark notifier is not configured")
-		}
-		staleToken := n.tenantTokenSnapshot()
-		resp, err := n.createLarkMessageWithToken(req, staleToken)
-		if err != nil || !larkCreateAccessTokenInvalid(resp) {
-			return resp, err
-		}
-
-		freshToken, refreshErr := n.refreshTenantToken(staleToken)
-		if refreshErr != nil {
-			return resp, fmt.Errorf("refresh lark tenant access token: %w", refreshErr)
-		}
-		return n.createLarkMessageWithToken(req, freshToken)
-	})
-}
-
 func (n *LarkAppNotifier) patchLarkMessageWithToken(req *larkim.PatchMessageReq, token string) (*larkim.PatchMessageResp, error) {
 	if token == "" {
 		return n.client.Im.V1.Message.Patch(context.Background(), req)
@@ -1507,21 +1466,7 @@ func (n *LarkAppNotifier) patchLarkMessageWithToken(req *larkim.PatchMessageReq,
 	return n.uncachedClient.Im.V1.Message.Patch(context.Background(), req, larkcore.WithTenantAccessToken(token))
 }
 
-func (n *LarkAppNotifier) createLarkMessageWithToken(req *larkim.CreateMessageReq, token string) (*larkim.CreateMessageResp, error) {
-	if token == "" {
-		return n.client.Im.V1.Message.Create(context.Background(), req)
-	}
-	if n.uncachedClient == nil {
-		return nil, errors.New("lark uncached client is not configured")
-	}
-	return n.uncachedClient.Im.V1.Message.Create(context.Background(), req, larkcore.WithTenantAccessToken(token))
-}
-
 func larkAccessTokenInvalid(resp *larkim.PatchMessageResp) bool {
-	return resp != nil && invalidLarkAccessTokenCode(resp.Code)
-}
-
-func larkCreateAccessTokenInvalid(resp *larkim.CreateMessageResp) bool {
 	return resp != nil && invalidLarkAccessTokenCode(resp.Code)
 }
 
@@ -1612,25 +1557,6 @@ func retryLarkPatchMessage(fn func() (*larkim.PatchMessageResp, error)) (*larkim
 		}
 		if resp != nil && !resp.Success() && retryableLarkCode(resp.Code) {
 			return fmt.Errorf("lark patch message API returned code %d: %s", resp.Code, resp.Msg)
-		}
-		return nil
-	})
-	return lastResp, err
-}
-
-func retryLarkCreateMessage(fn func() (*larkim.CreateMessageResp, error)) (*larkim.CreateMessageResp, error) {
-	var lastResp *larkim.CreateMessageResp
-	err := retryLarkVoid(func() error {
-		resp, err := fn()
-		lastResp = resp
-		if err != nil {
-			return err
-		}
-		if resp == nil {
-			return errors.New("lark create message API returned empty response")
-		}
-		if resp != nil && !resp.Success() && retryableLarkCode(resp.Code) {
-			return fmt.Errorf("lark create message API returned code %d: %s", resp.Code, resp.Msg)
 		}
 		return nil
 	})

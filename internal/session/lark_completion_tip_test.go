@@ -61,7 +61,7 @@ func TestBotCompletionPolicyAndTopicTargetSurviveCardRefreshAndRestart(t *testin
 						t.Fatal("human completion missing")
 					}
 					post := httpClient.posts[0]
-					if !strings.HasSuffix(post.path, "/original/reply") || post.body["reply_in_thread"] != (root != "") {
+					if !strings.HasSuffix(post.path, "/card/reply") || post.body["reply_in_thread"] != (root != "") {
 						t.Fatalf("wrong completion target: %#v", post)
 					}
 				}
@@ -93,7 +93,7 @@ func TestTopicCardCreationAndTerminalCompletionStayInTopic(t *testing.T) {
 	if err := n.sendUpdateTip(note); err != nil {
 		t.Fatal(err)
 	}
-	if len(transport.posts) != 2 || !strings.HasSuffix(transport.posts[1].path, "/om-root/reply") || transport.posts[1].body["reply_in_thread"] != true {
+	if len(transport.posts) != 2 || !strings.HasSuffix(transport.posts[1].path, "/answer-card/reply") || transport.posts[1].body["reply_in_thread"] != true {
 		t.Fatalf("terminal completion escaped topic: %#v", transport.posts)
 	}
 }
@@ -120,7 +120,7 @@ func (c *completionTipHTTPClient) Do(req *http.Request) (*http.Response, error) 
 		Body: io.NopCloser(strings.NewReader(`{"code":0,"tenant_access_token":"test-token","expire":7200,"data":{"message_id":"tip-id"}}`))}, nil
 }
 
-func TestCompletionTipRepliesWithTextAndKeepsOriginalAcrossRestart(t *testing.T) {
+func TestCompletionTipRepliesToAnswerCardAcrossRestart(t *testing.T) {
 	for _, inputID := range []string{"input-first", ""} {
 		t.Run("source="+inputID, func(t *testing.T) {
 			transport := &completionTipHTTPClient{}
@@ -151,12 +151,8 @@ func TestCompletionTipRepliesWithTextAndKeepsOriginalAcrossRestart(t *testing.T)
 				t.Fatalf("completion posts = %#v", transport.posts)
 			}
 			post := transport.posts[0]
-			if inputID != "" {
-				if !strings.HasSuffix(post.path, "/"+inputID+"/reply") || post.body["reply_in_thread"] != false {
-					t.Fatalf("quoted completion = %#v", post)
-				}
-			} else if !strings.HasSuffix(post.path, "/messages") || post.body["receive_id"] != "chat-1" {
-				t.Fatalf("unquoted completion = %#v", post)
+			if !strings.HasSuffix(post.path, "/answer-card/reply") || post.body["reply_in_thread"] != false {
+				t.Fatalf("completion must quote the answer card, got %#v", post)
 			}
 			if post.body["msg_type"] != "text" || post.body["content"] != `{"text":"任务已完成"}` {
 				t.Fatalf("completion should be plain text, got %#v", post.body)

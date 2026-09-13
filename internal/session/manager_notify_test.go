@@ -38,7 +38,7 @@ func TestWaitingNotificationRequiresReplyContent(t *testing.T) {
 	}
 }
 
-func TestCompleteAgentTurnUsesAuthenticatedHookWithIdleFallback(t *testing.T) {
+func TestCompleteAgentTurnUsesAuthenticatedHookWithoutIdleFallback(t *testing.T) {
 	manager := NewManager(nil, nil)
 	rt := &RuntimeSession{
 		manager: manager,
@@ -100,8 +100,8 @@ func TestCompleteAgentTurnUsesAuthenticatedHookWithIdleFallback(t *testing.T) {
 	rt.mu.Lock()
 	timer = rt.notifyStableTimer
 	rt.mu.Unlock()
-	if timer == nil {
-		t.Fatal("new round should retain the idle completion fallback")
+	if timer != nil {
+		t.Fatal("new Agent round must wait for its completion event, not an idle timer")
 	}
 }
 
@@ -209,13 +209,13 @@ func TestLateHookAssistantMessageCorrectsIdleFallback(t *testing.T) {
 	}
 }
 
-func TestAgentIdleFallbackDoesNotRecompleteWaitingTurn(t *testing.T) {
+func TestAgentIdleTimerCannotCompleteTurn(t *testing.T) {
 	manager := NewManager(nil, nil)
 	rt := &RuntimeSession{
 		manager: manager,
 		session: Session{
 			ID:            "sess-1",
-			Status:        StatusWaiting,
+			Status:        StatusRunning,
 			Live:          true,
 			LastMode:      SessionModeAgent,
 			LastAgentKind: "codex",
@@ -225,14 +225,14 @@ func TestAgentIdleFallbackDoesNotRecompleteWaitingTurn(t *testing.T) {
 		stateVersion:          9,
 	}
 	rt.mu.Lock()
-	rt.resetAgentIdleCompletionTimerLocked()
+	rt.resetNotifyStableTimerLocked()
 	timer := rt.notifyStableTimer
 	rt.mu.Unlock()
 	if timer != nil {
 		t.Fatal("completed Agent turn must not schedule another completion")
 	}
 	rt.notifyAfterStable(9)
-	if got := rt.Snapshot(); got.Status != StatusWaiting {
+	if got := rt.Snapshot(); got.Status != StatusRunning {
 		t.Fatalf("completed Agent turn changed status: %#v", got)
 	}
 	rt.mu.Lock()
@@ -240,6 +240,82 @@ func TestAgentIdleFallbackDoesNotRecompleteWaitingTurn(t *testing.T) {
 		t.Fatalf("completed Agent turn changed notify version to %d", rt.notifyVersion)
 	}
 	rt.mu.Unlock()
+}
+
+func TestAgentCompletionRequiresEventAndManualRefreshStillShowsTerminal(t *testing.T) {
+	for _, kind := range []string{"codex", "claude", "aiden", "custom"} {
+		t.Run(kind, func(t *testing.T) {
+			notifier := &recordingNotifier{messageID: "answer-card"}
+			manager := NewManager(nil, nil, WithNotifier(notifier), WithNotificationUpdateCoalesce(0))
+			rt := &RuntimeSession{
+				manager: manager,
+				session: Session{ID: "sess-1", Status: StatusWaiting, Live: true,
+					NotifyOnWaiting: true, LastMode: SessionModeAgent, LastAgentKind: kind, RecoveryKey: "token"},
+				lastInputText:           "hi",
+				lastNotifiedMessageID:   "answer-card",
+				lastNotifiedContent:     RunningNotificationPlaceholder,
+				notificationRunning:     true,
+				snapshotAtRoundStartSet: true,
+				visibleSnapshotVersion:  1,
+				visibleSnapshot:         "> hi\n• terminal-only answer",
+				roundReply:              []byte("> hi\n• terminal-only answer"),
+			}
+			manager.sessions[rt.session.ID] = rt
+			defer rt.Close()
+
+			rt.notifyIfStillWaitingWithMode(0, true, false)
+			if err := rt.AutoRefreshNotificationMessage("answer-card"); err != nil {
+				t.Fatal(err)
+			}
+			if notes := notifier.notes(); len(notes) != 0 {
+				t.Fatalf("terminal output without a completion event must not be pushed: %#v", notes)
+			}
+			if err := rt.RefreshNotificationMessage("answer-card"); err != nil {
+				t.Fatal(err)
+			}
+			notes := notifier.notes()
+			if len(notes) != 1 || !strings.Contains(notes[0].Content, "terminal-only answer") || !notes[0].SuppressUpdateTip {
+				t.Fatalf("manual refresh must show this round's terminal without a completion tip: %#v", notes)
+			}
+			if kind == "custom" {
+				return // No native completion hook is registered for custom commands.
+			}
+			// Even an empty event must finish a turn that was already waiting for
+			// input, without using the manually displayed terminal as its answer.
+			if _, accepted, err := manager.CompleteAgentTurn(context.Background(), rt.session.ID, "token", "", ""); err != nil || !accepted {
+				t.Fatalf("empty completion event accepted=%v err=%v", accepted, err)
+			}
+			notes = waitForNotifierNotes(t, notifier, 2)
+			if notes[1].Content != EmptyNotificationPlaceholder || notes[1].SuppressUpdateTip || notes[1].SnapshotSource != kind+"_hook:last_assistant_message" {
+				t.Fatalf("completion must use the event, never terminal fallback: %#v", notes[1])
+			}
+		})
+	}
+}
+
+func TestAgentStartupStillCompletesWithoutTurnEvent(t *testing.T) {
+	notifier := &recordingNotifier{messageID: "startup-card"}
+	manager := NewManager(nil, nil, WithNotifier(notifier))
+	released := make(chan string, 1)
+	manager.SetNotificationSentHook(func(id string) { released <- id })
+	rt := &RuntimeSession{
+		manager: manager,
+		session: Session{ID: "aiden-startup", Status: StatusRunning, Live: true, NotifyOnWaiting: true,
+			LastMode: SessionModeAgent, LastAgentKind: "aiden", LastAgentStartCommand: AidenAgentCommand},
+		startupNotifyMode: startupNotifyDiscard,
+		visibleSnapshot:   aidenReadySnapshot, visibleSnapshotSource: aidenReadySource,
+	}
+	defer rt.Close()
+	rt.notifyAfterStable(0)
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("startup readiness must still release queued input without a turn completion event")
+	}
+	notes := notifier.notes()
+	if len(notes) != 2 || !notes[1].StartupComplete || !notes[1].SuppressUpdateTip {
+		t.Fatalf("startup must finish its card without announcing task completion: %#v", notes)
+	}
 }
 
 func TestCodexModelMenuImmediatelyWaitsWithoutVerifiedHook(t *testing.T) {
@@ -1156,6 +1232,12 @@ func TestRefreshBeforeStopHookDoesNotLeakUnanchoredHistory(t *testing.T) {
 				t.Fatal(err)
 			}
 			notes := notifier.notes()
+			if tc.name == "auto" {
+				if len(notes) != 0 {
+					t.Fatalf("Agent auto refresh must not publish terminal output, got %#v", notes)
+				}
+				return
+			}
 			if len(notes) != 1 || notes[0].Content != EmptyNotificationPlaceholder {
 				t.Fatalf("refresh without an input boundary must not include history, got %#v", notes)
 			}

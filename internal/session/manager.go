@@ -1284,10 +1284,6 @@ type RuntimeEvent struct {
 	Purpose   string
 }
 
-// agentIdleCompletionFallback is a safety net for turns that cannot invoke
-// their completion hook (for example, when the user interrupts Codex).
-const agentIdleCompletionFallback = 5 * time.Second
-
 type runtimeSubscriber struct {
 	Headless bool
 }
@@ -3462,6 +3458,14 @@ func (rt *RuntimeSession) refreshStartupNotification(messageID string, refreshCo
 }
 
 func (rt *RuntimeSession) AutoRefreshNotificationMessage(messageID string, preserveUpdateNo ...int) error {
+	if rt != nil {
+		rt.mu.Lock()
+		agent := rt.session.LastMode == SessionModeAgent
+		rt.mu.Unlock()
+		if agent {
+			return nil
+		}
+	}
 	return rt.refreshNotificationMessage(messageID, false, false, preserveUpdateNo...)
 }
 
@@ -4037,11 +4041,7 @@ func (rt *RuntimeSession) HandleOutput(chunk []byte) {
 		if rt.startupNotifyMode == startupNotifySettling {
 			rt.scheduleStartupNotifyFinalLocked(defaultStartupPresetSettleDelay)
 		}
-		if rt.agentTurnHookVerified {
-			rt.resetAgentIdleCompletionTimerLocked()
-		} else {
-			rt.resetNotifyStableTimerLocked()
-		}
+		rt.resetNotifyStableTimerLocked()
 	}
 	for ch := range rt.subscribers {
 		select {
@@ -4118,7 +4118,7 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSes
 		rt.hookLastAssistantMessage = lastAssistantMessage
 	}
 	if rt.session.Status == StatusWaiting {
-		if !newAssistantMessage {
+		if !newAssistantMessage && rt.hookCompletedCurrentRound {
 			s := rt.session
 			rt.mu.Unlock()
 			if pinnedRecovery {
@@ -4131,7 +4131,6 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSes
 		rt.stopNotifyStableTimerLocked()
 		if !rt.hookCompletedCurrentRound {
 			rt.hookCompletedCurrentRound = true
-			rt.hookCompletionTipClaimed = rt.lastNotifiedMessageID != "" && !rt.notificationRunning
 		}
 		rt.notifyVersion++
 		version := rt.notifyVersion
@@ -4296,23 +4295,12 @@ func (rt *RuntimeSession) notifyStableDelayLocked() time.Duration {
 
 func (rt *RuntimeSession) resetNotifyStableTimerLocked() {
 	rt.stopNotifyStableTimerLocked()
-	if !rt.session.Live {
+	if !rt.session.Live || (rt.session.LastMode == SessionModeAgent && rt.startupNotifyMode == startupNotifyNormal) {
 		return
 	}
 	version := rt.stateVersion
 	delay := rt.notifyStableDelayLocked()
 	rt.notifyStableTimer = time.AfterFunc(delay, func() {
-		rt.notifyAfterStable(version)
-	})
-}
-
-func (rt *RuntimeSession) resetAgentIdleCompletionTimerLocked() {
-	rt.stopNotifyStableTimerLocked()
-	if !rt.session.Live || rt.session.Status != StatusRunning {
-		return
-	}
-	version := rt.stateVersion
-	rt.notifyStableTimer = time.AfterFunc(agentIdleCompletionFallback, func() {
 		rt.notifyAfterStable(version)
 	})
 }
@@ -4331,6 +4319,12 @@ func (rt *RuntimeSession) hasPendingCodexInteractionLocked() bool {
 
 func (rt *RuntimeSession) notifyAfterStable(version int64) {
 	rt.mu.Lock()
+	// Terminal silence is only a readiness signal during Agent startup, never
+	// evidence that an Agent task has finished.
+	if rt.session.LastMode == SessionModeAgent && rt.startupNotifyMode == startupNotifyNormal {
+		rt.mu.Unlock()
+		return
+	}
 	if !rt.session.Live || rt.stateVersion != version || rt.session.Status == StatusExited || rt.session.Status == StatusFailed {
 		rt.mu.Unlock()
 		return
@@ -4404,6 +4398,13 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 	if !rt.session.NotifyOnWaiting || rt.manager.notifier == nil || !rt.manager.notifier.Available() {
 		rt.mu.Unlock()
 		return
+	}
+	if !startupFallback && rt.session.LastMode == SessionModeAgent {
+		if !rt.hookCompletedCurrentRound {
+			rt.mu.Unlock()
+			return
+		}
+		requestFreshSnapshot = false
 	}
 	hasHookAssistantMessage := rt.hookAssistantNotifyContentLocked() != ""
 	rt.mu.Unlock()
@@ -4640,7 +4641,7 @@ func (rt *RuntimeSession) waitingNotificationLocked() (WaitingNotification, stri
 
 func (rt *RuntimeSession) markNotificationRunningLocked() (WaitingNotification, bool) {
 	content := strings.TrimSpace(rt.lastNotifiedContent)
-	if content == "" {
+	if content == "" && rt.session.LastMode != SessionModeAgent {
 		content = strings.TrimSpace(rt.currentNotifyContentLocked())
 	}
 	switch {
@@ -4878,6 +4879,14 @@ func (rt *RuntimeSession) waitingNotificationCandidateLocked() (WaitingNotificat
 		return WaitingNotification{}, "", false, "waiting_for_lark_chat"
 	}
 	hookContent := rt.hookAssistantNotifyContentLocked()
+	if rt.session.LastMode == SessionModeAgent {
+		if !rt.hookCompletedCurrentRound {
+			return WaitingNotification{}, "", false, "waiting_for_agent_hook"
+		}
+		if hookContent == "" {
+			hookContent = EmptyNotificationPlaceholder
+		}
+	}
 	if hookContent != "" {
 		contentHash := notifyContentHash(hookContent)
 		if contentHash == rt.lastNotifiedRoundHash {
