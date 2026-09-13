@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	maxOutputBytes                       = 512 * 1024
+	maxOutputBytes                       = 1024 * 1024
 	maxRoundBytes                        = 64 * 1024
 	defaultFastWaitingTransition         = 5 * time.Second
 	defaultConservativeWaitingTransition = 5 * time.Second

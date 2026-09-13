@@ -1437,6 +1437,21 @@ func TestInputAnchorDoesNotCrossRendererWhenBaselineChanged(t *testing.T) {
 	}
 }
 
+func TestTerminalOutputSnapshotRetainsOneMiB(t *testing.T) {
+	rt := &RuntimeSession{manager: NewManager(nil, nil), controlInputActive: true}
+	first := strings.Repeat("a", 768*1024)
+	rt.HandleOutput([]byte(first))
+	if got := string(rt.OutputSnapshot()); got != first {
+		t.Fatalf("output below 1 MiB was truncated: got %d bytes", len(got))
+	}
+	second := strings.Repeat("b", 512*1024)
+	rt.HandleOutput([]byte(second))
+	want := strings.Repeat("a", 512*1024) + second
+	if got := string(rt.OutputSnapshot()); got != want {
+		t.Fatalf("output must retain the newest 1 MiB: got %d bytes", len(got))
+	}
+}
+
 func TestTerminalOutputSnapshotIsUnaffectedByNotificationDiff(t *testing.T) {
 	rt := &RuntimeSession{
 		manager:                 NewManager(nil, nil),
