@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +36,9 @@ func (s *Server) handleSettingsSecurity(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		security := s.settingsSecurity()
+		if s.settingsAuthenticated(r, security) {
+			s.observeDashboardURL(r)
+		}
 		onboardingRequired := false
 		if s.config != nil {
 			onboardingRequired = !s.config.RuntimeConfig().OnboardingCompleted
@@ -55,6 +60,26 @@ func (s *Server) handleSettingsSecurity(w http.ResponseWriter, r *http.Request) 
 		s.handleSettingsPassword(w, r)
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+func (s *Server) observeDashboardURL(r *http.Request) {
+	observer, ok := s.config.(interface{ ObserveDashboardURL(string) error })
+	if !ok {
+		return
+	}
+	referer, err := url.Parse(r.Referer())
+	if err != nil || referer == nil || referer.User != nil || referer.Host == "" || referer.Query().Get("headless") == "1" {
+		return
+	}
+	site := r.Header.Get("Sec-Fetch-Site")
+	// HTTP on private networks may omit Fetch Metadata. In that case require
+	// the Referer host to match the actual request host, not forwarded headers.
+	if site != "same-origin" && !(site == "" && strings.EqualFold(referer.Host, r.Host)) {
+		return
+	}
+	if err := observer.ObserveDashboardURL(referer.Scheme + "://" + referer.Host); err != nil {
+		log.Printf("dashboard address detection failed: %v", err)
 	}
 }
 

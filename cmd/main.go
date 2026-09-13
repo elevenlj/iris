@@ -60,6 +60,7 @@ var defaultLarkNotifyDropLineRules = session.LarkNotifyDropLineRules{
 
 type Config struct {
 	DashboardURL                    string                                `json:"dashboard_url,omitempty"`
+	DetectedDashboardURL            string                                `json:"detected_dashboard_url,omitempty"`
 	Bots                            []httpapi.BotConfig                   `json:"bots,omitempty"`
 	Port                            string                                `json:"port"`
 	AutoStartEnabled                bool                                  `json:"auto_start_enabled"`
@@ -247,7 +248,7 @@ func run() error {
 		}),
 	)
 	mgr.SetDefaultWorkspaceDir(cfg.DefaultWorkspaceDir)
-	if err := mgr.SetDashboardURL(cfg.DashboardURL); err != nil {
+	if err := mgr.SetDashboardURL(dashboardURLForConfig(cfg)); err != nil {
 		return err
 	}
 	mgr.SetAgentConfig(defaultAgentConfig(cfg), cfg.WorkspaceOptions)
@@ -1122,7 +1123,7 @@ func validateDefaultWorkspaceDir(dir string) (string, error) {
 }
 
 func applyRuntimeConfig(cfg Config, manager *session.Manager, bridge *session.LarkReplyBridge, reconnectLark bool) error {
-	if err := manager.SetDashboardURL(cfg.DashboardURL); err != nil {
+	if err := manager.SetDashboardURL(dashboardURLForConfig(cfg)); err != nil {
 		return err
 	}
 	manager.SetWaitingTransitionDelays(time.Duration(cfg.FastWaitingTransitionMs)*time.Millisecond, time.Duration(cfg.ConservativeWaitingTransitionMs)*time.Millisecond)
@@ -1170,6 +1171,7 @@ func runtimeConfigFromConfig(cfg Config) httpapi.RuntimeConfig {
 	cfg, _ = migrateAgentDefinitions(cfg)
 	return httpapi.RuntimeConfig{
 		DashboardURL:                    cfg.DashboardURL,
+		DetectedDashboardURL:            detectedDashboardURL(cfg),
 		AutoStartEnabled:                cfg.AutoStartEnabled,
 		FastWaitingTransitionMs:         cfg.FastWaitingTransitionMs,
 		ConservativeWaitingTransitionMs: cfg.ConservativeWaitingTransitionMs,

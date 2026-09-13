@@ -945,6 +945,7 @@ function renderConfig() {
   $("cfg-lark-merge-wrapped-lines").checked = Boolean(cfg.lark_notify_merge_wrapped_lines);
   $("cfg-auto-start-enabled").checked = Boolean(cfg.auto_start_enabled);
   $("cfg-dashboard-url").value = cfg.dashboard_url || "";
+  $("cfg-dashboard-url").placeholder = cfg.detected_dashboard_url || "自动识别开发机地址";
   $("cfg-lark-app-id").value = cfg.lark_app_id || "";
   $("cfg-lark-app-secret").value = cfg.lark_app_secret || "";
   $("cfg-lark-receive-id").value = cfg.lark_notify_receive_id || "";

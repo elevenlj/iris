@@ -357,13 +357,21 @@ func (m *Manager) AgentTurnHookURL() string {
 }
 
 // Dashboard links are public-facing; Agent hooks must remain on loopback.
-func (m *Manager) SetDashboardURL(raw string) error {
+func NormalizeDashboardURL(raw string) (string, error) {
 	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
 	if raw != "" {
 		u, err := url.Parse(raw)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || strings.ContainsAny(raw, "?#") {
-			return errors.New("控制面板访问地址须为 http 或 https 地址，不能包含账号、查询参数或片段")
+			return "", errors.New("控制面板访问地址须为 http 或 https 地址，不能包含账号、查询参数或片段")
 		}
+	}
+	return raw, nil
+}
+
+func (m *Manager) SetDashboardURL(raw string) error {
+	raw, err := NormalizeDashboardURL(raw)
+	if err != nil {
+		return err
 	}
 	m.mu.Lock()
 	m.dashboardURL = raw
