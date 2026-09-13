@@ -1847,7 +1847,7 @@ func TestLarkReplyBridgeRoutesP2StartAndFollowup(t *testing.T) {
 func TestLarkReplyBridgeFollowupCreatesRunningCard(t *testing.T) {
 	resetLarkRegistryForTest()
 	launcher := &recordingLauncher{}
-	notifier := &recordingNotifier{messageID: "bot-running"}
+	notifier := &recordingNotifier{createMessageIDs: []string{"bot-start", "bot-running"}}
 	manager := NewManager(nil, launcher, WithNotifier(notifier))
 	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
 
@@ -1859,10 +1859,18 @@ func TestLarkReplyBridgeFollowupCreatesRunningCard(t *testing.T) {
 	}
 
 	notes := notifier.notes()
-	if len(notes) == 0 {
-		t.Fatal("expected an immediate running card")
+	var created []WaitingNotification
+	for _, note := range notes {
+		// Retiring the previous card is asynchronous and may arrive after the
+		// new card. Assert creation, not the ordering of unrelated patches.
+		if note.MessageID == "" {
+			created = append(created, note)
+		}
 	}
-	got := notes[len(notes)-1]
+	if len(created) != 2 {
+		t.Fatalf("expected start and follow-up cards, got %#v", notes)
+	}
+	got := created[1]
 	if got.Content != RunningNotificationPlaceholder || !got.Running {
 		t.Fatalf("running card = %#v", got)
 	}
