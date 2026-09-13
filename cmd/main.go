@@ -281,13 +281,14 @@ func run() error {
 	srv.SetBotService(bots)
 	configSvc.bots = bots
 	addr := ":" + cfg.Port
-	log.Printf("iris listening on http://localhost%s", addr)
 	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
 	actualPort := listenerPort(listener.Addr(), cfg.Port)
+	pageURL := startupBrowserURL(listener.Addr(), cfg)
+	log.Printf("iris listening on %s", pageURL)
 	record, err := newRuntimeRecord(actualPort, filepath.Dir(configPath))
 	if err != nil {
 		_ = listener.Close()
@@ -320,7 +321,7 @@ func run() error {
 	}()
 	if !opts.NoOpen && !envBool("IRIS_NO_OPEN", false) {
 		go func() {
-			if err := openBrowserURL(startupBrowserURL(listener.Addr(), actualPort)); err != nil {
+			if err := openBrowserURL(pageURL); err != nil {
 				log.Printf("failed to open Iris page: %v", err)
 			}
 		}()
@@ -365,8 +366,12 @@ func listenerPort(addr net.Addr, fallback string) string {
 	return strings.TrimSpace(fallback)
 }
 
-func startupBrowserURL(addr net.Addr, fallbackPort string) string {
-	return "http://localhost:" + listenerPort(addr, fallbackPort) + "/"
+func startupBrowserURL(addr net.Addr, cfg Config) string {
+	cfg.Port = listenerPort(addr, cfg.Port)
+	if target := dashboardURLForConfig(cfg); target != "" {
+		return strings.TrimRight(target, "/") + "/"
+	}
+	return "http://localhost:" + cfg.Port + "/"
 }
 
 func openBrowserURL(target string) error {

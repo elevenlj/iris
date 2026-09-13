@@ -121,9 +121,20 @@ func TestBrowserOpenCommandUsesPlatformLauncher(t *testing.T) {
 }
 
 func TestStartupBrowserURLUsesMainPage(t *testing.T) {
-	got := startupBrowserURL(&net.TCPAddr{Port: 8080}, "")
-	if got != "http://localhost:8080/" {
-		t.Fatalf("startup browser URL = %q", got)
+	want := detectedDashboardURL(Config{Port: "8080"})
+	if want == "" {
+		want = "http://localhost:8080"
+	}
+	got := startupBrowserURL(&net.TCPAddr{Port: 8080}, Config{Port: "9090"})
+	if got != want+"/" {
+		t.Fatalf("startup browser URL = %q, want %q", got, want+"/")
+	}
+	t.Logf("startup browser URL = %s", got)
+	for _, target := range []string{"https://iris.example.com/panel", "https://iris.example.com/panel/"} {
+		got := startupBrowserURL(nil, Config{Port: "8080", DashboardURL: target})
+		if got != "https://iris.example.com/panel/" {
+			t.Fatalf("startup browser URL must respect configured address: %q", got)
+		}
 	}
 }
 
