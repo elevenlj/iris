@@ -28,7 +28,7 @@ func (p *fakeLarkConversationProvider) LarkChatMetadata(_ context.Context, chatI
 	return p.metadata, nil
 }
 
-func (p *fakeLarkConversationProvider) LarkChatMessages(_ context.Context, chatID string, limit int) ([]LarkChatMessage, error) {
+func (p *fakeLarkConversationProvider) LarkChatMessages(_ context.Context, chatID string, limit int, threadID ...string) ([]LarkChatMessage, error) {
 	p.chatID = chatID
 	p.limit = limit
 	if p.err != nil {
@@ -127,7 +127,7 @@ func TestEnsureAgentContextSkillsWritesCodexAndClaudeSkills(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
-		for _, want := range []string{"name: iris-feishu-context", "${IRIS_SESSION_ID}", "/lark/messages?limit=50", "Do not identify, resume, or continue unfinished tasks", "you must read the latest group messages"} {
+		for _, want := range []string{"name: iris-feishu-context", "${IRIS_SESSION_ID}", "/lark/messages?limit=50", "Do not identify, resume, or continue unfinished tasks", "you must read the latest messages in this session", "&scope=group", "ONLY the current topic"} {
 			if !strings.Contains(string(content), want) {
 				t.Fatalf("%s does not contain %q", path, want)
 			}

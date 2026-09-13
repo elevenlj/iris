@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Iris</title>
+  <rect width="64" height="64" rx="15" fill="#42694c"/>
+  <path d="M29 28h11l-5 20c-.5 2 0 3 2 3h4l-1 5h-9c-6 0-8-3-6-9l4-14h-5l1-5z" fill="#fafbf7"/>
+  <path d="M33 23c-7-7-2-14 9-15 1 9-1 15-9 15z" fill="#d8e8b8"/>
+</svg>

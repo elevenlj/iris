@@ -381,7 +381,12 @@ func (s *Server) handleAgentLarkContext(w http.ResponseWriter, r *http.Request, 
 			}
 			limit = parsed
 		}
-		page, ok, err := s.manager.AgentLarkMessages(r.Context(), sessionID, token, limit)
+		scope := r.URL.Query().Get("scope")
+		if scope != "" && scope != "group" {
+			writeError(w, http.StatusBadRequest, errors.New("scope must be group or omitted"))
+			return
+		}
+		page, ok, err := s.manager.AgentLarkMessages(r.Context(), sessionID, token, limit, scope)
 		if !ok {
 			http.NotFound(w, r)
 			return

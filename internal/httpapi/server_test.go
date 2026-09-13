@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,27 @@ import (
 
 	"github.com/elevenlj/iris/internal/session"
 )
+
+func TestIrisFaviconIsEmbeddedAndLinkedOnEveryPage(t *testing.T) {
+	rec := httptest.NewRecorder()
+	NewServer(nil, "").Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/favicon.svg", nil))
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "image/svg+xml") {
+		t.Fatalf("favicon response: %d %s", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	var svg struct {
+		XMLName xml.Name
+		Title   string `xml:"title"`
+	}
+	if err := xml.Unmarshal(rec.Body.Bytes(), &svg); err != nil || svg.XMLName.Local != "svg" || svg.Title != "Iris" {
+		t.Fatalf("invalid Iris icon: %#v %v", svg, err)
+	}
+	for _, page := range []string{"index.html", "login.html", "setup-password.html"} {
+		body, err := staticFiles.ReadFile("static/" + page)
+		if err != nil || !strings.Contains(string(body), `rel="icon" type="image/svg+xml" href="/favicon.svg"`) {
+			t.Fatalf("favicon link missing from %s: %v", page, err)
+		}
+	}
+}
 
 func TestRuntimeControlRequiresLocalTokenAndStops(t *testing.T) {
 	stopped := make(chan struct{}, 1)
@@ -49,7 +71,7 @@ func (httpTestLarkProvider) LarkChatMetadata(context.Context, string) (session.L
 	return session.LarkChatMetadata{ChatName: "当前绑定群", ChatType: "group"}, nil
 }
 
-func (httpTestLarkProvider) LarkChatMessages(context.Context, string, int) ([]session.LarkChatMessage, error) {
+func (httpTestLarkProvider) LarkChatMessages(context.Context, string, int, ...string) ([]session.LarkChatMessage, error) {
 	return []session.LarkChatMessage{{MessageID: "om_latest", Text: "群里的最新讨论"}}, nil
 }
 

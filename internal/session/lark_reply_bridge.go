@@ -71,7 +71,7 @@ var workspaceSwitchToastDelay = 2 * time.Second
 const larkProcessingReactionEmoji = "THINKING"
 const defaultLarkSessionChatPrefix = "Iris · "
 const larkDisabledCardToastContent = "已失效，请点击最新卡片的按钮"
-const larkAgentContextPrompt = "请使用 iris-feishu-context 读取当前飞书群最近的消息，仅用于了解当前会话已有的对话背景。不要识别、恢复或继续任何未完成任务；完成上下文了解后，等待用户的新输入。"
+const larkAgentContextPrompt = "请使用 iris-feishu-context 读取当前飞书会话最近的消息（话题会话只读取当前话题），仅用于了解当前会话已有的对话背景。不要识别、恢复或继续任何未完成任务；完成上下文了解后，等待用户的新输入。"
 const maxLarkReferencedItems = 20
 const maxLarkReferencedTextRunes = 12000
 const maxLarkReferencedAttachments = 10
@@ -92,6 +92,7 @@ type larkRouteContext struct {
 	MessageID     string
 	ParentID      string
 	RootID        string
+	ThreadID      string
 	ChatID        string
 	ChatType      string
 	SenderOpenID  string
@@ -640,6 +641,19 @@ func (b *LarkReplyBridge) handleCardDeleteSession(ctx context.Context, value map
 		return nil, err
 	}
 	log.Printf("lark card deleted session=%s message=%s chat=%s", sessionID, openMessageID, chatID)
+	// Topics share the group's bot membership, not the main session lifecycle.
+	if sess.LarkTopicRootID != "" {
+		return larkCardToast("info", "会话已删除"), nil
+	}
+	remaining, err := b.manager.ListSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, other := range remaining {
+		if other.LarkChatID == chatID {
+			return larkCardToast("info", "会话已删除"), nil
+		}
+	}
 	if chatID != "" && b.removeBotFromChat != nil {
 		if err := b.removeBotFromChat(ctx, chatID); err != nil {
 			log.Printf("lark card deleted session but failed to remove bot from chat session=%s chat=%s: %v", sessionID, chatID, err)
@@ -900,6 +914,7 @@ func (b *LarkReplyBridge) HandleP2MessageReceive(ctx context.Context, event *lar
 		MessageID:    valueOf(msg.MessageId),
 		ParentID:     valueOf(msg.ParentId),
 		RootID:       valueOf(msg.RootId),
+		ThreadID:     valueOf(msg.ThreadId),
 		ChatID:       valueOf(msg.ChatId),
 		ChatType:     valueOf(msg.ChatType),
 		SenderOpenID: larkSenderOpenID(event.Event.Sender),
@@ -909,6 +924,7 @@ func (b *LarkReplyBridge) HandleP2MessageReceive(ctx context.Context, event *lar
 	if event.Event.Sender != nil {
 		routeCtx.SenderType = strings.TrimSpace(valueOf(event.Event.Sender.SenderType))
 	}
+	ctx = b.topicReplyContext(ctx, routeCtx)
 	routeCtx = b.prepareAssistantRoute(ctx, routeCtx, incoming)
 	if _, ignored := b.shouldIgnoreForMentionMode(ctx, routeCtx, incoming); ignored {
 		return nil
@@ -1095,7 +1111,7 @@ func (b *LarkReplyBridge) mentionModeSessionID(ctx context.Context, routeCtx lar
 	if len(parts) > 0 {
 		text = parts[0]
 	}
-	return b.resolveSessionID(ctx, text, routeCtx.ParentID, routeCtx.RootID, routeCtx.ChatID, routeCtx.ChatType)
+	return b.resolveSessionID(ctx, text, routeCtx.ParentID, routeCtx.RootID, routeCtx.ChatID, routeCtx.ChatType, routeCtx.ThreadID)
 }
 
 func (b *LarkReplyBridge) routeContextMentionsBot(ctx context.Context, routeCtx larkRouteContext) bool {
@@ -1210,6 +1226,8 @@ func (b *LarkReplyBridge) RouteIncoming(ctx context.Context, messageID, parentID
 
 func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx larkRouteContext, incoming larkIncomingMessage) (string, error) {
 	messageID, parentID, rootID := routeCtx.MessageID, routeCtx.ParentID, routeCtx.RootID
+	b.manager.messageRegistry().rememberInput(messageID, routeCtx.SenderType)
+	ctx = b.topicReplyContext(ctx, routeCtx)
 	routeCtx = b.prepareAssistantRoute(ctx, routeCtx, incoming)
 	incoming.Text = cleanLarkMentionKeys(incoming.Text, routeCtx.Mentions)
 	if sessionID, ignored := b.shouldIgnoreForMentionMode(ctx, routeCtx, incoming); ignored {
@@ -1220,6 +1238,14 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 	}
 	incoming = b.resolveReferencedIncoming(ctx, routeCtx, incoming)
 	text := cleanLarkText(incoming.Text)
+	if question, ok := parseLarkTopicCommand(text); ok {
+		return b.createTopicSession(ctx, routeCtx, question, incoming)
+	}
+	if routeCtx.ThreadID != "" {
+		if _, found := b.findTopicSession(ctx, routeCtx.ChatID, routeCtx.RootID, routeCtx.ThreadID); !found {
+			return "", b.replyLarkText(ctx, messageID, "这个话题尚未绑定 Iris 会话，请回到群里使用 /t 问题 创建话题。")
+		}
+	}
 	parts := splitLarkPipeline(text)
 	inputParts := append([]string(nil), parts...)
 	if incoming.Referenced != nil {
@@ -1242,7 +1268,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		return "", nil
 	}
 	text = parts[0]
-	if sessionID := b.resolveSessionID(ctx, text, parentID, rootID, routeCtx.ChatID, routeCtx.ChatType); sessionID != "" && b.hasPendingFiles(sessionID) {
+	if sessionID := b.resolveSessionID(ctx, text, parentID, rootID, routeCtx.ChatID, routeCtx.ChatType, routeCtx.ThreadID); sessionID != "" && b.hasPendingFiles(sessionID) {
 		rt, _, ok, err := b.ensureRouteRuntime(ctx, sessionID, routeCtx)
 		if err != nil {
 			return sessionID, err
@@ -1265,6 +1291,9 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		return sessionID, nil
 	}
 	if name, presetCodes, ok := b.parseLarkStartCommand(text); ok && routeCtx.AssistantName == "" {
+		if ctx.Value(larkTopicReplyKey{}) == true {
+			return "", b.replyLarkText(ctx, messageID, "当前话题已有独立会话。请回到群里使用 /t 创建另一个话题。")
+		}
 		s, err := b.createLarkSessionForMessage(ctx, name, routeCtx)
 		if err == nil {
 			if updated, found, updateErr := b.manager.UpdateDeveloperMode(ctx, s.ID, true); updateErr == nil && found {
@@ -1299,7 +1328,7 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		}
 		return s.ID, err
 	}
-	sessionID := b.resolveSessionID(ctx, text, parentID, rootID, routeCtx.ChatID, routeCtx.ChatType)
+	sessionID := b.resolveSessionID(ctx, text, parentID, rootID, routeCtx.ChatID, routeCtx.ChatType, routeCtx.ThreadID)
 	if routeCtx.AssistantName == "" && isStopCommand(text) {
 		if sessionID == "" {
 			if err := b.replyLarkText(ctx, messageID, "未找到会话"); err != nil {
@@ -1366,6 +1395,9 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		rt, _ = b.manager.GetRuntime(sessionID)
 	}
 	b.manager.EnsureBrowser(sessionID)
+	if err := rt.nameUntitledTopic(ctx, text); err != nil {
+		return sessionID, err
+	}
 	if b.enqueueInputIfRuntimeBusy(rt, sessionID, inputParts, routeCtx.notificationMentionOpenID(), routeCtx) {
 		b.manager.messageRegistry().remember(sessionID, messageID, parentID, rootID)
 		return sessionID, nil
@@ -1629,7 +1661,7 @@ func (b *LarkReplyBridge) routeAttachments(ctx context.Context, routeCtx larkRou
 	if len(parts) > 0 {
 		text = parts[0]
 	}
-	sessionID := b.resolveSessionID(ctx, text, parentID, rootID, routeCtx.ChatID, routeCtx.ChatType)
+	sessionID := b.resolveSessionID(ctx, text, parentID, rootID, routeCtx.ChatID, routeCtx.ChatType, routeCtx.ThreadID)
 	if sessionID == "" {
 		s, err := b.createImplicitLarkSessionForMessage(ctx, routeCtx)
 		if err != nil {
@@ -1704,6 +1736,10 @@ func (b *LarkReplyBridge) routeAttachments(ctx context.Context, routeCtx larkRou
 	}
 	origin := routeCtx
 	origin.MessageID = inputMessageID
+	if b.enqueueInputIfRuntimeBusy(rt, sessionID, append([]string{input + " " + text}, parts[1:]...), routeCtx.notificationMentionOpenID(), origin) {
+		b.manager.messageRegistry().remember(sessionID, messageID, parentID, rootID)
+		return sessionID, nil
+	}
 	b.enqueuePipeline(sessionID, parts[1:], routeCtx.notificationMentionOpenID(), origin)
 	if err := SubmitStructuredInputWithMention(rt, input+" "+text, routeCtx.notificationMentionOpenID(), inputMessageID); err != nil {
 		return sessionID, err
@@ -1847,7 +1883,7 @@ func (b *LarkReplyBridge) ensureRouteRuntime(ctx context.Context, sessionID stri
 	if err != nil || !ok || rt == nil {
 		return rt, sess, ok, err
 	}
-	if routeCtx.ChatID != "" {
+	if routeCtx.ChatID != "" && sess.LarkTopicRootID == "" {
 		b.manager.messageRegistry().rememberChat(routeCtx.ChatID, sess.ID)
 	}
 	b.recordAgentLarkContext(sess, routeCtx)
@@ -2393,7 +2429,7 @@ func (b *LarkReplyBridge) replyTextToMessage(ctx context.Context, messageID stri
 		Body(larkim.NewReplyMessageReqBodyBuilder().
 			MsgType("text").
 			Content(string(content)).
-			ReplyInThread(false).
+			ReplyInThread(ctx.Value(larkTopicReplyKey{}) == true).
 			Build()).
 		Build()
 	resp, err := b.apiClient.Im.V1.Message.Reply(ctx, req)
@@ -2801,7 +2837,16 @@ func (b *LarkReplyBridge) duplicate(messageID string) bool {
 	return false
 }
 
-func (b *LarkReplyBridge) resolveSessionID(ctx context.Context, text, parentID, rootID, chatID, chatType string) string {
+func (b *LarkReplyBridge) resolveSessionID(ctx context.Context, text, parentID, rootID, chatID, chatType string, threadID ...string) string {
+	// A normal quoted reply can have root_id without being inside a topic.
+	if len(threadID) == 0 || firstString(threadID) != "" {
+		if topic, ok := b.findTopicSession(ctx, chatID, rootID, firstString(threadID)); ok {
+			return topic.ID
+		}
+	}
+	if firstString(threadID) != "" {
+		return ""
+	}
 	if id, ok := b.manager.messageRegistry().lookupChat(chatID); ok {
 		if b.sessionIsActive(ctx, id) {
 			return id
@@ -2816,9 +2861,19 @@ func (b *LarkReplyBridge) resolveSessionID(ctx context.Context, text, parentID, 
 		}
 	}
 	if id, ok := b.manager.messageRegistry().lookup(parentID, rootID); ok {
+		if chatID != "" && len(threadID) > 0 {
+			if sess, found, _ := b.manager.GetSession(ctx, id); found && sess.LarkTopicRootID != "" {
+				return ""
+			}
+		}
 		return id
 	}
 	if m := regexp.MustCompile(`sess-\d+`).FindString(text); m != "" {
+		if chatID != "" && len(threadID) > 0 {
+			if sess, found, _ := b.manager.GetSession(ctx, m); found && sess.LarkTopicRootID != "" {
+				return ""
+			}
+		}
 		return m
 	}
 	if chatID != "" && isLarkGroupChatType(chatType) {

@@ -11,6 +11,93 @@ import (
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 )
 
+func TestBotCompletionPolicyAndTopicTargetSurviveCardRefreshAndRestart(t *testing.T) {
+	for _, senderType := range []string{"app", "user", ""} {
+		for _, root := range []string{"", "om-topic"} {
+			t.Run(senderType+root, func(t *testing.T) {
+				m := NewManager(nil, nil, WithIsolatedMessageRegistry())
+				m.messageRegistry().rememberInput("original", senderType)
+				m.messageRegistry().rememberInput("next-user", "user")
+				rt := &RuntimeSession{manager: m, session: Session{ID: "session", LarkChatID: "chat", LarkTopicRootID: root}}
+				note := rt.decorateWaitingNotification(WaitingNotification{SessionID: "session", ChatID: "chat", MessageID: "card", InputMessageID: "original", MentionOpenID: "sender", Running: true})
+				if note.BotInput != (senderType == "app") {
+					t.Fatal("wrong input origin")
+				}
+				httpClient := &completionTipHTTPClient{}
+				client := newLarkReplyAPIClient("origin-test", "secret", lark.WithHttpClient(httpClient))
+				n := NewLarkAppNotifier("origin-test", "secret", "developer", true)
+				n.client = client
+				n.cardsPath = filepath.Join(t.TempDir(), "cards.json")
+				state := n.cardState()
+				state.latest["session\x00chat"] = note
+				n.persistCards(state)
+				// A later human input must not turn the bot's old card into a human task.
+				note.InputMessageID = "next-user"
+				note.BotInput = false
+				note.TopicRootID = ""
+				if err := n.UpdateWaitingRunning(note, false); err != nil {
+					t.Fatal(err)
+				}
+				restarted := NewLarkAppNotifier("origin-test", "secret", "developer", true)
+				restarted.client, restarted.cardsPath = client, n.cardsPath
+				note.Running = false
+				note.UpdateNo = 1
+				note.Content = "回答正文 <at id=chosen></at>"
+				result, err := restarted.NotifyWaiting(note)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if senderType == "app" {
+					if result.TipSent || len(httpClient.posts) != 0 {
+						t.Fatal("bot input sent completion tip")
+					}
+					stored := restarted.cardState().latest["session\x00chat"]
+					card, err := larkNotificationCardContent(stored, "developer", true)
+					if err != nil || strings.Contains(card, "sender") || !strings.Contains(card, "chosen") {
+						t.Fatalf("incorrect mentions: %s %v", card, err)
+					}
+				} else {
+					if !result.TipSent || len(httpClient.posts) != 1 {
+						t.Fatal("human completion missing")
+					}
+					post := httpClient.posts[0]
+					if !strings.HasSuffix(post.path, "/original/reply") || post.body["reply_in_thread"] != (root != "") {
+						t.Fatalf("wrong completion target: %#v", post)
+					}
+				}
+				// No current sender state should suppress the next real human task.
+				next := rt.decorateWaitingNotification(WaitingNotification{InputMessageID: "next-user"})
+				if next.BotInput || next.SuppressUpdateTip {
+					t.Fatal("bot policy leaked into next input")
+				}
+			})
+		}
+	}
+}
+
+func TestTopicCardCreationAndTerminalCompletionStayInTopic(t *testing.T) {
+	transport := &completionTipHTTPClient{}
+	previous := http.DefaultTransport
+	http.DefaultTransport = cardTestTransport(transport.Do)
+	defer func() { http.DefaultTransport = previous }()
+	n := NewLarkAppNotifier("topic-card", "secret", "developer", false)
+	n.client = newLarkReplyAPIClient("topic-card", "secret", lark.WithHttpClient(transport))
+	note := WaitingNotification{SessionID: "session", Name: "topic", ChatID: "chat", TopicRootID: "om-root", Content: "正文"}
+	if _, err := n.createWaiting(note, `{"elements":[]}`); err != nil {
+		t.Fatal(err)
+	}
+	if len(transport.posts) != 1 || !strings.HasSuffix(transport.posts[0].path, "/om-root/reply") || transport.posts[0].body["reply_in_thread"] != true {
+		t.Fatalf("card escaped topic: %#v", transport.posts)
+	}
+	note.MessageID = "answer-card"
+	if err := n.sendUpdateTip(note); err != nil {
+		t.Fatal(err)
+	}
+	if len(transport.posts) != 2 || !strings.HasSuffix(transport.posts[1].path, "/om-root/reply") || transport.posts[1].body["reply_in_thread"] != true {
+		t.Fatalf("terminal completion escaped topic: %#v", transport.posts)
+	}
+}
+
 type completionTipHTTPClient struct {
 	posts []struct {
 		path string

@@ -30,6 +30,8 @@ type Session struct {
 	PeerSessionID          string    `json:"peer_session_id,omitempty"`
 	BridgeEnabled          bool      `json:"bridge_enabled,omitempty"`
 	LarkChatID             string    `json:"lark_chat_id,omitempty"`
+	LarkTopicRootID        string    `json:"lark_topic_root_id,omitempty"`
+	LarkThreadID           string    `json:"lark_thread_id,omitempty"`
 	LarkMentionModeEnabled bool      `json:"lark_mention_mode_enabled,omitempty"`
 	AssistantModeEnabled   bool      `json:"assistant_mode_enabled,omitempty"`
 	DeveloperModeEnabled   bool      `json:"developer_mode_enabled,omitempty"`
@@ -84,6 +86,8 @@ type WaitingNotification struct {
 	MessageID            string
 	InputMessageID       string
 	ChatID               string
+	TopicRootID          string
+	BotInput             bool
 	MentionOpenID        string
 	UpdateNo             int
 	Running              bool

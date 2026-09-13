@@ -204,7 +204,7 @@ func stopRuntime(record runtimeRecord) error {
 }
 
 var launchRuntimeProcess = func(record runtimeRecord) error {
-	cmd := exec.Command(record.Executable, "--no-open", "--port", record.Port, "--config-dir", record.ConfigDir)
+	cmd := exec.Command(record.Executable, "--port", record.Port, "--config-dir", record.ConfigDir)
 	configureDetachedCommand(cmd)
 	if err := cmd.Start(); err != nil {
 		return err

@@ -36,6 +36,40 @@ func TestSQLitePersistsLarkContactBindings(t *testing.T) {
 	}
 }
 
+func TestSQLitePersistsTopicBindingAcrossReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "topic.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	sess := session.Session{ID: "topic", Name: "[话题] 群 · 问题", Status: session.StatusWaiting, Live: true, CreatedAt: now, UpdatedAt: now, LarkChatID: "chat", LarkTopicRootID: "root", LarkThreadID: "thread"}
+	if err := s.CreateSession(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	sess.Name = "[话题] 群 · 新标题"
+	if err := s.UpdateSession(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	got, ok, err := s.GetSession(ctx, sess.ID)
+	if err != nil || !ok || got.LarkTopicRootID != "root" || got.LarkThreadID != "thread" || got.LarkChatID != "chat" || got.Name != sess.Name {
+		t.Fatalf("topic binding lost: %#v %v", got, err)
+	}
+	list, err := s.ListSessions(ctx)
+	if err != nil || len(list) != 1 || list[0].LarkThreadID != "thread" {
+		t.Fatalf("topic list lost binding: %#v %v", list, err)
+	}
+}
+
 func TestSQLiteSessionLifecycle(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

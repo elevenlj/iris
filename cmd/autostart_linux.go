@@ -23,7 +23,7 @@ func installAutoStart(spec autoStartSpec) error {
 	if err != nil {
 		return err
 	}
-	args := []string{spec.Binary, "--no-open", "--port", spec.Port, "--config-dir", spec.ConfigDir}
+	args := []string{spec.Binary, "--port", spec.Port, "--config-dir", spec.ConfigDir}
 	quoted := make([]string, 0, len(args))
 	for _, arg := range args {
 		quoted = append(quoted, systemdQuote(arg))

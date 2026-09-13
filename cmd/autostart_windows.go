@@ -9,7 +9,7 @@ import (
 )
 
 func installAutoStart(spec autoStartSpec) error {
-	command := `cmd.exe /D /S /C "set \"IRIS_HOME=` + spec.DataDir + `\" && ` + windowsQuote(spec.Binary) + " --no-open --port " + windowsQuote(spec.Port) + " --config-dir " + windowsQuote(spec.ConfigDir) + `"`
+	command := `cmd.exe /D /S /C "set \"IRIS_HOME=` + spec.DataDir + `\" && ` + windowsQuote(spec.Binary) + " --port " + windowsQuote(spec.Port) + " --config-dir " + windowsQuote(spec.ConfigDir) + `"`
 	output, err := exec.Command("schtasks", "/Create", "/TN", "Iris", "/SC", "ONLOGON", "/TR", command, "/F").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("schtasks create: %w: %s", err, strings.TrimSpace(string(output)))

@@ -466,26 +466,34 @@ func (m *Manager) sessionEnded(sessionID string) {
 }
 
 func (m *Manager) CreateSession(ctx context.Context, name string) (Session, error) {
+	return m.createSession(ctx, name, Session{LastCWD: m.defaultSessionWorkspaceDir()}, m.defaultAgentSnapshot())
+}
+
+func (m *Manager) createSession(ctx context.Context, name string, seed Session, agent AgentConfig) (Session, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Session{}, errors.New("session name is required")
 	}
-	workspaceDir := m.defaultSessionWorkspaceDir()
+	workspaceDir := seed.LastCWD
 	now := time.Now().UTC()
 	id, err := m.nextSessionID(ctx)
 	if err != nil {
 		return Session{}, err
 	}
 	sess := Session{
-		ID:          id,
-		Name:        name,
-		Status:      StatusRunning,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		Live:        true,
-		RecoveryKey: newRecoveryKey(),
-		LastMode:    SessionModeShell,
-		LastCWD:     workspaceDir,
+		ID:                   id,
+		Name:                 name,
+		Status:               StatusRunning,
+		CreatedAt:            now,
+		UpdatedAt:            now,
+		Live:                 true,
+		RecoveryKey:          newRecoveryKey(),
+		LastMode:             SessionModeShell,
+		LastCWD:              workspaceDir,
+		LarkChatID:           seed.LarkChatID,
+		LarkTopicRootID:      seed.LarkTopicRootID,
+		LarkThreadID:         seed.LarkThreadID,
+		DeveloperModeEnabled: seed.DeveloperModeEnabled,
 	}
 	handle, err := m.launcher.Launch(context.Background())
 	if err != nil {
@@ -495,7 +503,6 @@ func (m *Manager) CreateSession(ctx context.Context, name string) (Session, erro
 		sess.ExitCode = &code
 		return sess, err
 	}
-	agent := m.defaultAgentSnapshot()
 	startupMode := startupNotifyNormal
 	if agent.Command != "" {
 		startupMode = startupNotifyDiscard
@@ -525,7 +532,7 @@ func (m *Manager) CreateSession(ctx context.Context, name string) (Session, erro
 	rt.runRecoveryEnvironmentSetup()
 	rt.runPreStartCommand()
 	if agent.Command != "" {
-		workspaceShellPath := m.defaultSessionWorkspaceShellPath()
+		workspaceShellPath := shellQuote(workspaceDir)
 		_, _ = rt.terminal.Write([]byte("mkdir -p " + workspaceShellPath + "\r"))
 		rt.RecordShellCommandForRecovery("cd " + shellQuote(workspaceDir))
 		_, _ = rt.terminal.Write([]byte("cd " + workspaceShellPath + "\r"))
@@ -1053,7 +1060,7 @@ func (m *Manager) BindLarkChat(ctx context.Context, id string, chatID string) (S
 		if m.store != nil {
 			err = m.store.UpdateSession(ctx, s)
 		}
-		if err == nil && chatID != "" {
+		if err == nil && chatID != "" && s.LarkTopicRootID == "" {
 			m.messageRegistry().rememberChat(chatID, id)
 		}
 		return s, true, err
@@ -1071,7 +1078,7 @@ func (m *Manager) BindLarkChat(ctx context.Context, id string, chatID string) (S
 			return s, true, err
 		}
 	}
-	if chatID != "" {
+	if chatID != "" && s.LarkTopicRootID == "" {
 		m.messageRegistry().rememberChat(chatID, id)
 	}
 	return s, true, nil
@@ -1085,7 +1092,7 @@ func (m *Manager) FindSessionByLarkChatID(ctx context.Context, chatID string) (S
 	m.mu.RLock()
 	for _, rt := range m.sessions {
 		s := rt.Snapshot()
-		if s.LarkChatID == chatID && s.Live && s.Status != StatusExited && s.Status != StatusFailed {
+		if s.LarkChatID == chatID && s.LarkTopicRootID == "" && s.Live && s.Status != StatusExited && s.Status != StatusFailed {
 			m.messageRegistry().rememberChat(chatID, s.ID)
 			m.mu.RUnlock()
 			return s, true, nil
@@ -1100,7 +1107,7 @@ func (m *Manager) FindSessionByLarkChatID(ctx context.Context, chatID string) (S
 		return Session{}, false, err
 	}
 	for _, s := range list {
-		if s.LarkChatID == chatID && s.Live && s.Status != StatusExited && s.Status != StatusFailed {
+		if s.LarkChatID == chatID && s.LarkTopicRootID == "" && s.Live && s.Status != StatusExited && s.Status != StatusFailed {
 			m.messageRegistry().rememberChat(chatID, s.ID)
 			return s, true, nil
 		}
@@ -4820,6 +4827,12 @@ func (rt *RuntimeSession) decorateWaitingNotification(note WaitingNotification) 
 	}
 	sess := rt.Snapshot()
 	note.DeveloperModeEnabled = sess.DeveloperModeEnabled
+	note.TopicRootID = sess.LarkTopicRootID
+	// Origin belongs to the input, not the latest sender in this session.
+	if rt.manager.messageRegistry().isBotInput(note.InputMessageID) {
+		note.BotInput = true
+		note.MentionOpenID = ""
+	}
 	note.AssistantModeEnabled = sess.AssistantModeEnabled
 	note.AssistantName = rt.NotificationAssistantName()
 	note.AgentKind = sess.LastAgentKind

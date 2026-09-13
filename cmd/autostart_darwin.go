@@ -23,7 +23,7 @@ func installAutoStart(spec autoStartSpec) error {
 		return err
 	}
 	logPath := filepath.Join(instanceDataDir(spec.DataDir, spec.Port), "log", "autostart.log")
-	args := []string{spec.Binary, "--no-open", "--port", spec.Port, "--config-dir", spec.ConfigDir}
+	args := []string{spec.Binary, "--port", spec.Port, "--config-dir", spec.ConfigDir}
 	argXML := ""
 	for _, arg := range args {
 		argXML += "\n      <string>" + html.EscapeString(arg) + "</string>"

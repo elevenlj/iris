@@ -4383,6 +4383,7 @@ func resetLarkRegistryForTest() {
 	defaultLarkMessageRegistry.messageToSession = make(map[string]string)
 	defaultLarkMessageRegistry.latestSessionID = ""
 	defaultLarkMessageRegistry.chatToSession = make(map[string]string)
+	defaultLarkMessageRegistry.botInputs = make(map[string]bool)
 }
 
 func p2MessageWithChat(messageID, parentID, rootID, messageType, content, chatType, chatID, openID string) *larkim.P2MessageReceiveV1 {

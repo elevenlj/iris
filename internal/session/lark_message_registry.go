@@ -9,6 +9,25 @@ type LarkMessageRegistry struct {
 	messageToSession map[string]string
 	latestSessionID  string
 	chatToSession    map[string]string
+	botInputs        map[string]bool
+}
+
+func (r *LarkMessageRegistry) rememberInput(messageID, senderType string) {
+	if messageID == "" || senderType == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.botInputs == nil {
+		r.botInputs = make(map[string]bool)
+	}
+	r.botInputs[messageID] = senderType != "" && senderType != "user"
+}
+
+func (r *LarkMessageRegistry) isBotInput(messageID string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.botInputs[messageID]
 }
 
 func (r *LarkMessageRegistry) remember(sessionID string, messageIDs ...string) {

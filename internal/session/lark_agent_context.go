@@ -51,6 +51,8 @@ type LarkAgentContext struct {
 	ChatID            string    `json:"chat_id"`
 	ChatName          string    `json:"chat_name"`
 	ChatType          string    `json:"chat_type,omitempty"`
+	TopicRootID       string    `json:"topic_root_id,omitempty"`
+	ThreadID          string    `json:"thread_id,omitempty"`
 	LatestMessageID   string    `json:"latest_message_id,omitempty"`
 	LatestParentID    string    `json:"latest_parent_id,omitempty"`
 	LatestRootID      string    `json:"latest_root_id,omitempty"`
@@ -67,7 +69,7 @@ type LarkChatMessagePage struct {
 
 type LarkConversationProvider interface {
 	LarkChatMetadata(context.Context, string) (LarkChatMetadata, error)
-	LarkChatMessages(context.Context, string, int) ([]LarkChatMessage, error)
+	LarkChatMessages(context.Context, string, int, ...string) ([]LarkChatMessage, error)
 }
 
 func (m *Manager) SetLarkConversationProvider(provider LarkConversationProvider) {
@@ -133,6 +135,8 @@ func (m *Manager) AgentLarkContext(ctx context.Context, sessionID, token string)
 	current.SessionID = sess.ID
 	current.SessionName = sess.Name
 	current.ChatID = chatID
+	current.TopicRootID = sess.LarkTopicRootID
+	current.ThreadID = sess.LarkThreadID
 	if current.ChatName == "" {
 		current.ChatName = sess.Name
 	}
@@ -152,7 +156,7 @@ func (m *Manager) AgentLarkContext(ctx context.Context, sessionID, token string)
 	return current, true, nil
 }
 
-func (m *Manager) AgentLarkMessages(ctx context.Context, sessionID, token string, limit int) (LarkChatMessagePage, bool, error) {
+func (m *Manager) AgentLarkMessages(ctx context.Context, sessionID, token string, limit int, scope ...string) (LarkChatMessagePage, bool, error) {
 	current, ok, err := m.AgentLarkContext(ctx, sessionID, token)
 	if err != nil || !ok {
 		return LarkChatMessagePage{}, ok, err
@@ -169,7 +173,11 @@ func (m *Manager) AgentLarkMessages(ctx context.Context, sessionID, token string
 	if provider == nil {
 		return LarkChatMessagePage{}, true, ErrLarkContextUnavailable
 	}
-	messages, err := provider.LarkChatMessages(ctx, current.ChatID, limit)
+	threadID := current.ThreadID
+	if firstString(scope) == "group" {
+		threadID = ""
+	}
+	messages, err := provider.LarkChatMessages(ctx, current.ChatID, limit, threadID)
 	if err != nil {
 		return LarkChatMessagePage{}, true, err
 	}
@@ -220,7 +228,7 @@ func (b *LarkReplyBridge) fetchLarkChatMetadata(ctx context.Context, chatID stri
 	return metadata, nil
 }
 
-func (b *LarkReplyBridge) LarkChatMessages(ctx context.Context, chatID string, limit int) ([]LarkChatMessage, error) {
+func (b *LarkReplyBridge) LarkChatMessages(ctx context.Context, chatID string, limit int, threadID ...string) ([]LarkChatMessage, error) {
 	chatID = strings.TrimSpace(chatID)
 	if b == nil || b.apiClient == nil || chatID == "" {
 		return nil, ErrLarkContextUnavailable
@@ -231,9 +239,16 @@ func (b *LarkReplyBridge) LarkChatMessages(ctx context.Context, chatID string, l
 	if limit > 100 {
 		limit = 100
 	}
+	containerType, containerID := "chat", chatID
+	if firstString(threadID) != "" {
+		containerType, containerID = "thread", firstString(threadID)
+		if limit > 50 {
+			limit = 50
+		}
+	}
 	req := larkim.NewListMessageReqBuilder().
-		ContainerIdType("chat").
-		ContainerId(chatID).
+		ContainerIdType(containerType).
+		ContainerId(containerID).
 		SortType("ByCreateTimeDesc").
 		PageSize(limit).
 		Build()

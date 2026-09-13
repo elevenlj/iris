@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -214,6 +215,8 @@ func (n *LarkAppNotifier) NotifyWaiting(note WaitingNotification) (WaitingNotifi
 	// Keep the input bound to this card, including after restart or a later input.
 	if note.MessageID != "" && note.MessageID == previous.MessageID {
 		note.InputMessageID = previous.InputMessageID
+		note.BotInput = previous.BotInput
+		note.TopicRootID = previous.TopicRootID
 	}
 	if state.recalled[note.MessageID] {
 		return WaitingNotificationResult{MessageID: note.MessageID, Updated: true}, nil
@@ -519,6 +522,9 @@ func larkTerminalInteractionHeadingElement(title string) map[string]any {
 }
 
 func larkNotificationMentionID(note WaitingNotification, receiveID string) string {
+	if note.BotInput {
+		return ""
+	}
 	if id := strings.TrimSpace(note.MentionOpenID); id != "" {
 		return id
 	}
@@ -1190,12 +1196,19 @@ func (n *LarkAppNotifier) createWaiting(note WaitingNotification, content string
 	if receiveID == "" {
 		return WaitingNotificationResult{}, errors.New("lark notification receiver is not configured")
 	}
-	payload, _ := json.Marshal(map[string]any{
+	body := map[string]any{
 		"receive_id": receiveID,
 		"msg_type":   "interactive",
 		"content":    string(content),
-	})
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type="+receiveIDType, bytes.NewReader(payload))
+	}
+	endpoint := "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=" + receiveIDType
+	if note.TopicRootID != "" {
+		delete(body, "receive_id")
+		body["reply_in_thread"] = true
+		endpoint = "https://open.feishu.cn/open-apis/im/v1/messages/" + url.PathEscape(note.TopicRootID) + "/reply"
+	}
+	payload, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return WaitingNotificationResult{}, err
 	}
@@ -1246,7 +1259,7 @@ func (n *LarkAppNotifier) updateWaiting(note WaitingNotification, content string
 		return WaitingNotificationResult{}, fmt.Errorf("lark patch message API returned code %d: %s", resp.Code, resp.Msg)
 	}
 	tipSent := false
-	if note.UpdateNo > 0 && !note.SuppressUpdateTip {
+	if note.UpdateNo > 0 && !note.SuppressUpdateTip && !note.BotInput {
 		if err := n.sendUpdateTipOnce(note); err == nil {
 			tipSent = true
 		}
@@ -1265,6 +1278,12 @@ func (n *LarkAppNotifier) UpdateWaitingRunning(note WaitingNotification, running
 	state := n.cardState()
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	key := note.SessionID + "\x00" + note.ChatID
+	if previous := state.latest[key]; previous.MessageID == note.MessageID {
+		note.InputMessageID = previous.InputMessageID
+		note.BotInput = previous.BotInput
+		note.TopicRootID = previous.TopicRootID
+	}
 	if state.recalled[note.MessageID] {
 		return nil
 	}
@@ -1291,9 +1310,7 @@ func (n *LarkAppNotifier) UpdateWaitingRunning(note WaitingNotification, running
 	if !note.Disabled {
 		n.messageRegistry().remember(note.SessionID, note.MessageID)
 	}
-	key := note.SessionID + "\x00" + note.ChatID
 	if !note.Disabled && state.latest[key].MessageID == note.MessageID {
-		note.InputMessageID = state.latest[key].InputMessageID
 		state.latest[key] = note
 		n.persistCards(state)
 	}
@@ -1340,14 +1357,21 @@ func (n *LarkAppNotifier) sendUpdateTipOnce(note WaitingNotification) error {
 }
 
 func (n *LarkAppNotifier) sendUpdateTip(note WaitingNotification) error {
+	if note.SuppressUpdateTip || note.BotInput {
+		return nil
+	}
 	content, err := larkUpdateTipTextContent(larkNotificationMentionID(note, n.receiveID), n.mention)
 	if err != nil {
 		return err
 	}
 	uuid := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%d", n.appID, note.MessageID, note.UpdateNo))))[:32]
-	if inputID := strings.TrimSpace(note.InputMessageID); inputID != "" {
+	inputID := strings.TrimSpace(note.InputMessageID)
+	if inputID == "" {
+		inputID = note.TopicRootID
+	}
+	if inputID != "" {
 		req := larkim.NewReplyMessageReqBuilder().MessageId(inputID).Body(
-			larkim.NewReplyMessageReqBodyBuilder().MsgType("text").Content(content).ReplyInThread(false).Uuid(uuid).Build(),
+			larkim.NewReplyMessageReqBodyBuilder().MsgType("text").Content(content).ReplyInThread(note.TopicRootID != "").Uuid(uuid).Build(),
 		).Build()
 		call := func(token string) (*larkim.ReplyMessageResp, error) {
 			if token == "" {
