@@ -52,6 +52,44 @@ func TestAidenStartupRecognizesFramedComposerWithoutCursor(t *testing.T) {
 	}
 }
 
+func TestClaudeTrustMenuDoesNotReleaseStartupInput(t *testing.T) {
+	for _, command := range []string{ClaudeAgentCommand, AidenClaudeAgentCommand} {
+		for _, option := range []string{"No, exit", "Yes, I trust this folder", "1. Yes, I trust this folder"} {
+			snapshot := "Accessing workspace: /tmp/project\nQuick safety check: Is this a project you created or one you trust?\n❯ " + option + "\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel"
+			source := strings.Replace(aidenReadySource, "cursor_line=-1", "cursor_line=2", 1)
+			kind := agentKindForCommand(command, "custom")
+			if startupAgentComposerReady(snapshot, source, kind) {
+				t.Fatalf("trust menu treated as composer: %s / %s", command, option)
+			}
+			// Historical trust text must not block an actual composer after approval.
+			if !startupAgentComposerReady(snapshot+"\n❯ ", strings.Replace(source, "cursor_line=2", "cursor_line=5", 1), kind) {
+				t.Fatal("real composer blocked by old trust text")
+			}
+		}
+	}
+}
+
+func TestClaudeTrustMenuRemainsVisibleWithoutReleasingQueuedMessage(t *testing.T) {
+	notifier := &recordingNotifier{messageID: "trust-card"}
+	m := NewManager(nil, nil, WithNotifier(notifier))
+	released := false
+	m.SetNotificationSentHook(func(string) { released = true })
+	rt := &RuntimeSession{manager: m,
+		session:           Session{ID: "claude-trust", Live: true, NotifyOnWaiting: true, Status: StatusWaiting, LastMode: SessionModeAgent, LastAgentKind: "claude", LastAgentStartCommand: AidenClaudeAgentCommand},
+		startupNotifyMode: startupNotifyDiscard, notifyVersion: 1,
+		visibleSnapshot:       "Accessing workspace: /tmp/project\n❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel",
+		visibleSnapshotSource: strings.Replace(aidenReadySource, "cursor_line=-1", "cursor_line=1", 1),
+	}
+	rt.notifyIfStillWaitingForInteraction(1)
+	if released || !rt.discardingStartupNotifications() {
+		t.Fatal("trust prompt released queued message")
+	}
+	notes := notifier.notes()
+	if len(notes) == 0 || notes[len(notes)-1].StartupComplete || !strings.Contains(notes[len(notes)-1].Content, "Yes, I trust this folder") {
+		t.Fatalf("trust prompt not shown: %#v", notes)
+	}
+}
+
 func TestAidenStartupCompletesExistingCardAndReleasesQueue(t *testing.T) {
 	notifier := &recordingNotifier{createMessageIDs: []string{"startup-card"}}
 	m := NewManager(nil, nil, WithNotifier(notifier))

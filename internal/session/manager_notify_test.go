@@ -1240,7 +1240,7 @@ func TestRefreshNotificationMessageUsesCurrentRoundSnapshot(t *testing.T) {
 	}
 }
 
-func TestRefreshBeforeStopHookDoesNotLeakUnanchoredHistory(t *testing.T) {
+func TestRefreshBeforeStopHookOnlyManualAllowsUnanchoredTail(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		refresh func(*RuntimeSession) error
@@ -1269,8 +1269,8 @@ func TestRefreshBeforeStopHookDoesNotLeakUnanchoredHistory(t *testing.T) {
 				}
 				return
 			}
-			if len(notes) != 1 || notes[0].Content != EmptyNotificationPlaceholder {
-				t.Fatalf("refresh without an input boundary must not include history, got %#v", notes)
+			if len(notes) != 1 || notes[0].Content != rt.visibleSnapshot {
+				t.Fatalf("explicit refresh without an input boundary must show bounded terminal history, got %#v", notes)
 			}
 		})
 	}
@@ -3897,7 +3897,7 @@ func TestManualRefreshEmptyAnchorReturnsConfiguredLastOneHundredLines(t *testing
 	}
 	rt := &RuntimeSession{
 		manager:                NewManager(nil, nil, WithNotifier(notifier)),
-		session:                Session{ID: "sess-1", Name: "A", Status: StatusWaiting, Live: true, NotifyOnWaiting: true},
+		session:                Session{ID: "sess-1", Name: "A", Status: StatusWaiting, Live: true, NotifyOnWaiting: true, LastMode: SessionModeAgent, LastAgentKind: "claude"},
 		lastInputText:          "missing anchor input",
 		lastNotifiedMessageID:  "bot-card",
 		visibleSnapshot:        strings.Join(lines, "\n"),

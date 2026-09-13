@@ -2752,7 +2752,14 @@ func startupAgentComposerReady(snapshot, source, agentKind string) bool {
 	cursorLine := metadata.cursorLine
 	lines := splitVisibleLines(snapshot)
 	if cursorLine >= 0 && cursorLine < len(lines) {
-		if _, ready := submittedInputPromptText(lines[cursorLine]); ready {
+		if prompt, ready := submittedInputPromptText(lines[cursorLine]); ready {
+			// Claude's trust menu uses the same cursor marker as its composer.
+			// Releasing queued input here would submit the default "No, exit".
+			option := strings.ToLower(prompt)
+			if agentKind == "claude" && strings.Contains(strings.ToLower(snapshot), "trust this folder") &&
+				(strings.Contains(option, "no, exit") || strings.Contains(option, "yes, i trust this folder")) {
+				return false
+			}
 			return true
 		}
 	}
@@ -3602,13 +3609,14 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 	hasSnapshotContent := !preserveContent && content != ""
 	hasContent := content != ""
 	usedTailFallback := false
-	if !hasContent && !roundOnlyRefresh {
+	if !hasContent && (!roundOnlyRefresh || suppressUpdateTip) {
 		rt.mu.Lock()
 		fallbackContent := pickLarkNotifyFallbackTailContent(rt.visibleSnapshot)
 		if suppressUpdateTip {
 			fallbackContent = pickLarkManualRefreshFallbackTailContent(rt.visibleSnapshot)
+		} else {
+			fallbackContent = rt.cleanLarkNotifyContentForAgentLocked(fallbackContent)
 		}
-		fallbackContent = rt.cleanLarkNotifyContentForAgentLocked(fallbackContent)
 		fallbackContent = strings.TrimSpace(fallbackContent)
 		rt.mu.Unlock()
 		if fallbackContent != "" {
@@ -3641,7 +3649,7 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 	if len(preserveUpdateNo) > 0 && preserveUpdateNo[0] > 0 {
 		updateNo = preserveUpdateNo[0]
 	}
-	if !roundOnlyRefresh {
+	if !roundOnlyRefresh && !usedTailFallback {
 		content = rt.stableNotifyContentForMessageLocked(messageID, content)
 	}
 	contentHash := notifyContentHash(content)
