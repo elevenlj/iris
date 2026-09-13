@@ -24,7 +24,19 @@ type BotService interface {
 	CreateBot(context.Context, BotConfig) (BotConfig, error)
 	ListBots() []BotConfig
 	SaveBot(context.Context, BotConfig) (BotConfig, error)
+	DeleteBot(context.Context, string) (BotDeletion, error)
+	PreviewBotDeletion(context.Context, string) (BotDeletionPreview, error)
 	BotHandler(string) http.Handler
+}
+
+type BotDeletion struct {
+	BackupPath string `json:"backup_path"`
+	Warning    string `json:"warning,omitempty"`
+}
+
+type BotDeletionPreview struct {
+	Sessions int `json:"sessions"`
+	Running  int `json:"running"`
 }
 
 type FeishuApp struct {
@@ -122,6 +134,18 @@ func (s *Server) handleBots(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
+		if id := r.URL.Query().Get("delete_id"); id != "" {
+			if !s.requireSettingsAuth(w, r) {
+				return
+			}
+			info, err := s.bots.PreviewBotDeletion(r.Context(), id)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, info, nil)
+			return
+		}
 		bots := s.bots.ListBots()
 		// The session list may be viewed without opening authenticated settings.
 		if !s.settingsAuthenticated(r, s.settingsSecurity()) {
@@ -131,6 +155,23 @@ func (s *Server) handleBots(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		writeJSON(w, http.StatusOK, bots, nil)
+	case http.MethodDelete:
+		if !s.requireSettingsAuth(w, r) {
+			return
+		}
+		var request struct {
+			ID string `json:"id"`
+		}
+		if err := decodeLimitedJSON(w, r, &request); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		result, err := s.bots.DeleteBot(r.Context(), request.ID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result, nil)
 	case http.MethodPost, http.MethodPatch:
 		if !s.requireSettingsAuth(w, r) {
 			return

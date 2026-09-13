@@ -76,6 +76,8 @@ type Store interface {
 }
 
 type Manager struct {
+	lifecycle                sync.RWMutex // Serializes retirement against creation/recovery.
+	retired                  bool
 	registry                 *LarkMessageRegistry
 	mu                       sync.RWMutex
 	store                    Store
@@ -499,6 +501,11 @@ func (m *Manager) CreateSession(ctx context.Context, name string) (Session, erro
 }
 
 func (m *Manager) createSession(ctx context.Context, name string, seed Session, agent AgentConfig) (Session, error) {
+	m.lifecycle.RLock()
+	defer m.lifecycle.RUnlock()
+	if m.retired {
+		return Session{}, errors.New("机器人已删除")
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Session{}, errors.New("session name is required")
@@ -762,6 +769,11 @@ func (m *Manager) GetRuntime(id string) (*RuntimeSession, bool) {
 }
 
 func (m *Manager) RecoverRuntime(ctx context.Context, id string) (*RuntimeSession, Session, bool, error) {
+	m.lifecycle.RLock()
+	defer m.lifecycle.RUnlock()
+	if m.retired {
+		return nil, Session{}, false, errors.New("机器人已删除")
+	}
 	if rt, ok := m.GetRuntime(id); ok {
 		s := rt.Snapshot()
 		s.NotificationsAvailable = m.notifier != nil && m.notifier.Available()
@@ -851,6 +863,31 @@ func (m *Manager) RecoverRuntime(ctx context.Context, id string) (*RuntimeSessio
 	s := rt.Snapshot()
 	s.NotificationsAvailable = m.notifier != nil && m.notifier.Available()
 	return rt, s, true, nil
+}
+
+// Retire permanently prevents old callbacks from starting sessions. Backup and
+// config persistence must succeed before any terminal (and its uploads) closes.
+func (m *Manager) Retire(ctx context.Context, before func() error) error {
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+	if before != nil {
+		if err := before(); err != nil {
+			return err
+		}
+	}
+	m.retired = true
+	m.mu.Lock()
+	runtimes := m.sessions
+	m.sessions = make(map[string]*RuntimeSession)
+	m.larkAgentContexts = make(map[string]LarkAgentContext)
+	m.mu.Unlock()
+	for _, rt := range runtimes {
+		rt.Close()
+	}
+	if m.store != nil {
+		return m.store.DeleteAllSessions(ctx)
+	}
+	return nil
 }
 
 func (m *Manager) GetSession(ctx context.Context, id string) (Session, bool, error) {

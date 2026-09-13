@@ -16,6 +16,12 @@ async function loadBots() {
   }
   select.value = selected;
   $('bot-settings').disabled = !irisBots.some(bot => bot.id === selected);
+  select.hidden = irisBots.length === 0;
+  $('bot-settings').hidden = irisBots.length === 0;
+  if (irisBots.length && !irisBots.some(bot => bot.id === selected)) {
+    const first = irisBots[0].id;
+    location.replace(first === 'default' ? '/' : `/bots/${encodeURIComponent(first)}/`);
+  }
 }
 
 function botStatus(message, kind = '') {
@@ -27,7 +33,7 @@ function botError(error) { botStatus(error.message || String(error), 'error'); }
 
 function setBotPending(pending) {
   botSavePending = pending;
-  for (const id of ['bot-scan','bot-link','bot-connect','bot-select-app','bot-existing','bot-save','bot-cancel','bot-name','bot-agent','bot-directory']) $(id).disabled = pending;
+  for (const id of ['bot-scan','bot-link','bot-connect','bot-select-app','bot-existing','bot-save','bot-delete','bot-cancel','bot-name','bot-agent','bot-directory']) $(id).disabled = pending;
   $('bot-scan').disabled = pending || botCreationBlocked;
   if (!pending) {
     $('bot-error').classList.remove('pending');
@@ -47,6 +53,7 @@ async function openBotEditor(edit) {
   await loadBots();
   const bot = edit ? irisBots.find(bot => bot.id === ($('bot-select').value || 'default')) : null;
   editingBotID = bot?.id || '';
+  $('bot-delete').hidden = !editingBotID;
   $('bot-dialog-title').textContent = edit ? '机器人设置' : '添加机器人';
   $('bot-name').value = bot?.name || '';
   renderAgentSelect($('bot-agent'), bot?.default_agent_id || state.config.default_agent_id);
@@ -94,6 +101,24 @@ async function saveBot() {
     // Reloading closes the old WebSocket and prevents late responses from the
     // previous bot from replacing the newly selected bot's terminal.
     location.assign(result.id === 'default' ? '/' : `/bots/${result.id}/`);
+  } finally { setBotPending(false); }
+}
+
+async function deleteBot() {
+  if (botSavePending || !editingBotID) return;
+  const id = editingBotID;
+  const bot = irisBots.find(bot => bot.id === id);
+  if (!bot) throw new Error('机器人已删除，请刷新页面');
+  setBotPending(true);
+  try {
+    const info = await api(`/api/bots?delete_id=${encodeURIComponent(id)}`);
+    if (!confirm(`删除机器人「${bot.name}」？\n\n共 ${info.sessions} 个会话，${info.running} 个运行中任务。所有所属会话将停止，群和话题绑定将移除。\n\n本地会话数据会先备份；项目文件、飞书应用、群聊及聊天记录不受影响。`)) return;
+    botStatus('正在备份并删除…', 'pending');
+    const result = await api('/api/bots', {method:'DELETE', body:JSON.stringify({id})});
+    if (result.warning) alert(result.warning);
+    const remaining = await api('/api/bots');
+    const next = remaining[0]?.id;
+    location.replace(!next || next === 'default' ? '/' : `/bots/${encodeURIComponent(next)}/`);
   } finally { setBotPending(false); }
 }
 
@@ -179,6 +204,7 @@ function updateBotConsole() {
 
 $('bot-select').onchange = () => location.assign($('bot-select').value === 'default' ? '/' : `/bots/${encodeURIComponent($('bot-select').value)}/`);
 $('bot-settings').onclick = () => openBotEditor(true).catch(botError);
+$('bot-delete').onclick = () => deleteBot().catch(botError);
 $('bot-add').onclick = () => openBotEditor(false).catch(botError);
 $('bot-form').onsubmit = event => {
   event.preventDefault();

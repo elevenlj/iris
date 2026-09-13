@@ -60,7 +60,7 @@ var defaultLarkNotifyDropLineRules = session.LarkNotifyDropLineRules{
 
 type Config struct {
 	DashboardURL                    string                                `json:"dashboard_url,omitempty"`
-	Bots                            []httpapi.BotConfig                   `json:"bots,omitempty"`
+	Bots                            []httpapi.BotConfig                   `json:"bots"`
 	Port                            string                                `json:"port"`
 	AutoStartEnabled                bool                                  `json:"auto_start_enabled"`
 	LarkAppID                       string                                `json:"lark_app_id"`
@@ -274,6 +274,7 @@ func run() error {
 	configSvc := &appConfigService{path: configPath, cfg: &cfg, manager: mgr, bridge: bridge}
 	srv := httpapi.NewServer(mgr, uploadsDir, configSvc)
 	bots := newBotService(configSvc, srv, dataDir)
+	bots.defaultStore, bots.defaultUploads = st, uploadsDir
 	if err := bots.Start(); err != nil {
 		return err
 	}
@@ -444,7 +445,7 @@ func loadConfig(path string) Config {
 		_ = json.Unmarshal(b, &cfg)
 	}
 	cfg.Port = env("PORT", cfg.Port)
-	if len(cfg.Bots) > 0 {
+	if cfg.Bots != nil {
 		// The saved default bot owns the root bridge, not legacy fields or Agent env.
 		cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkNotifyReceiveID = "", "", ""
 		for _, bot := range cfg.Bots {
@@ -1057,7 +1058,7 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 	cfg.DashboardURL = strings.TrimRight(strings.TrimSpace(req.DashboardURL), "/")
 	// Bot credentials are edited and validated through /api/bots, not a stale
 	// global-settings form that another tab may have opened before that edit.
-	if len(cfg.Bots) > 0 {
+	if cfg.Bots != nil {
 		cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkNotifyReceiveID = oldCfg.LarkAppID, oldCfg.LarkAppSecret, oldCfg.LarkNotifyReceiveID
 	}
 	for _, bot := range cfg.Bots {

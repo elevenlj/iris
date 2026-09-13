@@ -381,6 +381,7 @@ dialog::backdrop {
 }
 
 .dialog-actions button { border:0; background:none; padding:10px 17px; }
+#bot-delete { color:#b42318; margin-right:auto; padding-left:0; }
 #bot-save, #config-save, #auth-submit { background:#466a4b; color:#fff; }
 .config-dialog .dialog-actions { position:sticky; bottom:-28px; padding:15px 0; background:#fff; border-top:1px solid var(--line); }
 

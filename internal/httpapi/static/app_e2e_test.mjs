@@ -1422,3 +1422,4 @@ assert.equal(patchedConfig.agent_command, "claude --dangerously-skip-permissions
 assert.deepEqual(patchedConfig.session_start_presets, { "1": { commands: ["codex"] } });
 
 console.log("frontend e2e ok");
+await import('./bots_e2e_test.mjs');

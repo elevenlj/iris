@@ -33,6 +33,12 @@ func Open(path string) (*SQLite, error) {
 
 func (s *SQLite) Close() error { return s.db.Close() }
 
+// VACUUM INTO includes committed WAL data, unlike copying the live database file.
+func (s *SQLite) Backup(ctx context.Context, path string) error {
+	_, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, path)
+	return err
+}
+
 func (s *SQLite) migrate(ctx context.Context) error {
 	stmts := []string{
 		`PRAGMA busy_timeout = 5000`,

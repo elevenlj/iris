@@ -15,6 +15,15 @@ type progressTestBots struct {
 	calls int
 }
 
+func (b *progressTestBots) DeleteBot(context.Context, string) (BotDeletion, error) {
+	b.calls++
+	return BotDeletion{}, nil
+}
+
+func (b *progressTestBots) PreviewBotDeletion(context.Context, string) (BotDeletionPreview, error) {
+	return BotDeletionPreview{}, nil
+}
+
 func (b *progressTestBots) CreateBot(ctx context.Context, _ BotConfig) (BotConfig, error) {
 	b.calls++
 	ReportBotCreationProgress(ctx, "login", "等待登录", "")

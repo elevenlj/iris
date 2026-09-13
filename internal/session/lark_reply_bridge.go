@@ -59,6 +59,7 @@ type LarkReplyBridge struct {
 	fetchBotIdentity        func(context.Context) (larkBotIdentity, error)
 	fetchChatMetadata       func(context.Context, string) (LarkChatMetadata, error)
 	startMu                 sync.Mutex
+	retired                 bool
 	cancelStart             context.CancelFunc
 	startID                 int64
 }
@@ -252,7 +253,7 @@ func (b *LarkReplyBridge) Start(ctx context.Context) error {
 		return nil
 	}
 	b.startMu.Lock()
-	if b.cancelStart != nil {
+	if b.retired || b.cancelStart != nil {
 		b.startMu.Unlock()
 		return nil
 	}
@@ -303,6 +304,17 @@ func (b *LarkReplyBridge) Start(ctx context.Context) error {
 	b.startMu.Unlock()
 	log.Printf("lark reply bridge listening for incoming messages")
 	return client.Start(runCtx)
+}
+
+// Retire also blocks a queued Start goroutine that has not run yet.
+func (b *LarkReplyBridge) Retire() {
+	if b == nil {
+		return
+	}
+	b.startMu.Lock()
+	b.retired = true
+	b.startMu.Unlock()
+	b.Stop()
 }
 
 func (b *LarkReplyBridge) Stop() {

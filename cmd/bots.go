@@ -27,11 +27,13 @@ type botRuntime struct {
 }
 
 type botService struct {
-	createMu sync.Mutex
-	root     *appConfigService // root.mu also protects runtimes and all bot config writes
-	server   *httpapi.Server
-	dataDir  string
-	runtimes map[string]*botRuntime
+	createMu       sync.Mutex
+	root           *appConfigService // root.mu also protects runtimes and all bot config writes
+	server         *httpapi.Server
+	dataDir        string
+	runtimes       map[string]*botRuntime
+	defaultStore   *store.SQLite
+	defaultUploads string
 	// Injectable for local regression tests; real creation checks credentials,
 	// sends a test card, and verifies the group-message permission.
 	test    func(httpapi.RuntimeConfig) httpapi.LarkConfigTestResult
@@ -91,18 +93,20 @@ func (s *botService) Start() error {
 	s.root.mu.Lock()
 	defer s.root.mu.Unlock()
 	cfg := *s.root.cfg
-	if len(cfg.Bots) == 0 && cfg.LarkAppID != "" {
+	if cfg.Bots == nil && cfg.LarkAppID != "" {
 		cfg.Bots = []httpapi.BotConfig{{ID: "default", Name: "Iris", AppID: cfg.LarkAppID, AppSecret: cfg.LarkAppSecret, ReceiveID: cfg.LarkNotifyReceiveID, DefaultAgentID: cfg.DefaultAgentID, DefaultWorkspaceDir: cfg.DefaultWorkspaceDir}}
 		if err := writeConfigFile(s.root.path, cfg); err != nil {
 			return err
 		}
 		*s.root.cfg = cfg
 	}
+	hasDefault := false
 	for _, bot := range cfg.Bots {
 		if !validBotID(bot.ID) {
 			return fmt.Errorf("无效机器人 ID：%s", bot.ID)
 		}
 		if bot.ID == "default" {
+			hasDefault = true
 			if err := applyRuntimeConfig(botEffectiveConfig(cfg, bot), s.root.manager, s.root.bridge, false); err != nil {
 				return err
 			}
@@ -111,6 +115,9 @@ func (s *botService) Start() error {
 		if _, err := s.startBot(cfg, bot); err != nil {
 			return err
 		}
+	}
+	if cfg.Bots != nil && !hasDefault {
+		return s.root.manager.Retire(context.Background(), nil)
 	}
 	return nil
 }
@@ -177,7 +184,7 @@ func (s *botService) refreshAppNames() {
 		}
 		s.root.mu.Lock()
 		cfg := *s.root.cfg
-		cfg.Bots = append([]httpapi.BotConfig(nil), cfg.Bots...)
+		cfg.Bots = append([]httpapi.BotConfig{}, cfg.Bots...)
 		for i := range cfg.Bots {
 			if cfg.Bots[i].ID == bot.ID && cfg.Bots[i].AppID == bot.AppID {
 				cfg.Bots[i].AppName = name
@@ -194,7 +201,12 @@ func (s *botService) BotHandler(id string) http.Handler {
 	s.root.mu.Lock()
 	defer s.root.mu.Unlock()
 	if id == "default" {
-		return s.server.Handler()
+		for _, bot := range s.root.cfg.Bots {
+			if bot.ID == id {
+				return s.server.Handler()
+			}
+		}
+		return nil
 	}
 	if rt := s.runtimes[id]; rt != nil {
 		return rt.server.Handler()
@@ -260,6 +272,17 @@ func (s *botService) SaveBot(ctx context.Context, bot httpapi.BotConfig) (httpap
 	s.root.mu.Lock()
 	defer s.root.mu.Unlock()
 	cfg = *s.root.cfg
+	if bot.ID != "" {
+		exists := false
+		for _, item := range cfg.Bots {
+			if item.ID == bot.ID {
+				exists = true
+			}
+		}
+		if !exists {
+			return bot, errors.New("机器人已删除，请刷新页面")
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return bot, err
 	}
@@ -272,7 +295,7 @@ func (s *botService) SaveBot(ctx context.Context, bot httpapi.BotConfig) (httpap
 		}
 	}
 	if bot.ID == "" {
-		if len(cfg.Bots) == 0 {
+		if cfg.Bots == nil {
 			bot.ID = "default"
 		} else {
 			token, err := randomHex(12)
