@@ -754,58 +754,66 @@ func TestLarkReplyBridgeGroupInputMentionsSender(t *testing.T) {
 }
 
 func TestLarkReplyBridgeMentionModeRequiresBotMentionInGroup(t *testing.T) {
-	resetLarkRegistryForTest()
-	launcher := &recordingLauncher{}
-	manager := NewManager(nil, launcher)
-	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
-	bridge.fetchBotIdentity = func(context.Context) (larkBotIdentity, error) {
-		return larkBotIdentity{OpenID: "ou-bot"}, nil
-	}
-	var reactions []string
-	bridge.addReaction = func(_ context.Context, messageID string, emoji string) error {
-		reactions = append(reactions, messageID+":"+emoji)
-		return nil
-	}
-	sess, err := manager.CreateSession(context.Background(), "Group")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok, err := manager.BindLarkChat(context.Background(), sess.ID, "oc-group"); err != nil || !ok {
-		t.Fatalf("BindLarkChat ok=%v err=%v", ok, err)
-	}
-	if _, ok, err := manager.ToggleLarkMentionMode(context.Background(), sess.ID); err != nil || !ok {
-		t.Fatalf("ToggleLarkMentionMode ok=%v err=%v", ok, err)
-	}
+	for _, senderType := range []string{"user", "app"} {
+		t.Run(senderType, func(t *testing.T) {
+			resetLarkRegistryForTest()
+			launcher := &recordingLauncher{}
+			manager := NewManager(nil, launcher)
+			bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+			bridge.fetchBotIdentity = func(context.Context) (larkBotIdentity, error) {
+				return larkBotIdentity{OpenID: "ou-bot"}, nil
+			}
+			var reactions []string
+			bridge.addReaction = func(_ context.Context, messageID string, emoji string) error {
+				reactions = append(reactions, messageID+":"+emoji)
+				return nil
+			}
+			sess, err := manager.CreateSession(context.Background(), "Group")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok, err := manager.BindLarkChat(context.Background(), sess.ID, "oc-group"); err != nil || !ok {
+				t.Fatalf("BindLarkChat ok=%v err=%v", ok, err)
+			}
+			if _, ok, err := manager.ToggleLarkMentionMode(context.Background(), sess.ID); err != nil || !ok {
+				t.Fatalf("ToggleLarkMentionMode ok=%v err=%v", ok, err)
+			}
 
-	if err := bridge.HandleP2MessageReceive(context.Background(), p2MessageWithChat("m-no-mention", "", "", "text", `{"text":"pwd"}`, "group", "oc-group", "ou-user")); err != nil {
-		t.Fatal(err)
-	}
-	if got := launcher.terminals[0].writes(); got != "" {
-		t.Fatalf("unmentioned group message should be ignored in mention mode, got %q", got)
-	}
-	if len(reactions) != 0 {
-		t.Fatalf("ignored unmentioned message should not add reaction, got %#v", reactions)
-	}
+			unmentioned := p2MessageWithChat("m-no-mention", "", "", "text", `{"text":"pwd"}`, "group", "oc-group", "ou-user")
+			unmentioned.Event.Sender.SenderType = strPtr(senderType)
+			if err := bridge.HandleP2MessageReceive(context.Background(), unmentioned); err != nil {
+				t.Fatal(err)
+			}
+			if got := launcher.terminals[0].writes(); got != "" {
+				t.Fatalf("unmentioned group message should be ignored in mention mode, got %q", got)
+			}
+			if len(reactions) != 0 {
+				t.Fatalf("ignored unmentioned message should not add reaction, got %#v", reactions)
+			}
 
-	other := p2MessageWithChat("m-other-mention", "", "", "text", `{"text":"<at user_id=\"ou-other\">Other</at> whoami"}`, "group", "oc-group", "ou-user")
-	other.Event.Message.Mentions = []*larkim.MentionEvent{{Id: &larkim.UserId{OpenId: strPtr("ou-other")}}}
-	if err := bridge.HandleP2MessageReceive(context.Background(), other); err != nil {
-		t.Fatal(err)
-	}
-	if got := launcher.terminals[0].writes(); got != "" {
-		t.Fatalf("message mentioning another user should be ignored in mention mode, got %q", got)
-	}
+			other := p2MessageWithChat("m-other-mention", "", "", "text", `{"text":"<at user_id=\"ou-other\">Other</at> whoami"}`, "group", "oc-group", "ou-user")
+			other.Event.Sender.SenderType = strPtr(senderType)
+			other.Event.Message.Mentions = []*larkim.MentionEvent{{Id: &larkim.UserId{OpenId: strPtr("ou-other")}}}
+			if err := bridge.HandleP2MessageReceive(context.Background(), other); err != nil {
+				t.Fatal(err)
+			}
+			if got := launcher.terminals[0].writes(); got != "" {
+				t.Fatalf("message mentioning another user should be ignored in mention mode, got %q", got)
+			}
 
-	bot := p2MessageWithChat("m-bot-mention", "", "", "text", `{"text":"<at user_id=\"ou-bot\">Bot</at> date"}`, "group", "oc-group", "ou-user")
-	bot.Event.Message.Mentions = []*larkim.MentionEvent{{Id: &larkim.UserId{OpenId: strPtr("ou-bot")}}}
-	if err := bridge.HandleP2MessageReceive(context.Background(), bot); err != nil {
-		t.Fatal(err)
-	}
-	if got := launcher.terminals[0].writes(); !strings.Contains(got, PrepareStructuredInput("date")) {
-		t.Fatalf("message mentioning current bot should route, got %q", got)
-	}
-	if len(reactions) != 1 || reactions[0] != "m-bot-mention:"+larkProcessingReactionEmoji {
-		t.Fatalf("only routed bot mention should add reaction, got %#v", reactions)
+			bot := p2MessageWithChat("m-bot-mention", "", "", "text", `{"text":"<at user_id=\"ou-bot\">Bot</at> date"}`, "group", "oc-group", "ou-user")
+			bot.Event.Sender.SenderType = strPtr(senderType)
+			bot.Event.Message.Mentions = []*larkim.MentionEvent{{Id: &larkim.UserId{OpenId: strPtr("ou-bot")}}}
+			if err := bridge.HandleP2MessageReceive(context.Background(), bot); err != nil {
+				t.Fatal(err)
+			}
+			if got := launcher.terminals[0].writes(); !strings.Contains(got, PrepareStructuredInput("date")) {
+				t.Fatalf("message mentioning current bot should route, got %q", got)
+			}
+			if len(reactions) != 1 || reactions[0] != "m-bot-mention:"+larkProcessingReactionEmoji {
+				t.Fatalf("only routed bot mention should add reaction, got %#v", reactions)
+			}
+		})
 	}
 }
 
@@ -1629,18 +1637,36 @@ func TestLarkReplyBridgeRepliesWhenPostContentIsUnreadable(t *testing.T) {
 	}
 }
 
-func TestLarkReplyBridgeIgnoresNonUserSender(t *testing.T) {
+func TestLarkReplyBridgeRoutesOtherBotAndIgnoresOwnMessages(t *testing.T) {
 	resetLarkRegistryForTest()
 	launcher := &recordingLauncher{}
 	manager := NewManager(nil, launcher)
 	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	bridge.botIdentity = larkBotIdentity{OpenID: "ou-self"}
+	bridge.addReaction = nil
+	bridge.replyText = func(context.Context, string, string) error { return nil }
 
-	err := bridge.HandleP2MessageReceive(context.Background(), p2MessageWithSender("m-app", "", "", "text", `{"text":"开始 测试"}`, "app"))
-	if err != nil {
+	self := p2MessageWithChat("m-self", "", "", "text", `{"text":"开始 测试"}`, "group", "oc-bots", "ou-self")
+	self.Event.Sender.SenderType = strPtr("app")
+	if err := bridge.HandleP2MessageReceive(context.Background(), self); err != nil {
 		t.Fatal(err)
 	}
 	if len(launcher.terminals) != 0 {
-		t.Fatalf("app sender should not create or write a terminal, got %d", len(launcher.terminals))
+		t.Fatalf("own message should not create a terminal, got %d", len(launcher.terminals))
+	}
+	peer := p2MessageWithChat("m-peer", "", "", "text", `{"text":"开始 测试"}`, "group", "oc-bots", "ou-peer")
+	peer.Event.Sender.SenderType = strPtr("app")
+	if err := bridge.HandleP2MessageReceive(context.Background(), peer); err != nil {
+		t.Fatal(err)
+	}
+	if len(launcher.terminals) != 1 {
+		t.Fatalf("another bot should create a terminal, got %d", len(launcher.terminals))
+	}
+	if err := bridge.HandleP2MessageReceive(context.Background(), peer); err != nil {
+		t.Fatal(err)
+	}
+	if len(launcher.terminals) != 1 {
+		t.Fatalf("duplicate bot message should not create another terminal, got %d", len(launcher.terminals))
 	}
 }
 

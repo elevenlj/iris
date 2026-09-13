@@ -880,7 +880,7 @@ func (b *LarkReplyBridge) HandleP2MessageReceive(ctx context.Context, event *lar
 		return nil
 	}
 	msg := event.Event.Message
-	if shouldIgnoreLarkP2Message(event.Event.Sender) {
+	if b.isOwnLarkMessage(ctx, event.Event.Sender) {
 		return nil
 	}
 	messageType := valueOf(msg.MessageType)
@@ -991,11 +991,16 @@ func (b *LarkReplyBridge) markLarkMessageProcessing(ctx context.Context, message
 	}
 }
 
-func shouldIgnoreLarkP2Message(sender *larkim.EventSender) bool {
-	if sender == nil || sender.SenderType == nil {
+func (b *LarkReplyBridge) isOwnLarkMessage(ctx context.Context, sender *larkim.EventSender) bool {
+	if sender == nil || valueOf(sender.SenderType) == "user" {
 		return false
 	}
-	return *sender.SenderType != "" && *sender.SenderType != "user"
+	openID := strings.TrimSpace(larkSenderOpenID(sender))
+	if openID == "" {
+		return false
+	}
+	identity, ok := b.currentBotIdentity(ctx)
+	return ok && identity.OpenID == openID
 }
 
 func (b *LarkReplyBridge) shouldIgnoreIncomingText(text string) bool {
