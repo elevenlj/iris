@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -39,8 +40,8 @@ func larkTopicTitle(question string) string {
 		return "新话题"
 	}
 	runes := []rune(title)
-	if len(runes) > 30 {
-		title = string(runes[:30]) + "…"
+	if len(runes) > 10 {
+		title = string(runes[:10]) + "..."
 	}
 	return title
 }
@@ -106,8 +107,10 @@ func (b *LarkReplyBridge) createTopicSession(ctx context.Context, route larkRout
 	}
 	name := "[话题] " + groupName + " · " + larkTopicTitle(question)
 	content, _ := json.Marshal(map[string]string{"text": larkTopicTitle(question)})
+	// Keep retries stable and below Feishu's 50-character message UUID limit.
+	uuid := fmt.Sprintf("%x", sha256.Sum256([]byte("topic:"+b.appID+":"+route.MessageID)))[:32]
 	req := larkim.NewReplyMessageReqBuilder().MessageId(route.MessageID).Body(
-		larkim.NewReplyMessageReqBodyBuilder().MsgType("text").Content(string(content)).ReplyInThread(true).Uuid(larkCreateChatUUID(route.MessageID)).Build(),
+		larkim.NewReplyMessageReqBodyBuilder().MsgType("text").Content(string(content)).ReplyInThread(true).Uuid(uuid).Build(),
 	).Build()
 	resp, err := b.apiClient.Im.V1.Message.Reply(ctx, req)
 	if err != nil {

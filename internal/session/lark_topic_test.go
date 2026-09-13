@@ -31,6 +31,9 @@ func (c *topicHTTPClient) Do(req *http.Request) (*http.Response, error) {
 		}
 		root := strings.TrimSuffix(strings.TrimPrefix(req.URL.Path, "/open-apis/im/v1/messages/"), "/reply")
 		data = `{"code":0,"data":{"message_id":"reply-` + root + `","root_id":"` + root + `","thread_id":"omt-` + root + `"}}`
+		if uuid, _ := body["uuid"].(string); uuid == "" || len(uuid) > 50 {
+			data = `{"code":99992402,"msg":"field validation failed: uuid exceeds 50 characters"}`
+		}
 	}
 	c.requests = append(c.requests, req.URL.String())
 	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(data))}, nil
@@ -63,8 +66,10 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 	// The topic inherits the running main session, not this different default.
 	m.SetAgentConfig(AgentConfig{Kind: "aiden"}, nil)
 	var topics []Session
-	for i, command := range []string{"/t 修复登录问题", "/topic"} {
-		messageID := []string{"om-one", "om-two"}[i]
+	messageIDs := []string{"om_x100b6556a82398a0b28d6babbdf407e", "om_x100b6556a82398a0b28d6babbdf407f"}
+	question := "修复登录问题并检查完整上下文"
+	for i, command := range []string{"/t " + question, "/topic"} {
+		messageID := messageIDs[i]
 		id, err := b.RouteIncomingWithContext(ctx, larkRouteContext{MessageID: messageID, ChatID: "oc-group", ChatType: "group", SenderType: "user", SenderOpenID: "ou-user"}, larkIncomingMessage{Text: command})
 		if err != nil {
 			t.Fatal(err)
@@ -85,8 +90,8 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 		if !strings.Contains(queued.Text, "scope=group") || !strings.Contains(queued.Text, "不要恢复或执行历史任务") || queued.InputMessageID != messageID {
 			t.Fatalf("context prompt missing: %#v", queued)
 		}
-		if i == 0 && !strings.Contains(queued.Text, "修复登录问题") {
-			t.Fatal("question missing")
+		if i == 0 && (!strings.Contains(queued.Text, question) || sess.Name != "[话题] 研发群 · 修复登录问题并检查完...") {
+			t.Fatal("title must be shortened without truncating the Agent input")
 		}
 		if i == 1 && !strings.Contains(queued.Text, "等待用户") {
 			t.Fatal("bare topic must await input")
@@ -118,7 +123,7 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 			t.Fatal("topic input reached main terminal")
 		}
 	}
-	if _, err := b.RouteIncomingWithContext(ctx, larkRouteContext{MessageID: "om-one", ChatID: "oc-group", ChatType: "group"}, larkIncomingMessage{Text: "/t duplicate"}); err != nil {
+	if _, err := b.RouteIncomingWithContext(ctx, larkRouteContext{MessageID: messageIDs[0], ChatID: "oc-group", ChatType: "group"}, larkIncomingMessage{Text: "/t duplicate"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(launcher.terminals) != 3 {
@@ -127,7 +132,7 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 	// Restart loses all in-memory bindings; persisted topic identity must still win.
 	restarted := NewManager(st, &recordingLauncher{}, WithIsolatedMessageRegistry())
 	bridge := NewLarkReplyBridge("topic-app", "secret", restarted, t.TempDir())
-	if id, err := bridge.RouteIncomingWithContext(ctx, larkRouteContext{MessageID: "om-one", ChatID: "oc-group", ChatType: "group"}, larkIncomingMessage{Text: "/t replay after restart"}); err != nil || id != topics[0].ID {
+	if id, err := bridge.RouteIncomingWithContext(ctx, larkRouteContext{MessageID: messageIDs[0], ChatID: "oc-group", ChatType: "group"}, larkIncomingMessage{Text: "/t replay after restart"}); err != nil || id != topics[0].ID {
 		t.Fatalf("duplicate after restart: %s %v", id, err)
 	}
 	for _, topic := range topics {
@@ -158,7 +163,7 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 	if err := untitled.nameUntitledTopic(ctx, "测试目录切换"); err != nil {
 		t.Fatal(err)
 	}
-	if got := untitled.Snapshot().Name; got != "[话题] 研发群 · followup-two" {
+	if got := untitled.Snapshot().Name; got != "[话题] 研发群 · followup-t..." {
 		t.Fatal(got)
 	}
 	removedBot := false
@@ -183,6 +188,21 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 	}
 	if got := b.resolveSessionID(ctx, topics[1].ID, "", "", "oc-group", "group", ""); got != "" {
 		t.Fatal("topic ID in ordinary group text bypassed isolation")
+	}
+}
+
+func TestLarkTopicTitle(t *testing.T) {
+	for question, want := range map[string]string{
+		" \n ":        "新话题",
+		"成都今天天气怎样":    "成都今天天气怎样",
+		"一二三四五六七八九十":  "一二三四五六七八九十",
+		"一二三四五六七八九十甲": "一二三四五六七八九十...",
+		"  a\n b  ":   "a b",
+		"😀一二三四五六七八九十": "😀一二三四五六七八九...",
+	} {
+		if got := larkTopicTitle(question); got != want {
+			t.Errorf("title(%q) = %q, want %q", question, got, want)
+		}
 	}
 }
 
