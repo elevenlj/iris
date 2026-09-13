@@ -72,7 +72,7 @@ func TestManualRefreshUsesSubmittedInputAnchorAndKeepsWorking(t *testing.T) {
 	}, "\n")
 
 	got := pickManualRefreshNotifyContentWithWindowAnchorPolicy(visible, "旧快照", nil, input, "", notifyTextAnchorPolicy{})
-	want := "• Working (8s • esc to interrupt)"
+	want := "› " + input + "\n• Working (8s • esc to interrupt)"
 	if got != want {
 		t.Fatalf("manual refresh must use the same input anchor and preserve Working:\n%q\nwant:\n%q", got, want)
 	}
@@ -90,5 +90,24 @@ func TestManualRefreshTailFallbackDropsOnlyCodexFooter(t *testing.T) {
 	}, "\n")
 	if got := pickLarkManualRefreshFallbackTailContent(visible); got != want {
 		t.Fatalf("manual fallback must keep正文/Working and remove only the Codex footer:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestManualRefreshUsesLatestQuestionInsteadOfUnfinishedWindow(t *testing.T) {
+	const oldInput = "前一个还没结束的问题"
+	const input = "/Users/bytedance/.iris/data/uploads/sess-12/lark/new_image.png\n【引用消息】旧内容\n【用户当前请求】\n只看最后一个问题"
+	visible := "› " + oldInput + "\n历史回答\n› " + input + "\n• 本轮进展\n• Working (8s • esc to interrupt)"
+	got := pickManualRefreshNotifyContentWithWindowAnchorPolicy(visible, "", nil, input, oldInput, notifyTextAnchorPolicy{})
+	if got != "› "+input+"\n• 本轮进展\n• Working (8s • esc to interrupt)" {
+		t.Fatalf("refresh must keep the latest question and exclude older rounds: %q", got)
+	}
+}
+
+func TestSubmittedInputAnchorRejectsDifferentAttachmentWithSharedPathPrefix(t *testing.T) {
+	const prefix = "/Users/bytedance/.iris/data/uploads/sess-12/lark/"
+	visible := "› " + prefix + "old_image.png 旧问题\n历史回答"
+	input := prefix + "new_image.png 新问题"
+	if got := pickManualRefreshNotifyContentWithWindowAnchorPolicy(visible, "", nil, input, "", notifyTextAnchorPolicy{}); got != "" {
+		t.Fatalf("a shared upload directory is not the current question: %q", got)
 	}
 }

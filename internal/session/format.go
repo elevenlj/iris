@@ -641,14 +641,9 @@ func pickManualRefreshNotifyContentWithWindowAnchorPolicy(visibleSnapshot string
 	if isRawLarkNotifyInput(lastInputText) {
 		return pickRawNotifyContentWithWindowAnchorPolicy(visibleSnapshot, previousVisibleSnapshot, roundReply, lastInputText, windowStartInputText, anchorPolicy)
 	}
-	inputText := strings.TrimSpace(windowStartInputText)
-	if inputText == "" {
-		inputText = strings.TrimSpace(lastInputText)
-	}
-	if _, ok := newestSubmittedInputAnchorSpan(strings.Split(visibleSnapshot, "\n"), inputText); !ok {
-		return ""
-	}
-	body, _ := selectNotifyBodyWithWindowAnchorPolicy(visibleSnapshot, previousVisibleSnapshot, roundReply, lastInputText, windowStartInputText, anchorPolicy)
+	// Refresh is scoped to the latest question, not the oldest unfinished
+	// notification window. Keep the submitted question visible as its boundary.
+	body := visibleTextFromSubmittedInputStart(visibleSnapshot, lastInputText)
 	if body == "" {
 		return ""
 	}
@@ -1408,7 +1403,7 @@ func newestSubmittedInputAnchorSpan(lines []string, inputText string) (inputAnch
 		return inputAnchorSpan{}, false
 	}
 	for i := len(lines) - 1; i >= 0; i-- {
-		if rendered, ok := submittedInputPromptText(lines[i]); ok && anchorTextHasPrefix(rendered, prefix) {
+		if rendered, ok := submittedInputPromptText(lines[i]); ok && anchorTextHasPrefix(rendered, prefix) && len(anchorPrefixStates(inputText, rendered)) > 0 {
 			return inputAnchorSpan{start: i, end: i}, true
 		}
 	}

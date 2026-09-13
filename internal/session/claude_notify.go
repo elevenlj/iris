@@ -223,6 +223,7 @@ func RunClaudeStopHook(reader io.Reader) error {
 	var event struct {
 		HookEventName        string `json:"hook_event_name"`
 		SessionID            string `json:"session_id"`
+		TranscriptPath       string `json:"transcript_path"`
 		LastAssistantMessage string `json:"last_assistant_message"`
 		StopHookActive       bool   `json:"stop_hook_active"`
 	}
@@ -231,6 +232,26 @@ func RunClaudeStopHook(reader io.Reader) error {
 	}
 	if event.HookEventName != "Stop" {
 		return nil
+	}
+	if strings.TrimSpace(event.LastAssistantMessage) == "" && event.TranscriptPath != "" {
+		info, statErr := os.Stat(event.TranscriptPath)
+		if statErr == nil && info.IsDir() {
+			// Native Aiden emits a checkpoint directory, not an inline reply or
+			// Claude JSONL transcript. Resolve only the session named by this event.
+			content, err := aidenCheckpointAssistantMessage(event.TranscriptPath, event.SessionID)
+			if err != nil {
+				return err
+			}
+			var enriched map[string]json.RawMessage
+			if err := json.Unmarshal(payload, &enriched); err != nil {
+				return err
+			}
+			enriched["last_assistant_message"], _ = json.Marshal(content)
+			payload, err = json.Marshal(enriched)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return postAgentTurnCompleted(payload)
 }

@@ -3491,13 +3491,16 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 	}
 	rt.mu.Lock()
 	runningAtRefresh := rt.session.Status == StatusRunning
+	roundOnlyRefresh := !preserveContent && (suppressUpdateTip || runningAtRefresh) &&
+		strings.TrimSpace(rt.lastInputText) != "" && !isRawLarkNotifyInput(rt.lastInputText) &&
+		(rt.session.LastMode == SessionModeAgent || containsSubmittedInputPrompt(rt.visibleSnapshot))
 	rt.mu.Unlock()
 	if !preserveContent && (suppressUpdateTip || runningAtRefresh) {
 		rt.mu.Lock()
 		manualContent := pickManualRefreshNotifyContentWithWindowAnchorPolicy(rt.visibleSnapshot, rt.previousNotifySnapshotLocked(), rt.roundReply, rt.lastInputText, rt.notificationWindowInputText, rt.notifyTextAnchorPolicyLocked())
 		manualContent = rt.cleanLarkNotifyContentForAgentLocked(manualContent)
 		rt.mu.Unlock()
-		if strings.TrimSpace(manualContent) != "" {
+		if roundOnlyRefresh || strings.TrimSpace(manualContent) != "" {
 			content = manualContent
 		}
 	}
@@ -3506,7 +3509,7 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 	stale := rt.visibleSnapshotStaleForCurrentRoundLocked()
 	hasVisibleSnapshot := strings.TrimSpace(rt.visibleSnapshot) != ""
 	rt.mu.Unlock()
-	if !preserveContent && !fresh && stale {
+	if !preserveContent && !roundOnlyRefresh && !fresh && stale {
 		if !hasVisibleSnapshot {
 			return errors.New("current visible snapshot is stale and empty")
 		}
@@ -3518,7 +3521,7 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 	hasSnapshotContent := !preserveContent && content != ""
 	hasContent := content != ""
 	usedTailFallback := false
-	if !hasContent {
+	if !hasContent && !roundOnlyRefresh {
 		rt.mu.Lock()
 		fallbackContent := pickLarkNotifyFallbackTailContent(rt.visibleSnapshot)
 		if suppressUpdateTip {
@@ -3547,7 +3550,7 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 		rt.mu.Unlock()
 		return errors.New("notification message is frozen")
 	}
-	if hasSnapshotContent && !usedTailFallback && strings.TrimSpace(lastInputText) != "" && !hasReplyLine(content, lastInputText) &&
+	if hasSnapshotContent && !roundOnlyRefresh && !usedTailFallback && strings.TrimSpace(lastInputText) != "" && !hasReplyLine(content, lastInputText) &&
 		!((suppressUpdateTip || runningAtRefresh) && containsTransientStatusLine(content)) {
 		rt.mu.Unlock()
 		return errors.New("current round has no reply content")
@@ -3557,7 +3560,9 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 	if len(preserveUpdateNo) > 0 && preserveUpdateNo[0] > 0 {
 		updateNo = preserveUpdateNo[0]
 	}
-	content = rt.stableNotifyContentForMessageLocked(messageID, content)
+	if !roundOnlyRefresh {
+		content = rt.stableNotifyContentForMessageLocked(messageID, content)
+	}
 	contentHash := notifyContentHash(content)
 	rt.notificationPatchVersion++
 	patchVersion := rt.notificationPatchVersion
@@ -4867,7 +4872,7 @@ func (rt *RuntimeSession) waitingNotificationCandidateLocked() (WaitingNotificat
 		}
 		interaction := rt.notificationInteractionLocked(rt.lastNotifiedMessageID)
 		agentContext := rt.notificationAgentContextLocked()
-		return WaitingNotification{SessionID: rt.session.ID, Name: rt.session.Name, Content: hookContent, ChatID: rt.session.LarkChatID, InputMessageID: rt.notificationInputMessageID, MentionOpenID: rt.notificationMentionOpenID, AutoSummaryEnabled: rt.autoSummaryEnabled, MentionModeEnabled: rt.session.LarkMentionModeEnabled, SnapshotSource: "codex_hook:last_assistant_message", Interaction: interaction, AgentContext: agentContext}, contentHash, true, "ready"
+		return WaitingNotification{SessionID: rt.session.ID, Name: rt.session.Name, Content: hookContent, ChatID: rt.session.LarkChatID, InputMessageID: rt.notificationInputMessageID, MentionOpenID: rt.notificationMentionOpenID, AutoSummaryEnabled: rt.autoSummaryEnabled, MentionModeEnabled: rt.session.LarkMentionModeEnabled, SnapshotSource: rt.session.LastAgentKind + "_hook:last_assistant_message", Interaction: interaction, AgentContext: agentContext}, contentHash, true, "ready"
 	}
 	if rt.visibleSnapshotStaleForCurrentRoundLocked() {
 		return WaitingNotification{}, "", false, "stale_visible_snapshot"

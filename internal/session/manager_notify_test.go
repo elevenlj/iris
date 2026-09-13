@@ -1133,7 +1133,7 @@ func TestRefreshNotificationMessageUsesCurrentRoundSnapshot(t *testing.T) {
 	}
 }
 
-func TestRefreshBeforeStopHookStillUsesVisibleTail(t *testing.T) {
+func TestRefreshBeforeStopHookDoesNotLeakUnanchoredHistory(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		refresh func(*RuntimeSession) error
@@ -1156,8 +1156,8 @@ func TestRefreshBeforeStopHookStillUsesVisibleTail(t *testing.T) {
 				t.Fatal(err)
 			}
 			notes := notifier.notes()
-			if len(notes) != 1 || !strings.Contains(notes[0].Content, "本轮尚未结束时的可见进度") {
-				t.Fatalf("refresh before Stop Hook must keep the visible-tail fallback, got %#v", notes)
+			if len(notes) != 1 || notes[0].Content != EmptyNotificationPlaceholder {
+				t.Fatalf("refresh without an input boundary must not include history, got %#v", notes)
 			}
 		})
 	}
@@ -1187,13 +1187,13 @@ func TestRefreshNotificationMessageUsesInputAnchorWhenRoundBaselineIsEmpty(t *te
 	if len(notes) != 1 {
 		t.Fatalf("expected one manual refresh update, got %#v", notes)
 	}
-	want := "first\nsecond"
+	want := "> ask\nfirst\nsecond"
 	if notes[0].Content != want {
 		t.Fatalf("manual refresh should use the explicit input anchor without a round baseline:\n%q\nwant:\n%q", notes[0].Content, want)
 	}
 }
 
-func TestRefreshNotificationMessageKeepsLongerContentWhenSnapshotRegressesToPrefix(t *testing.T) {
+func TestRefreshNotificationMessageShowsCurrentTerminalInsteadOfOlderCard(t *testing.T) {
 	notifier := &recordingNotifier{messageID: "bot-card"}
 	m := NewManager(nil, nil, WithNotifier(notifier), WithNotificationUpdateCoalesce(0))
 	previous := strings.Join([]string{
@@ -1223,8 +1223,8 @@ func TestRefreshNotificationMessageKeepsLongerContentWhenSnapshotRegressesToPref
 	if len(notes) != 1 {
 		t.Fatalf("expected one manual refresh update, got %#v", notes)
 	}
-	if notes[0].Content != previous {
-		t.Fatalf("manual refresh should preserve longer content:\n%q\nwant:\n%q", notes[0].Content, previous)
+	if notes[0].Content != rt.visibleSnapshot {
+		t.Fatalf("manual refresh should show the current terminal, got %q", notes[0].Content)
 	}
 }
 
@@ -1298,7 +1298,7 @@ func TestRefreshNotificationMessageUsesVisibleTailForUnbaselinedOrdinaryRound(t 
 	if len(notes) != 1 {
 		t.Fatalf("expected one manual refresh update, got %#v", notes)
 	}
-	want := "• untrusted reply"
+	want := "› this is a unique current question with enough detail\n• untrusted reply"
 	if notes[0].Content != want {
 		t.Fatalf("an unbaselined manual refresh should use the explicit input anchor, got %#v", notes[0])
 	}
@@ -3749,6 +3749,7 @@ func TestManualRefreshKeepsWorkingBelowInputAnchor(t *testing.T) {
 		t.Fatalf("status-only manual refresh should update the card once, got %#v", notes)
 	}
 	want := strings.Join([]string{
+		"› 你好",
 		"• Working (1s • esc to interrupt)",
 		"1 background terminal running · /ps to view · /stop to close",
 		"› Run /review on my current changes",

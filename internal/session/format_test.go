@@ -314,14 +314,14 @@ func TestPickNotifyContentRestoresIndentedEnglishSoftWrapBeforeMatching(t *testi
 	}
 }
 
-func TestPickNotifyContentFallsBackToFirstThirtyRunesForChangedLongInputTail(t *testing.T) {
+func TestPickNotifyContentRejectsConflictingLongInputTail(t *testing.T) {
 	prefix := strings.Repeat("就是那个", 8)
 	input := prefix + "这是提交时记录的原始长尾内容"
 	previous := "› " + prefix + "这是终端重绘后发生变化的长尾内容"
 	visible := previous + "\n• 只发送这一轮回复。"
 
-	if got := PickNotifyContent(visible, previous, nil, input); got != "• 只发送这一轮回复。" {
-		t.Fatalf("a changed long-input tail should use the first %d runes as its fallback anchor, got %q", maxInputAnchorRunes, got)
+	if got := PickNotifyContent(visible, previous, nil, input); got != "" {
+		t.Fatalf("a shared prefix must not override a conflicting question tail, got %q", got)
 	}
 }
 
