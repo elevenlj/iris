@@ -574,6 +574,7 @@ func (m *Manager) createSession(ctx context.Context, name string, seed Session, 
 		rt.RecordShellCommandForRecovery("cd " + shellQuote(workspaceDir))
 		_, _ = rt.terminal.Write([]byte("cd " + workspaceShellPath + "\r"))
 		rt.ConfigureAgentForRecovery(agent)
+		rt.prepareAgentWorkspaceTrust(agent.Command)
 		_, _ = rt.terminal.Write([]byte(agent.Command + "\r"))
 		sess = rt.Snapshot()
 	}
@@ -1047,6 +1048,11 @@ func (m *Manager) SwitchWorkspace(ctx context.Context, id, path string) (Session
 	input := "/cd " + path
 	if agentKindForCommand(sess.LastAgentStartCommand, sess.LastAgentKind) == "claude" {
 		input = "后续任务切换到工作目录：" + path
+		if home := m.sessionClaudeHome(sess); home != "" {
+			if err := ensureClaudeWorkspaceTrust(home, workspaceTrustPaths(path)); err != nil {
+				return Session{}, true, fmt.Errorf("目录信任配置失败: %w", err)
+			}
+		}
 	}
 	if sessionSupportsWorkspaceSwitch(sess) {
 		if err := rt.beginControlInput(); err != nil {
@@ -1343,6 +1349,9 @@ type RuntimeSession struct {
 	notifyStableTimer                 *time.Timer
 	startupNotifyTimer                *time.Timer
 	agentRestartPending               bool
+	workspaceTrustAction              string
+	workspaceTrustProbe               *time.Timer
+	workspaceTrustProbeTail           string
 }
 
 type RuntimeEvent struct {
@@ -1776,6 +1785,7 @@ func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, laun
 			rt.session.LastAgentResumeCommand = strings.TrimSpace(resumeCommand)
 		}
 		baselineSnapshotVersion := rt.visibleSnapshotVersion
+		rt.workspaceTrustAction = ""
 		baselineHistorySize := rt.session.HistorySize
 		rt.snapshotRoundGeneration++
 		rt.cancelSnapshotRequestsLocked(false)
@@ -1793,6 +1803,7 @@ func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, laun
 		if rt.manager != nil {
 			_ = rt.manager.persist(context.Background(), sess)
 		}
+		rt.prepareAgentWorkspaceTrust(launchCommand)
 		if !strings.HasSuffix(launchCommand, "\r") && !strings.HasSuffix(launchCommand, "\n") {
 			launchCommand += "\r"
 		}
@@ -2233,6 +2244,7 @@ func (rt *RuntimeSession) runRecoveryCommand() {
 		return
 	}
 	command := strings.TrimSpace(sess.LastAgentResumeCommand)
+	rt.prepareAgentWorkspaceTrust(command)
 	if strings.TrimSpace(sess.LastAgentKind) == "codex" && codexHomeIsLegacy(sess.LastAgentHome) {
 		command = "CODEX_HOME=" + shellQuote(sess.LastAgentHome) + " " + command
 	}
@@ -2434,10 +2446,14 @@ func (rt *RuntimeSession) setVisibleSnapshot(data string, source string, request
 	}
 	version := rt.visibleSnapshotVersion
 	sessionID := rt.session.ID
+	trustAction := rt.autoTrustWorkspaceLocked()
 	rt.mu.Unlock()
 	log.Printf("visible snapshot updated session=%s source=%s request_id=%s version=%d len=%d lines=%d waiters=%d", sessionID, source, requestID, version, len(data), countLogLines(data), len(waiters))
 	for _, ch := range waiters {
 		close(ch)
+	}
+	if trustAction {
+		go rt.RequestFreshSnapshot(defaultNotifySnapshotTimeout)
 	}
 	if interactionNotifyVersion != 0 {
 		_ = rt.manager.persist(context.Background(), interactionSession)
@@ -2743,6 +2759,9 @@ func parseSnapshotSourceContinuity(source string) snapshotSourceContinuity {
 
 func startupAgentComposerReady(snapshot, source, agentKind string) bool {
 	agentKind = strings.ToLower(strings.TrimSpace(agentKind))
+	if _, menu := workspaceTrustMenu(snapshot, source, agentKind); menu {
+		return false
+	}
 	switch agentKind {
 	case "codex", "claude", "aiden":
 	default:
@@ -4096,6 +4115,7 @@ func (rt *RuntimeSession) HandleOutput(chunk []byte) {
 		}
 	}
 	rt.session.HistorySize += int64(len(cp))
+	rt.scheduleWorkspaceTrustProbeLocked(cp)
 	rt.session.UpdatedAt = time.Now().UTC()
 	var runningNote WaitingNotification
 	markRunning := false
@@ -4246,6 +4266,10 @@ func (rt *RuntimeSession) Close() {
 	}
 	rt.closed = true
 	rt.session.Live = false
+	if rt.workspaceTrustProbe != nil {
+		rt.workspaceTrustProbe.Stop()
+		rt.workspaceTrustProbe = nil
+	}
 	rt.snapshotRoundGeneration++
 	rt.stateVersion++
 	rt.notifyVersion++
