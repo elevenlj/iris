@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,6 +59,7 @@ var defaultLarkNotifyDropLineRules = session.LarkNotifyDropLineRules{
 }
 
 type Config struct {
+	DashboardURL                    string                                `json:"dashboard_url,omitempty"`
 	Bots                            []httpapi.BotConfig                   `json:"bots,omitempty"`
 	Port                            string                                `json:"port"`
 	AutoStartEnabled                bool                                  `json:"auto_start_enabled"`
@@ -245,6 +247,9 @@ func run() error {
 		}),
 	)
 	mgr.SetDefaultWorkspaceDir(cfg.DefaultWorkspaceDir)
+	if err := mgr.SetDashboardURL(cfg.DashboardURL); err != nil {
+		return err
+	}
 	mgr.SetAgentConfig(defaultAgentConfig(cfg), cfg.WorkspaceOptions)
 	mgr.SetAvailableAgentOptions(session.DetectAvailableAgentOptions(cfg.Agents...))
 
@@ -639,7 +644,7 @@ func migrateAgentDefinitions(cfg Config) (Config, bool) {
 	return cfg, string(original) != string(updated)
 }
 
-func validateAgentDefinitions(agents []session.AgentConfig, defaultID string) ([]session.AgentConfig, session.AgentConfig, error) {
+func validateAgentList(agents []session.AgentConfig) ([]session.AgentConfig, error) {
 	normalized := make([]session.AgentConfig, 0, len(agents))
 	seenIDs := map[string]bool{}
 	seenNames := map[string]bool{}
@@ -659,26 +664,31 @@ func validateAgentDefinitions(agents []session.AgentConfig, defaultID string) ([
 		} else if agent.ID == "aiden-claude" {
 			agent.Name, agent.Kind, agent.Command = "Aiden X Claude Code", "aiden-claude", session.AidenClaudeAgentCommand
 		} else if agent.Kind != "custom" {
-			return nil, session.AgentConfig{}, errors.New("自定义 Agent 类型无效")
+			return nil, errors.New("自定义 Agent 类型无效")
 		}
 		if agent.ID == "" || agent.Name == "" || agent.Command == "" {
-			return nil, session.AgentConfig{}, errors.New("Agent 名称和启动命令不能为空")
+			return nil, errors.New("Agent 名称和启动命令不能为空")
 		}
 		if len([]rune(agent.Name)) > 40 {
-			return nil, session.AgentConfig{}, errors.New("Agent 名称不能超过 40 个字符")
+			return nil, errors.New("Agent 名称不能超过 40 个字符")
 		}
 		nameKey := strings.ToLower(agent.Name)
 		if seenIDs[agent.ID] || seenNames[nameKey] {
-			return nil, session.AgentConfig{}, errors.New("Agent 名称不能重复")
+			return nil, errors.New("Agent 名称不能重复")
 		}
 		seenIDs[agent.ID], seenNames[nameKey] = true, true
 		normalized = append(normalized, agent)
 	}
-	selected := agentConfigByID(normalized, defaultID)
+	return normalized, nil
+}
+
+// A bot selects an existing Agent by ID; it does not edit the global definitions.
+func validateDefaultAgent(agents []session.AgentConfig, defaultID string) (session.AgentConfig, error) {
+	selected := agentConfigByID(agents, defaultID)
 	if selected.ID == "" {
-		return nil, session.AgentConfig{}, errors.New("必须选择一个可用的默认 Agent")
+		return session.AgentConfig{}, errors.New("必须选择一个可用的默认 Agent")
 	}
-	available := session.DetectAvailableAgentOptions(normalized...)
+	available := session.DetectAvailableAgentOptions(selected)
 	availableDefault := false
 	for _, option := range available {
 		if option.ID == selected.ID {
@@ -687,9 +697,9 @@ func validateAgentDefinitions(agents []session.AgentConfig, defaultID string) ([
 		}
 	}
 	if !availableDefault {
-		return nil, session.AgentConfig{}, errors.New("默认 Agent 当前不可用")
+		return session.AgentConfig{}, errors.New("默认 Agent 当前不可用")
 	}
-	return normalized, selected, nil
+	return selected, nil
 }
 
 func agentConfigByID(agents []session.AgentConfig, id string) session.AgentConfig {
@@ -977,9 +987,18 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 			req.DefaultAgentID = legacy.DefaultAgentID
 		}
 	}
-	agents, selectedAgent, err := validateAgentDefinitions(req.Agents, req.DefaultAgentID)
+	agents := append([]session.AgentConfig(nil), req.Agents...)
+	var err error
+	if !slices.Equal(agents, cfg.Agents) {
+		agents, err = validateAgentList(agents)
+	}
 	if err != nil {
 		return httpapi.RuntimeConfig{}, err
+	}
+	// Legacy fields are only a template; each bot owns its default Agent.
+	selectedAgent := agentConfigByID(agents, req.DefaultAgentID)
+	if len(cfg.Bots) > 0 {
+		selectedAgent = agentConfigByID(agents, cfg.Bots[0].DefaultAgentID)
 	}
 	workspaces, err := validateWorkspaceOptions(req.WorkspaceOptions)
 	if err != nil {
@@ -1018,16 +1037,18 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 	cfg.DefaultWorkspaceDir = defaultWorkspaceDir
 	cfg.WorkspaceOptions = workspaces
 	cfg.AutoStartEnabled = req.AutoStartEnabled
+	cfg.DashboardURL = strings.TrimRight(strings.TrimSpace(req.DashboardURL), "/")
 	// Bot credentials are edited and validated through /api/bots, not a stale
 	// global-settings form that another tab may have opened before that edit.
 	if len(cfg.Bots) > 0 {
 		cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkNotifyReceiveID = oldCfg.LarkAppID, oldCfg.LarkAppSecret, oldCfg.LarkNotifyReceiveID
 	}
-	if s.bots != nil {
-		for _, bot := range cfg.Bots {
-			if _, _, err := validateAgentDefinitions(cfg.Agents, bot.DefaultAgentID); err != nil {
-				return httpapi.RuntimeConfig{}, fmt.Errorf("机器人 %s 的默认 Agent 不可用：%w", bot.Name, err)
-			}
+	for _, bot := range cfg.Bots {
+		if agentConfigByID(cfg.Agents, bot.DefaultAgentID).ID == "" {
+			return httpapi.RuntimeConfig{}, fmt.Errorf("不能删除机器人「%s」正在使用的 Agent，请先到该机器人的设置中切换默认 Agent", bot.Name)
+		}
+		if _, err := validateDefaultAgent(cfg.Agents, bot.DefaultAgentID); err != nil {
+			return httpapi.RuntimeConfig{}, fmt.Errorf("机器人「%s」的 Agent 不可用，请到该机器人的设置中切换：%w", bot.Name, err)
 		}
 	}
 	reconnectLark := oldCfg.LarkAppID != cfg.LarkAppID || oldCfg.LarkAppSecret != cfg.LarkAppSecret
@@ -1101,6 +1122,9 @@ func validateDefaultWorkspaceDir(dir string) (string, error) {
 }
 
 func applyRuntimeConfig(cfg Config, manager *session.Manager, bridge *session.LarkReplyBridge, reconnectLark bool) error {
+	if err := manager.SetDashboardURL(cfg.DashboardURL); err != nil {
+		return err
+	}
 	manager.SetWaitingTransitionDelays(time.Duration(cfg.FastWaitingTransitionMs)*time.Millisecond, time.Duration(cfg.ConservativeWaitingTransitionMs)*time.Millisecond)
 	manager.SetAutoRefreshInterval(time.Duration(cfg.LarkAutoRefreshIntervalMs) * time.Millisecond)
 	manager.SetHeadlessSnapshotTimeout(time.Duration(cfg.HeadlessSnapshotTimeoutMs) * time.Millisecond)
@@ -1145,6 +1169,7 @@ func applyRuntimeConfig(cfg Config, manager *session.Manager, bridge *session.La
 func runtimeConfigFromConfig(cfg Config) httpapi.RuntimeConfig {
 	cfg, _ = migrateAgentDefinitions(cfg)
 	return httpapi.RuntimeConfig{
+		DashboardURL:                    cfg.DashboardURL,
 		AutoStartEnabled:                cfg.AutoStartEnabled,
 		FastWaitingTransitionMs:         cfg.FastWaitingTransitionMs,
 		ConservativeWaitingTransitionMs: cfg.ConservativeWaitingTransitionMs,

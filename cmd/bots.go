@@ -47,7 +47,7 @@ func (s *botService) CreateBot(ctx context.Context, bot httpapi.BotConfig) (http
 		return bot, errors.New("请填写机器人名称")
 	}
 	cfg := s.root.RuntimeConfig()
-	if _, _, err := validateAgentDefinitions(cfg.Agents, bot.DefaultAgentID); err != nil {
+	if _, err := validateDefaultAgent(cfg.Agents, bot.DefaultAgentID); err != nil {
 		return bot, err
 	}
 	if _, err := validateDefaultWorkspaceDir(bot.DefaultWorkspaceDir); err != nil {
@@ -200,7 +200,7 @@ func (s *botService) SaveBot(ctx context.Context, bot httpapi.BotConfig) (httpap
 	s.root.mu.Lock()
 	cfg := *s.root.cfg
 	s.root.mu.Unlock()
-	_, _, err := validateAgentDefinitions(cfg.Agents, bot.DefaultAgentID)
+	_, err := validateDefaultAgent(cfg.Agents, bot.DefaultAgentID)
 	if err != nil {
 		return bot, err
 	}
@@ -247,7 +247,7 @@ func (s *botService) SaveBot(ctx context.Context, bot httpapi.BotConfig) (httpap
 	if err := ctx.Err(); err != nil {
 		return bot, err
 	}
-	if _, _, err := validateAgentDefinitions(cfg.Agents, bot.DefaultAgentID); err != nil {
+	if _, err := validateDefaultAgent(cfg.Agents, bot.DefaultAgentID); err != nil {
 		return bot, err
 	}
 	for _, item := range cfg.Bots {

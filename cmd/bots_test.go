@@ -166,6 +166,100 @@ func TestServiceCommandsRejectLegacySelectors(t *testing.T) {
 	}
 }
 
+func TestBotSaveDoesNotRevalidateUnchangedAgentNames(t *testing.T) {
+	withAgentExecutables(t, "aiden")
+	dir := t.TempDir()
+	custom := session.AgentConfig{ID: "custom-aiden", Kind: "custom", Name: "aiden", Command: "aiden"}
+	cfg := defaultConfig()
+	cfg.Agents, cfg.DefaultAgentID = []session.AgentConfig{custom}, custom.ID
+	cfg, _ = migrateAgentDefinitions(cfg)
+	if _, err := validateAgentList(cfg.Agents); err == nil || err.Error() != "Agent 名称不能重复" {
+		t.Fatalf("expected legacy custom/builtin name collision, got %v", err)
+	}
+	before, _ := json.Marshal(cfg.Agents)
+	mgr := session.NewManager(nil, nil, session.WithIsolatedMessageRegistry())
+	svc := &appConfigService{cfg: &cfg, path: filepath.Join(dir, "config.json"), manager: mgr}
+	bots := newBotService(svc, httpapi.NewServer(mgr, dir, svc), dir)
+	bots.test = func(httpapi.RuntimeConfig) httpapi.LarkConfigTestResult {
+		return httpapi.LarkConfigTestResult{OK: true}
+	}
+	bots.appName = func(context.Context, string, string) (string, error) { return "App", nil }
+	bot := httpapi.BotConfig{Name: "Bot", AppID: "cli_test", AppSecret: "secret", ReceiveID: "ou_owner", DefaultAgentID: custom.ID, DefaultWorkspaceDir: dir}
+	initial := svc.RuntimeConfig()
+	initial.DefaultAgentID = ""
+	if _, err := svc.UpdateRuntimeConfig(initial); err != nil {
+		t.Fatalf("global settings before bot creation must not require a default Agent: %v", err)
+	}
+	saved, err := bots.SaveBot(context.Background(), bot)
+	if err != nil {
+		t.Fatalf("create with existing Agent: %v", err)
+	}
+	saved.Name, saved.DefaultAgentID = "Renamed", "aiden"
+	saved.DefaultWorkspaceDir = t.TempDir()
+	if _, err := bots.SaveBot(context.Background(), saved); err != nil {
+		t.Fatalf("edit with built-in Agent: %v", err)
+	}
+	reloaded := loadConfig(svc.path)
+	if len(reloaded.Bots) != 1 || reloaded.Bots[0] != saved {
+		t.Fatalf("bot edits not persisted: %#v", reloaded.Bots)
+	}
+	after, _ := json.Marshal(cfg.Agents)
+	if string(before) != string(after) {
+		t.Fatal("saving a bot changed global Agent definitions")
+	}
+	// Unrelated global settings must also remain editable without renaming
+	// existing Agents, but an actual Agent-list edit still enforces uniqueness.
+	svc.bots = bots
+	req := svc.RuntimeConfig()
+	req.DashboardURL = "https://iris.example.com"
+	if _, err := svc.UpdateRuntimeConfig(req); err != nil {
+		t.Fatalf("save unrelated global setting: %v", err)
+	}
+	if got := loadConfig(svc.path).DashboardURL; got != req.DashboardURL || mgr.DashboardURL() != req.DashboardURL {
+		t.Fatalf("dashboard URL not persisted/applied: %q / %q", got, mgr.DashboardURL())
+	}
+	req.Agents = append(req.Agents, session.AgentConfig{ID: "another", Name: "aiden", Kind: "custom", Command: "aiden"})
+	if _, err := svc.UpdateRuntimeConfig(req); err == nil {
+		t.Fatal("editing Agent definitions must still reject duplicate names")
+	}
+	saved.DefaultAgentID = custom.ID
+	if _, err := bots.SaveBot(context.Background(), saved); err != nil {
+		t.Fatal(err)
+	}
+	req = svc.RuntimeConfig()
+	req.DefaultAgentID = "stale-global-default"
+	var remaining []session.AgentConfig
+	for _, agent := range req.Agents {
+		if agent.ID != custom.ID {
+			remaining = append(remaining, agent)
+		}
+	}
+	req.Agents = remaining
+	if _, err := svc.UpdateRuntimeConfig(req); err == nil || !strings.Contains(err.Error(), "Renamed") || !strings.Contains(err.Error(), "切换") {
+		t.Fatalf("deleting a referenced Agent must identify its bot and next step: %v", err)
+	}
+	if agentConfigByID(cfg.Agents, custom.ID).ID == "" {
+		t.Fatal("rejected deletion changed live Agent definitions")
+	}
+	saved.DefaultAgentID = "aiden"
+	if _, err := bots.SaveBot(context.Background(), saved); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateRuntimeConfig(req); err != nil {
+		t.Fatalf("unused Agent deletion must not require a global default: %v", err)
+	}
+	if agentConfigByID(cfg.Agents, custom.ID).ID != "" || cfg.Bots[0].DefaultAgentID != "aiden" {
+		t.Fatal("unused Agent was not deleted or bot selection changed")
+	}
+	cfg.Agents = append(cfg.Agents, session.AgentConfig{ID: "broken", Name: "Broken", Kind: "custom"})
+	for _, id := range []string{"", "missing", "broken"} {
+		saved.DefaultAgentID = id
+		if _, err := bots.SaveBot(context.Background(), saved); err == nil {
+			t.Fatalf("invalid or unavailable Agent %q accepted", id)
+		}
+	}
+}
+
 func TestCustomAgentMigrationKeepsExistingDefinition(t *testing.T) {
 	custom := session.AgentConfig{ID: "custom-existing", Kind: "custom", Name: "Shell", Command: "sh"}
 	for _, selected := range []string{"", custom.ID} {

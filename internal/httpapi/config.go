@@ -14,6 +14,7 @@ import (
 )
 
 type RuntimeConfig struct {
+	DashboardURL                    string                                `json:"dashboard_url"`
 	AutoStartEnabled                bool                                  `json:"auto_start_enabled"`
 	LarkAppID                       string                                `json:"lark_app_id"`
 	LarkAppSecret                   string                                `json:"lark_app_secret"`

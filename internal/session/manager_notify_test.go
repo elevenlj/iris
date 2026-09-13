@@ -22,6 +22,37 @@ func setTrustedLegacyRoundFixture(rt *RuntimeSession, baseline string, input str
 	rt.SetVisibleSnapshot(current)
 }
 
+func TestDashboardLinksUsePublicURLWithoutChangingAgentHooks(t *testing.T) {
+	for _, prefix := range []string{"", "/bots/bot-one", "/bots/bot-two"} {
+		t.Run(prefix, func(t *testing.T) {
+			hook := "http://127.0.0.1:8080" + prefix
+			manager := NewManager(nil, nil, WithAgentTurnHookURL(hook))
+			rt := &RuntimeSession{manager: manager, session: Session{ID: "sess-12"}}
+			if err := manager.SetDashboardURL(" https://iris.example.com:8443/ "); err != nil {
+				t.Fatal(err)
+			}
+			want := "https://iris.example.com:8443" + prefix + "/?session=sess-12"
+			if got := rt.decorateWaitingNotification(WaitingNotification{}).TerminalURL; got != want {
+				t.Fatalf("public terminal link = %q, want %q", got, want)
+			}
+			if got := manager.AgentTurnHookURL(); got != hook {
+				t.Fatalf("public URL changed private Agent callback: %q", got)
+			}
+			for _, invalid := range []string{"javascript:alert(1)", "//host", "https://", "https://user:pass@host", "https://host/?token=secret", "https://host/#fragment", "https://host/#", "https://host/?"} {
+				if err := manager.SetDashboardURL(invalid); err == nil {
+					t.Fatalf("unsafe URL accepted: %q", invalid)
+				}
+			}
+			if got := rt.decorateWaitingNotification(WaitingNotification{}).TerminalURL; got != want {
+				t.Fatalf("rejected URL changed the live link: %q", got)
+			}
+			if err := manager.SetDashboardURL(""); err != nil || manager.DashboardURL() != hook {
+				t.Fatalf("local deployment fallback changed: %q / %v", manager.DashboardURL(), err)
+			}
+		})
+	}
+}
+
 func TestWaitingNotificationRequiresReplyContent(t *testing.T) {
 	rt := &RuntimeSession{
 		manager: NewManager(nil, nil),

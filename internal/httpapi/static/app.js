@@ -944,6 +944,7 @@ function renderConfig() {
   $("cfg-lark-fallback-tail-lines").value = cfg.lark_notify_fallback_tail_lines || 100;
   $("cfg-lark-merge-wrapped-lines").checked = Boolean(cfg.lark_notify_merge_wrapped_lines);
   $("cfg-auto-start-enabled").checked = Boolean(cfg.auto_start_enabled);
+  $("cfg-dashboard-url").value = cfg.dashboard_url || "";
   $("cfg-lark-app-id").value = cfg.lark_app_id || "";
   $("cfg-lark-app-secret").value = cfg.lark_app_secret || "";
   $("cfg-lark-receive-id").value = cfg.lark_notify_receive_id || "";
@@ -1061,9 +1062,9 @@ function readConfigForm() {
   const agents = configuredAgents();
   const defaultAgentID = $("cfg-agent-preset").value;
   const defaultAgent = agents.find((agent) => agent.id === defaultAgentID);
-  if (!defaultAgent || !defaultAgent.command) throw new Error("必须配置一个 Agent");
   return {
     auto_start_enabled: $("cfg-auto-start-enabled").checked,
+    dashboard_url: $("cfg-dashboard-url").value.trim(),
     lark_app_id: $("cfg-lark-app-id").value.trim(),
     lark_app_secret: $("cfg-lark-app-secret").value,
     lark_notify_receive_id: $("cfg-lark-receive-id").value.trim(),
@@ -1087,9 +1088,9 @@ function readConfigForm() {
     session_start_presets: startPresets,
     agents,
     default_agent_id: defaultAgentID,
-    agent_kind: defaultAgent.kind,
-    agent_name: defaultAgent.name,
-    agent_command: defaultAgent.command,
+    agent_kind: defaultAgent?.kind || "",
+    agent_name: defaultAgent?.name || "",
+    agent_command: defaultAgent?.command || "",
     default_workspace_dir: $("cfg-default-workspace-dir").value.trim(),
     workspace_options: workspaces,
   };
@@ -1519,13 +1520,11 @@ function setAgentPresetStatus(message, ok = null) {
 }
 
 function ensureDefaultAgentPreset() {
-  const selected = configuredAgents().find((agent) => agent.id === $("cfg-agent-preset").value);
-  if (!selected?.name || !selected?.command) {
+  if (configuredAgents().some((agent) => agent.kind === "custom" && (!agent.name || !agent.command))) {
     setAgentPresetStatus("请填写 Agent 名称和启动命令。", false);
     return;
   }
-  state.config.default_agent_id = selected.id;
-  setAgentPresetStatus(`新会话将自动启动：${selected.kind === "custom" ? selected.command : selected.name}`, true);
+  setAgentPresetStatus("");
 }
 
 function renderOnboardingAgentControls() {

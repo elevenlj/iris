@@ -90,6 +90,7 @@ type Manager struct {
 	preStartCommand          string
 	recoveryBaseDir          string
 	agentTurnHookURL         string
+	dashboardURL             string
 	sessions                 map[string]*RuntimeSession
 	onBrowserNeeded          func(string)
 	onBrowserActive          func(string)
@@ -353,6 +354,34 @@ func (m *Manager) AgentTurnHookURL() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.agentTurnHookURL
+}
+
+// Dashboard links are public-facing; Agent hooks must remain on loopback.
+func (m *Manager) SetDashboardURL(raw string) error {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	if raw != "" {
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || strings.ContainsAny(raw, "?#") {
+			return errors.New("控制面板访问地址须为 http 或 https 地址，不能包含账号、查询参数或片段")
+		}
+	}
+	m.mu.Lock()
+	m.dashboardURL = raw
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *Manager) DashboardURL() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.dashboardURL == "" {
+		return m.agentTurnHookURL
+	}
+	hook, _ := url.Parse(m.agentTurnHookURL)
+	if hook != nil {
+		return m.dashboardURL + strings.TrimRight(hook.EscapedPath(), "/")
+	}
+	return m.dashboardURL
 }
 
 func (m *Manager) SetWaitingTransitionDelays(fast, conservative time.Duration) {
@@ -4846,7 +4875,7 @@ func (rt *RuntimeSession) decorateWaitingNotification(note WaitingNotification) 
 		note.AgentOptions = append(note.AgentOptions, AgentOption{ID: defaultAgent.ID, Label: defaultAgent.Name, Kind: defaultAgent.Kind, Command: defaultAgent.Command})
 	}
 	note.AgentID = matchingAgentOptionID(sess, note.AgentOptions)
-	if baseURL := rt.manager.AgentTurnHookURL(); baseURL != "" {
+	if baseURL := rt.manager.DashboardURL(); baseURL != "" {
 		note.TerminalURL = strings.TrimRight(baseURL, "/") + "/?session=" + url.QueryEscape(sess.ID)
 	}
 	return note

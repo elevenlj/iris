@@ -405,10 +405,11 @@ func withAgentExecutables(t *testing.T, names ...string) {
 
 func TestValidateAgentDefinitionsDoesNotAllowBuiltinOverrides(t *testing.T) {
 	withAgentExecutables(t, "codex")
-	agents, selected, err := validateAgentDefinitions([]session.AgentConfig{{ID: "codex", Name: "Changed", Kind: "custom", Command: "other"}}, "codex")
+	agents, err := validateAgentList([]session.AgentConfig{{ID: "codex", Name: "Changed", Kind: "custom", Command: "other"}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	selected := agents[0]
 	if selected.Name != "Codex" || selected.Kind != "codex" || selected.Command != session.CodexAgentCommand || agents[0] != selected {
 		t.Fatalf("validated built-in = %#v, agents=%#v", selected, agents)
 	}
@@ -426,10 +427,11 @@ func TestValidateAgentDefinitionsRecognizesAidenBuiltins(t *testing.T) {
 		{id: "aiden-codex", name: "Aiden X Codex", kind: "aiden-codex", command: session.AidenCodexAgentCommand},
 		{id: "aiden-claude", name: "Aiden X Claude Code", kind: "aiden-claude", command: session.AidenClaudeAgentCommand},
 	} {
-		agents, selected, err := validateAgentDefinitions([]session.AgentConfig{{ID: test.id, Name: "Changed", Kind: "custom", Command: "other"}}, test.id)
+		agents, err := validateAgentList([]session.AgentConfig{{ID: test.id, Name: "Changed", Kind: "custom", Command: "other"}})
 		if err != nil {
 			t.Fatal(err)
 		}
+		selected := agents[0]
 		if selected.Name != test.name || selected.Kind != test.kind || selected.Command != test.command || agents[0] != selected {
 			t.Fatalf("validated %s = %#v, agents=%#v", test.id, selected, agents)
 		}

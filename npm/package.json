@@ -1,6 +1,6 @@
 {
   "name": "@lijuneleven/iris",
-  "version": "0.2.82",
+  "version": "0.2.83",
   "description": "Feishu-first personal AI assistant powered by local Agents.",
   "license": "MIT",
   "bin": {

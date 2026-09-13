@@ -249,6 +249,7 @@ const ids = [
   "cfg-lark-fallback-tail-lines",
   "cfg-lark-merge-wrapped-lines",
   "cfg-auto-start-enabled",
+  "cfg-dashboard-url",
   "cfg-lark-app-id",
   "cfg-lark-app-secret",
   "cfg-lark-receive-id",
@@ -1323,7 +1324,7 @@ assert.equal(generatedStartPresets["999999"], undefined, "Agent selection should
 elements["cfg-agent-preset"].value = "claude";
 elements["cfg-agent-preset"].onchange();
 assert.equal(elements["agent-option-list"].children.length, 0, "scanned Agents should not expose editable details");
-assert.equal(elements["agent-preset-status"].textContent, "新会话将自动启动：Claude Code", "scanned Agent status should not expose its command");
+assert.equal(elements["agent-preset-status"].textContent, "", "global Agent list must not advertise a default Agent");
 elements["agent-option-add"].onclick();
 const customAgentRow = elements["agent-option-list"].lastElementChild;
 const customAgentID = customAgentRow.dataset.agentId;
@@ -1332,7 +1333,7 @@ customAgentRow.querySelector(".agent-option-command").value = "my-agent --run";
 customAgentRow.querySelector(".agent-option-command").oninput();
 elements["cfg-agent-preset"].value = customAgentID;
 elements["cfg-agent-preset"].onchange();
-assert.match(elements["agent-preset-status"].textContent, /my-agent --run/, "custom Agent command should be reflected in status");
+assert.equal(elements["agent-preset-status"].textContent, "", "default Agents are selected in bot settings, not global settings");
 app.state.config = {
   ...app.state.config,
   default_agent_id: "codex",
@@ -1391,6 +1392,7 @@ assert.equal(elements["environment-check-result"].children[1].className, "enviro
 assert.equal(elements["environment-check-result"].children[2].className, "environment-check-step warning");
 assert.equal(elements["environment-check-start"].disabled, false);
 assert.equal(elements["environment-check-start"].textContent, "重新检测");
+elements["cfg-dashboard-url"].value = "https://iris.example.com";
 await app.saveConfig();
 const configPatch = fetchCalls.filter((call) => call.path === "/api/config" && call.options.method === "PATCH").at(-1);
 assert.ok(configPatch, "config form should PATCH /api/config");
@@ -1403,6 +1405,7 @@ assert.equal(patchedConfig.lark_notify_max_lines, 300);
 assert.equal(patchedConfig.lark_notify_fallback_tail_lines, 100);
 assert.equal(patchedConfig.lark_notify_merge_wrapped_lines, true);
 assert.equal(patchedConfig.auto_start_enabled, true);
+assert.equal(patchedConfig.dashboard_url, "https://iris.example.com");
 assert.equal(patchedConfig.lark_app_id, "new-app");
 assert.equal(patchedConfig.lark_mention_enabled, false);
 assert.equal(patchedConfig.lark_session_chat_prefix, "DEV ·");
