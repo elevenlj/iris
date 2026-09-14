@@ -53,6 +53,104 @@ func TestDashboardLinksUsePublicURLWithoutChangingAgentHooks(t *testing.T) {
 	}
 }
 
+func TestDashboardLinksResolveCurrentNetwork(t *testing.T) {
+	for _, prefix := range []string{"", "/bots/bot-one", "/bots/bot-two"} {
+		t.Run(prefix, func(t *testing.T) {
+			current := "http://192.168.1.10:8088"
+			calls := 0
+			m := NewManager(nil, nil, WithAgentTurnHookURL("http://127.0.0.1:8088"+prefix))
+			if err := m.SetDashboardURL("", func() string { calls++; return current }); err != nil {
+				t.Fatal(err)
+			}
+			rt := &RuntimeSession{manager: m, session: Session{ID: "sess-2"}}
+			note := WaitingNotification{}
+			for _, address := range []string{current, "http://10.0.0.20:8088", "http://[2001:db8::1]:8088"} {
+				current = address
+				note = rt.decorateWaitingNotification(note)
+				if want := address + prefix + "/?session=sess-2"; note.TerminalURL != want {
+					t.Fatalf("link=%q want=%q", note.TerminalURL, want)
+				}
+			}
+			before := calls
+			if err := m.SetDashboardURL("https://iris.example.com/proxy/"); err != nil {
+				t.Fatal(err)
+			}
+			if got := rt.decorateWaitingNotification(note).TerminalURL; got != "https://iris.example.com/proxy"+prefix+"/?session=sess-2" || calls != before {
+				t.Fatalf("manual link=%q detection calls=%d", got, calls)
+			}
+			if err := m.SetDashboardURL(""); err != nil {
+				t.Fatal(err)
+			}
+			current = ""
+			if got := rt.decorateWaitingNotification(note).TerminalURL; got != "" {
+				t.Fatalf("offline link retained stale address: %q", got)
+			}
+			current = "http://10.0.0.30:8088"
+			if got := m.DashboardURL(); got != current+prefix {
+				t.Fatalf("recovered link=%q", got)
+			}
+		})
+	}
+}
+
+func TestClaudeStopWaitsForBackgroundWork(t *testing.T) {
+	m := NewManager(nil, nil)
+	rt := &RuntimeSession{manager: m, session: Session{ID: "sess-1", Live: true, Status: StatusRunning, RecoveryKey: "token", LastMode: SessionModeAgent, LastAgentKind: "claude"}}
+	m.sessions["sess-1"] = rt
+	pending, done := true, false
+	for _, step := range []struct {
+		pending  *bool
+		want     string
+		complete bool
+	}{
+		{&pending, StatusRunning, false}, {nil, StatusRunning, false},
+		{&done, StatusWaiting, true}, {&pending, StatusRunning, false}, {&done, StatusWaiting, true},
+	} {
+		_, accepted, err := m.CompleteAgentTurn(context.Background(), "sess-1", "token", "", "阶段回复", step.pending)
+		if err != nil || accepted != step.complete {
+			t.Fatalf("accepted=%v err=%v", accepted, err)
+		}
+		if rt.session.Status != step.want || rt.hookCompletedCurrentRound != step.complete {
+			t.Fatalf("status=%s completed=%v", rt.session.Status, rt.hookCompletedCurrentRound)
+		}
+		if !step.complete && rt.hookLastAssistantMessage != "" {
+			t.Fatal("intermediate reply became final content")
+		}
+	}
+	// Terminal repaint must not reopen a genuinely completed round.
+	rt.HandleOutput([]byte("terminal repaint"))
+	if rt.Snapshot().Status != StatusWaiting {
+		t.Fatal("repaint reopened completed round")
+	}
+}
+
+func TestClaudeStopOnlyNotifiesAfterBackgroundWork(t *testing.T) {
+	notifier := &recordingNotifier{}
+	m := NewManager(nil, nil, WithNotifier(notifier))
+	rt := &RuntimeSession{manager: m, session: Session{ID: "sess-1", Live: true, Status: StatusRunning, NotifyOnWaiting: true, RecoveryKey: "token", LastMode: SessionModeAgent, LastAgentKind: "claude"}, lastNotifiedMessageID: "card-1", lastNotifiedContent: "处理中", notificationRunning: true}
+	m.sessions["sess-1"] = rt
+	pending := true
+	if _, accepted, err := m.CompleteAgentTurn(context.Background(), "sess-1", "token", "", "还在等待 12 个 Agent", &pending); err != nil || accepted {
+		t.Fatalf("premature completion: %v %v", accepted, err)
+	}
+	rt.mu.Lock()
+	version := rt.notifyVersion
+	rt.mu.Unlock()
+	// Even a previously scheduled notification must not publish this Stop.
+	rt.notifyIfStillWaitingWithMode(version, true, false)
+	if notes := notifier.notes(); len(notes) != 0 {
+		t.Fatalf("intermediate completion sent: %#v", notes)
+	}
+	pending = false
+	if _, accepted, err := m.CompleteAgentTurn(context.Background(), "sess-1", "token", "", "最终汇总", &pending); err != nil || !accepted {
+		t.Fatalf("final completion: %v %v", accepted, err)
+	}
+	notes := waitForNotifierNotes(t, notifier, 1)
+	if notes[0].Running || notes[0].SuppressUpdateTip || notes[0].Content != "最终汇总" || notes[0].SnapshotSource != "claude_hook:last_assistant_message" {
+		t.Fatalf("final notification=%#v", notes[0])
+	}
+}
+
 func TestWaitingNotificationRequiresReplyContent(t *testing.T) {
 	rt := &RuntimeSession{
 		manager: NewManager(nil, nil),

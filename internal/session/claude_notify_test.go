@@ -112,7 +112,7 @@ func TestEnsureAidenStopHookInstallsCompatibleStopHook(t *testing.T) {
 }
 
 func TestRunClaudeStopHookPostsOfficialPayload(t *testing.T) {
-	payload := `{"session_id":"019f5153-6e7f-7742-9f61-3ffe1530d61c","hook_event_name":"Stop","last_assistant_message":"Claude 本轮最终回复","stop_hook_active":false}`
+	payload := `{"session_id":"019f5153-6e7f-7742-9f61-3ffe1530d61c","hook_event_name":"Stop","last_assistant_message":"Claude 本轮最终回复","stop_hook_active":false,"background_tasks":[{"id":"agent-1","type":"subagent","status":"running"}]}`
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -128,6 +128,9 @@ func TestRunClaudeStopHookPostsOfficialPayload(t *testing.T) {
 		}
 		if got["last_assistant_message"] != "Claude 本轮最终回复" {
 			t.Errorf("payload = %#v", got)
+		}
+		if tasks, ok := got["background_tasks"].([]any); !ok || len(tasks) != 1 {
+			t.Errorf("background task snapshot lost: %#v", got["background_tasks"])
 		}
 		w.WriteHeader(http.StatusOK)
 	}))

@@ -247,7 +247,8 @@ func run() error {
 		}),
 	)
 	mgr.SetDefaultWorkspaceDir(cfg.DefaultWorkspaceDir)
-	if err := mgr.SetDashboardURL(dashboardURLForConfig(cfg)); err != nil {
+	dashboardPort := cfg.Port
+	if err := mgr.SetDashboardURL(cfg.DashboardURL, func() string { return detectedDashboardURL(Config{Port: dashboardPort}) }); err != nil {
 		return err
 	}
 	mgr.SetAgentConfig(defaultAgentConfig(cfg), cfg.WorkspaceOptions)
@@ -1140,7 +1141,7 @@ func validateDefaultWorkspaceDir(dir string) (string, error) {
 }
 
 func applyRuntimeConfig(cfg Config, manager *session.Manager, bridge *session.LarkReplyBridge, reconnectLark bool) error {
-	if err := manager.SetDashboardURL(dashboardURLForConfig(cfg)); err != nil {
+	if err := manager.SetDashboardURL(cfg.DashboardURL, func() string { return detectedDashboardURL(cfg) }); err != nil {
 		return err
 	}
 	manager.SetWaitingTransitionDelays(time.Duration(cfg.FastWaitingTransitionMs)*time.Millisecond, time.Duration(cfg.ConservativeWaitingTransitionMs)*time.Millisecond)

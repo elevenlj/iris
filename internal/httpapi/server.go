@@ -451,10 +451,11 @@ func (s *Server) handleAgentHook(w http.ResponseWriter, r *http.Request, session
 	}
 	token := agentSessionBearerToken(r)
 	var payload struct {
-		SessionID                  string `json:"session_id"`
-		ThreadID                   string `json:"thread-id"`
-		LastAssistantMessage       string `json:"last_assistant_message"`
-		LegacyLastAssistantMessage string `json:"last-assistant-message"`
+		SessionID                  string            `json:"session_id"`
+		ThreadID                   string            `json:"thread-id"`
+		LastAssistantMessage       string            `json:"last_assistant_message"`
+		LegacyLastAssistantMessage string            `json:"last-assistant-message"`
+		BackgroundTasks            []json.RawMessage `json:"background_tasks"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
@@ -469,7 +470,12 @@ func (s *Server) handleAgentHook(w http.ResponseWriter, r *http.Request, session
 	if lastAssistantMessage == "" {
 		lastAssistantMessage = strings.TrimSpace(payload.LegacyLastAssistantMessage)
 	}
-	sess, accepted, err := s.manager.CompleteAgentTurn(r.Context(), sessionID, token, agentSessionID, lastAssistantMessage)
+	var backgroundPending *bool
+	if payload.BackgroundTasks != nil {
+		pending := len(payload.BackgroundTasks) > 0
+		backgroundPending = &pending
+	}
+	sess, accepted, err := s.manager.CompleteAgentTurn(r.Context(), sessionID, token, agentSessionID, lastAssistantMessage, backgroundPending)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err)
 		return

@@ -93,6 +93,7 @@ type Manager struct {
 	recoveryBaseDir          string
 	agentTurnHookURL         string
 	dashboardURL             string
+	detectDashboardURL       func() string
 	sessions                 map[string]*RuntimeSession
 	onBrowserNeeded          func(string)
 	onBrowserActive          func(string)
@@ -359,7 +360,7 @@ func (m *Manager) AgentTurnHookURL() string {
 }
 
 // Dashboard links are public-facing; Agent hooks must remain on loopback.
-func (m *Manager) SetDashboardURL(raw string) error {
+func (m *Manager) SetDashboardURL(raw string, detect ...func() string) error {
 	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
 	if raw != "" {
 		u, err := url.Parse(raw)
@@ -369,21 +370,31 @@ func (m *Manager) SetDashboardURL(raw string) error {
 	}
 	m.mu.Lock()
 	m.dashboardURL = raw
+	if len(detect) > 0 {
+		m.detectDashboardURL = detect[0]
+	}
 	m.mu.Unlock()
 	return nil
 }
 
 func (m *Manager) DashboardURL() string {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.dashboardURL == "" {
-		return m.agentTurnHookURL
+	base, hookURL, detect := m.dashboardURL, m.agentTurnHookURL, m.detectDashboardURL
+	m.mu.RUnlock()
+	if base == "" && detect != nil {
+		base = strings.TrimRight(detect(), "/")
 	}
-	hook, _ := url.Parse(m.agentTurnHookURL)
+	if base == "" {
+		if detect != nil {
+			return "" // No reachable interface: do not advertise loopback remotely.
+		}
+		return hookURL
+	}
+	hook, _ := url.Parse(hookURL)
 	if hook != nil {
-		return m.dashboardURL + strings.TrimRight(hook.EscapedPath(), "/")
+		return base + strings.TrimRight(hook.EscapedPath(), "/")
 	}
-	return m.dashboardURL
+	return base
 }
 
 func (m *Manager) SetWaitingTransitionDelays(fast, conservative time.Duration) {
@@ -1317,6 +1328,7 @@ type RuntimeSession struct {
 	controlInputActive                bool
 	agentTurnHookVerified             bool
 	hookCompletedCurrentRound         bool
+	hookBackgroundPending             bool
 	hookCompletionTipClaimed          bool
 	hookLastAssistantMessage          string
 	suppressRunningMarker             bool
@@ -1795,6 +1807,7 @@ func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, laun
 		rt.capturedInputBaselineHeadless = false
 		rt.agentTurnHookVerified = false
 		rt.hookCompletedCurrentRound = false
+		rt.hookBackgroundPending = false
 		rt.hookCompletionTipClaimed = false
 		rt.hookLastAssistantMessage = ""
 		rt.session.UpdatedAt = time.Now().UTC()
@@ -4198,15 +4211,17 @@ func (rt *RuntimeSession) HandleOutput(chunk []byte) {
 // CompleteAgentTurn marks the current Agent round as complete after a local
 // completion callback. The recovery key is a per-session bearer credential
 // injected only into that session's shell environment.
-func (m *Manager) CompleteAgentTurn(ctx context.Context, sessionID, token, agentSessionID, lastAssistantMessage string) (Session, bool, error) {
+// Optional backgroundPending is Claude's in-flight task snapshot; nil means
+// the CLI omitted the field and must not clear previously known pending work.
+func (m *Manager) CompleteAgentTurn(ctx context.Context, sessionID, token, agentSessionID, lastAssistantMessage string, backgroundPending ...*bool) (Session, bool, error) {
 	rt, ok := m.GetRuntime(strings.TrimSpace(sessionID))
 	if !ok {
 		return Session{}, false, nil
 	}
-	return rt.completeAgentTurn(ctx, token, agentSessionID, lastAssistantMessage)
+	return rt.completeAgentTurn(ctx, token, agentSessionID, lastAssistantMessage, backgroundPending...)
 }
 
-func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSessionID, lastAssistantMessage string) (Session, bool, error) {
+func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSessionID, lastAssistantMessage string, backgroundPending ...*bool) (Session, bool, error) {
 	if rt == nil || rt.manager == nil {
 		return Session{}, false, nil
 	}
@@ -4243,6 +4258,37 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSes
 		if command, ok := pinAidenResumeCommand(rt.session.LastAgentResumeCommand, strings.TrimSpace(agentSessionID)); ok {
 			rt.session.LastAgentResumeCommand = command
 			pinnedRecovery = true
+		}
+	}
+	// Claude Stop ends one response, not necessarily the background workflow.
+	// A missing field from an older CLI must not clear known pending work.
+	if agentKind == "claude" {
+		if len(backgroundPending) > 0 && backgroundPending[0] != nil {
+			rt.hookBackgroundPending = *backgroundPending[0]
+		}
+		if rt.hookBackgroundPending {
+			rt.agentTurnHookVerified = true
+			rt.hookCompletedCurrentRound = false
+			rt.hookLastAssistantMessage = ""
+			rt.session.Status = StatusRunning
+			rt.session.UpdatedAt = time.Now().UTC()
+			rt.stateVersion++
+			rt.notifyVersion++
+			rt.stopNotifyTimerLocked()
+			rt.stopNotifyStableTimerLocked()
+			var note WaitingNotification
+			update := false
+			if !rt.notificationRunning {
+				note, update = rt.markNotificationRunningLocked()
+			}
+			log.Printf("agent stop deferred session=%s reason=background_tasks_pending", rt.session.ID)
+			s := rt.session
+			rt.mu.Unlock()
+			_ = rt.manager.persist(ctx, s)
+			if update {
+				go rt.updateNotificationRunning(note, true)
+			}
+			return s, false, nil
 		}
 	}
 	lastAssistantMessage = strings.TrimSpace(lastAssistantMessage)
@@ -4992,6 +5038,7 @@ func (rt *RuntimeSession) decorateWaitingNotification(note WaitingNotification) 
 		note.AgentOptions = append(note.AgentOptions, AgentOption{ID: defaultAgent.ID, Label: defaultAgent.Name, Kind: defaultAgent.Kind, Command: defaultAgent.Command})
 	}
 	note.AgentID = matchingAgentOptionID(sess, note.AgentOptions)
+	note.TerminalURL = ""
 	if baseURL := rt.manager.DashboardURL(); baseURL != "" {
 		note.TerminalURL = strings.TrimRight(baseURL, "/") + "/?session=" + url.QueryEscape(sess.ID)
 	}

@@ -147,6 +147,41 @@ func TestAgentStopHookAcceptsLastAssistantMessage(t *testing.T) {
 	}
 }
 
+func TestClaudeStopBackgroundTasksHTTP(t *testing.T) {
+	for _, command := range []string{"claude --dangerously-skip-permissions", "aiden x claude --dangerously-skip-permissions"} {
+		t.Run(command, func(t *testing.T) {
+			manager := session.NewManager(nil, wsBridgeTestLauncher{terminal: newWSBridgeTestTerminal()})
+			sess, err := manager.CreateSession(context.Background(), "background")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rt, _ := manager.GetRuntime(sess.ID)
+			defer rt.Close()
+			rt.RecordShellCommandForRecovery(command)
+			server := NewServer(manager, "").Handler()
+			for _, step := range []struct {
+				tasks, token, status string
+				code                 int
+			}{
+				{`,"background_tasks":[{"id":"agent-1","type":"subagent","status":"running"}]`, sess.RecoveryKey, session.StatusRunning, 200},
+				{`,"background_tasks":[]`, "wrong", session.StatusRunning, 401},
+				{"", sess.RecoveryKey, session.StatusRunning, 200},
+				{`,"background_tasks":null`, sess.RecoveryKey, session.StatusRunning, 200},
+				{`,"background_tasks":{}`, sess.RecoveryKey, session.StatusRunning, 400},
+				{`,"background_tasks":[]`, sess.RecoveryKey, session.StatusWaiting, 200},
+			} {
+				req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sess.ID+"/hook/turn-ended", strings.NewReader(`{"hook_event_name":"Stop","last_assistant_message":"回复"`+step.tasks+`}`))
+				req.Header.Set("X-Iris-Agent-Token", step.token)
+				rec := httptest.NewRecorder()
+				server.ServeHTTP(rec, req)
+				if rec.Code != step.code || rt.Snapshot().Status != step.status {
+					t.Fatalf("tasks=%s HTTP=%d status=%s body=%s", step.tasks, rec.Code, rt.Snapshot().Status, rec.Body.String())
+				}
+			}
+		})
+	}
+}
+
 func TestAgentLarkContextEndpointsUseSessionTokenAndBoundChat(t *testing.T) {
 	terminal := newWSBridgeTestTerminal()
 	manager := session.NewManager(nil, wsBridgeTestLauncher{terminal: terminal})
