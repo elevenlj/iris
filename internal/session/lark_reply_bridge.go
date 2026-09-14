@@ -102,6 +102,8 @@ type larkRouteContext struct {
 	MentionedBot  bool
 	Mentions      []*larkim.MentionEvent
 	AssistantName string
+
+	IgnoreAssistantMessage bool
 }
 
 func (c larkRouteContext) notificationMentionOpenID() string {
@@ -1082,6 +1084,10 @@ func (b *LarkReplyBridge) shouldIgnoreForMentionMode(ctx context.Context, routeC
 		return "", false
 	}
 	sessionID := b.mentionModeSessionID(ctx, routeCtx, incoming)
+	if routeCtx.IgnoreAssistantMessage {
+		log.Printf("lark reply bridge ignored message=%s session=%s reason=assistant_requires_human_sender", routeCtx.MessageID, sessionID)
+		return sessionID, true
+	}
 	if sessionID == "" {
 		// An unbound topic belongs to another conversation; do not interject unless addressed.
 		if routeCtx.ThreadID != "" && !b.routeContextMentionsBot(ctx, routeCtx) {
@@ -1101,7 +1107,7 @@ func (b *LarkReplyBridge) shouldIgnoreForMentionMode(ctx context.Context, routeC
 }
 
 func (b *LarkReplyBridge) prepareAssistantRoute(ctx context.Context, routeCtx larkRouteContext, incoming larkIncomingMessage) larkRouteContext {
-	if routeCtx.AssistantName != "" || !isLarkGroupChatType(routeCtx.ChatType) || b == nil || b.manager == nil {
+	if routeCtx.IgnoreAssistantMessage || routeCtx.AssistantName != "" || !isLarkGroupChatType(routeCtx.ChatType) || b == nil || b.manager == nil {
 		return routeCtx
 	}
 	b.mu.Lock()
@@ -1114,6 +1120,13 @@ func (b *LarkReplyBridge) prepareAssistantRoute(ctx context.Context, routeCtx la
 	sessionID := b.mentionModeSessionID(ctx, routeCtx, incoming)
 	sess, ok, err := b.manager.GetSession(ctx, sessionID)
 	if err != nil || !ok || !sess.AssistantModeEnabled {
+		return routeCtx
+	}
+	// Bot-to-bot requests still work when addressed to this bot directly.
+	// Mentions of the developer by an application must not summon their assistant,
+	// even when ordinary mention-only filtering is disabled.
+	if routeCtx.SenderType != "" && routeCtx.SenderType != "user" {
+		routeCtx.IgnoreAssistantMessage = true
 		return routeCtx
 	}
 	routeCtx.AssistantName = "他"

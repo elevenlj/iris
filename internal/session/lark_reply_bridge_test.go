@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -989,6 +990,72 @@ func TestLarkReplyBridgeAssistantMode(t *testing.T) {
 	}}
 	if got := bridge.prepareAssistantRoute(context.Background(), both, larkIncomingMessage{Text: "正常呼叫机器人"}); got.AssistantName != "" {
 		t.Fatalf("message mentioning both bot and developer must stay a normal request: %#v", got)
+	}
+}
+
+func TestLarkAssistantIgnoresApplicationDeveloperMentions(t *testing.T) {
+	for _, mentionOnly := range []bool{true, false} {
+		for _, tc := range []struct {
+			name, senderType      string
+			mentionBot, assistant bool
+		}{
+			{"application mentions developer", "app", false, false},
+			{"human mentions developer", "user", false, true},
+			{"application directly mentions bot", "app", true, false},
+			{"human directly mentions bot", "user", true, false},
+		} {
+			t.Run(fmt.Sprintf("%s/mention_only=%v", tc.name, mentionOnly), func(t *testing.T) {
+				resetLarkRegistryForTest()
+				launcher := &recordingLauncher{}
+				manager := NewManager(nil, launcher)
+				bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+				bridge.SetDeveloperOpenID("ou-owner")
+				bridge.botIdentity = larkBotIdentity{OpenID: "ou-bot"}
+				lookups, reactions := 0, 0
+				bridge.fetchUserDisplayName = func(context.Context, string) (string, error) { lookups++; return "Owner", nil }
+				bridge.addReaction = func(context.Context, string, string) error { reactions++; return nil }
+				sess, err := manager.CreateSession(context.Background(), "Group")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer manager.DeleteSession(context.Background(), sess.ID)
+				if _, _, err := manager.BindLarkChat(context.Background(), sess.ID, "oc-group"); err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := manager.UpdateAssistantMode(context.Background(), sess.ID, true); err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := manager.UpdateLarkMentionMode(context.Background(), sess.ID, mentionOnly); err != nil {
+					t.Fatal(err)
+				}
+				event := p2MessageWithChat("m-test", "", "", "text", `{"text":"@_user_1 检查任务"}`, "group", "oc-group", "ou-sender")
+				event.Event.Sender.SenderType = strPtr(tc.senderType)
+				event.Event.Message.Mentions = []*larkim.MentionEvent{{Key: strPtr("@_user_1"), Id: &larkim.UserId{OpenId: strPtr("ou-owner")}}}
+				if tc.mentionBot {
+					event.Event.Message.Mentions = append(event.Event.Message.Mentions, &larkim.MentionEvent{Id: &larkim.UserId{OpenId: strPtr("ou-bot")}})
+				}
+				before := launcher.terminals[0].writes()
+				if err := bridge.HandleP2MessageReceive(context.Background(), event); err != nil {
+					t.Fatal(err)
+				}
+				ignored := tc.senderType == "app" && !tc.mentionBot
+				if ignored {
+					if launcher.terminals[0].writes() != before || reactions != 0 || lookups != 0 {
+						t.Fatal("application developer mention caused assistant side effects")
+					}
+					// Direct routing must enforce the same rule as the event handler.
+					_, err := bridge.RouteIncomingWithContext(context.Background(), larkRouteContext{MessageID: "m-direct", ChatID: "oc-group", ChatType: "group", SenderType: "app", Mentions: event.Event.Message.Mentions}, larkIncomingMessage{Text: "检查任务"})
+					if err != nil || launcher.terminals[0].writes() != before {
+						t.Fatalf("direct route bypassed filter: %v", err)
+					}
+				} else if !strings.Contains(launcher.terminals[0].writes(), PrepareStructuredInput("检查任务")) || reactions != 1 {
+					t.Fatal("legitimate request stopped routing")
+				}
+				if got := manager.sessions[sess.ID].NotificationAssistantName() != ""; got != tc.assistant {
+					t.Fatalf("assistant=%v want=%v", got, tc.assistant)
+				}
+			})
+		}
 	}
 }
 
