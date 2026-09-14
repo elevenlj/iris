@@ -83,6 +83,24 @@ func TestExtractLarkIncomingMessageWithPostAttachments(t *testing.T) {
 	}
 }
 
+func TestExtractLarkIncomingCard(t *testing.T) {
+	for _, tc := range []struct{ name, content, want string }{
+		{"received", `{"title":"阶段结论","elements":[[{"tag":"at","user_id":"ou-bot"},{"tag":"text","text":"请复核"}],[{"tag":"a","text":"报告","href":"https://example.com"}],[{"tag":"button","text":"刷新"}],[{"tag":"img","image_key":"decoration"}]]}`, "阶段结论\n请复核\n报告"},
+		{"v1", `{"header":{"title":{"tag":"plain_text","content":"阶段结论"}},"elements":[{"tag":"div","text":{"tag":"lark_md","content":"@_user_1 请复核"}},{"tag":"action","actions":[{"tag":"button","text":{"content":"刷新"},"value":{"content":"不要执行"}}]}]}`, "阶段结论\n@_user_1 请复核"},
+		{"v2", `{"schema":"2.0","header":{"title":{"content":"阶段结论"}},"body":{"elements":[{"tag":"markdown","content":"@_user_1 请复核"},{"tag":"column_set","columns":[{"tag":"column","elements":[{"tag":"markdown","content":"第二段"}]}]},{"tag":"button","text":{"content":"刷新"}},{"tag":"img","img_key":"decoration"}]}}`, "阶段结论\n@_user_1 请复核\n第二段"},
+		{"placeholder", `{"text":"请升级至最新版本客户端，以查看内容","image_key":"decoration"}`, ""},
+		{"empty", `{}`, ""},
+		{"malformed", `{"text":`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractLarkIncomingMessage(tc.content, "interactive")
+			if got.Text != tc.want || len(got.Attachments) != 0 {
+				t.Fatalf("card = %#v, want text %q without attachments", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestLarkReplyBridgeReferencedTextIsSubmittedAsContext(t *testing.T) {
 	resetLarkRegistryForTest()
 	launcher := &recordingLauncher{}
@@ -1777,7 +1795,7 @@ func TestLarkReplyBridgeFileWaitsForTextBeforeEnter(t *testing.T) {
 	}
 }
 
-func TestLarkReplyBridgeIgnoresInteractiveCards(t *testing.T) {
+func TestLarkReplyBridgeIgnoresUnaddressedInteractiveCards(t *testing.T) {
 	resetLarkRegistryForTest()
 	launcher := &recordingLauncher{}
 	manager := NewManager(nil, launcher)
@@ -1806,6 +1824,73 @@ func TestLarkReplyBridgeIgnoresInteractiveCards(t *testing.T) {
 	}
 	if reply != "" {
 		t.Fatalf("interactive card should be silently ignored, got %q", reply)
+	}
+}
+
+func TestLarkReplyBridgeRoutesAddressedCards(t *testing.T) {
+	for _, mentionOnly := range []bool{true, false} {
+		for _, tc := range []struct {
+			name, sender, senderType, mentioned, content string
+			wantInput                                    bool
+		}{
+			{"peer", "ou-peer", "app", "ou-self", `{"elements":[[{"tag":"text","text":"@_user_1 请复核"}]]}`, true},
+			{"human", "ou-user", "user", "ou-self", `{"body":{"elements":[{"tag":"markdown","content":"@_user_1 请复核"}]}}`, true},
+			{"own", "ou-self", "app", "ou-self", `{"text":"请复核"}`, false},
+			{"other bot", "ou-peer", "app", "ou-other", `{"text":"请复核"}`, false},
+			{"developer", "ou-peer", "app", "ou-owner", `{"text":"请复核"}`, false},
+			{"unreadable reply", "ou-peer", "app", "ou-self", `{"text":"请升级至最新版本客户端，以查看内容"}`, false},
+			{"missing mention metadata", "ou-peer", "app", "", `{"text":"<at id=ou-self></at> 请复核"}`, false},
+		} {
+			t.Run(fmt.Sprintf("%s/mention_only=%v", tc.name, mentionOnly), func(t *testing.T) {
+				ctx := context.Background()
+				launcher := &recordingLauncher{}
+				manager := NewManager(nil, launcher, WithIsolatedMessageRegistry())
+				bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+				bridge.botIdentity = larkBotIdentity{OpenID: "ou-self"}
+				bridge.SetDeveloperOpenID("ou-owner")
+				bridge.addReaction = nil
+				bridge.replyText = func(context.Context, string, string) error { t.Fatal("unexpected text reply"); return nil }
+				bridge.fetchReferencedMessages = func(context.Context, string) ([]larkReferencedMessage, error) { return nil, nil }
+				sess, err := manager.CreateSession(ctx, "Group")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer manager.DeleteSession(ctx, sess.ID)
+				if _, _, err := manager.BindLarkChat(ctx, sess.ID, "oc-group"); err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := manager.UpdateLarkMentionMode(ctx, sess.ID, mentionOnly); err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := manager.UpdateAssistantMode(ctx, sess.ID, true); err != nil {
+					t.Fatal(err)
+				}
+				event := p2MessageWithChat("m-card", "parent", "", "interactive", tc.content, "group", "oc-group", tc.sender)
+				event.Event.Sender.SenderType = strPtr(tc.senderType)
+				if tc.mentioned != "" {
+					event.Event.Message.Mentions = []*larkim.MentionEvent{{Key: strPtr("@_user_1"), Id: &larkim.UserId{OpenId: strPtr(tc.mentioned)}}}
+				}
+				if err := bridge.HandleP2MessageReceive(ctx, event); err != nil {
+					t.Fatal(err)
+				}
+				got := launcher.terminals[0].writes()
+				if strings.Contains(got, "请复核") != tc.wantInput || (!tc.wantInput && got != "") {
+					t.Fatalf("unexpected terminal input: %q", got)
+				}
+				if tc.wantInput {
+					if err := bridge.HandleP2MessageReceive(ctx, event); err != nil {
+						t.Fatal(err)
+					}
+					if launcher.terminals[0].writes() != got {
+						t.Fatal("duplicate card was delivered twice")
+					}
+					note := manager.sessions[sess.ID].decorateWaitingNotification(WaitingNotification{InputMessageID: "m-card", MentionOpenID: tc.sender})
+					if note.BotInput != (tc.senderType == "app") || (note.BotInput && note.MentionOpenID != "") {
+						t.Fatalf("card lost input origin: %#v", note)
+					}
+				}
+			})
+		}
 	}
 }
 

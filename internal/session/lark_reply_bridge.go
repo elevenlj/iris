@@ -933,16 +933,15 @@ func (b *LarkReplyBridge) HandleP2MessageReceive(ctx context.Context, event *lar
 		return nil
 	}
 	msg := event.Event.Message
-	// Card messages (including other bots' updates) are not Agent input.
-	// Button interactions arrive through the separate card-action callback.
-	if valueOf(msg.MessageType) == "interactive" {
+	messageType := valueOf(msg.MessageType)
+	incoming := extractLarkIncomingMessage(valueOf(msg.Content), messageType)
+	// Unreadable or unaddressed cards stay silent, even when quoting a message.
+	if messageType == "interactive" && (incoming.Text == "" || len(msg.Mentions) == 0) {
 		return nil
 	}
 	if b.isOwnLarkMessage(ctx, event.Event.Sender) {
 		return nil
 	}
-	messageType := valueOf(msg.MessageType)
-	incoming := extractLarkIncomingMessage(valueOf(msg.Content), messageType)
 	if b.shouldIgnoreIncomingText(incoming.Text) {
 		return nil
 	}
@@ -959,6 +958,11 @@ func (b *LarkReplyBridge) HandleP2MessageReceive(ctx context.Context, event *lar
 	}
 	if event.Event.Sender != nil {
 		routeCtx.SenderType = strings.TrimSpace(valueOf(event.Event.Sender.SenderType))
+	}
+	// Cards are often status updates. Only an explicit mention is Agent input;
+	// button clicks still use the separate card-action callback.
+	if messageType == "interactive" && !b.routeContextMentionsBot(ctx, routeCtx) {
+		return nil
 	}
 	ctx = b.topicReplyContext(ctx, routeCtx)
 	routeCtx = b.prepareAssistantRoute(ctx, routeCtx, incoming)
@@ -3166,6 +3170,9 @@ func extractLarkIncomingMessage(content string, messageType string) larkIncoming
 	}
 	var raw any
 	if err := json.Unmarshal([]byte(content), &raw); err != nil {
+		if messageType == "interactive" {
+			return larkIncomingMessage{}
+		}
 		return larkIncomingMessage{Text: content}
 	}
 	var incoming larkIncomingMessage
@@ -3179,6 +3186,13 @@ func extractLarkIncomingMessage(content string, messageType string) larkIncoming
 		collectPostText(raw, &parts)
 		incoming.Text = strings.TrimSpace(strings.Join(parts, ""))
 		collectLarkAttachmentRefs(raw, &incoming.Attachments)
+	case "interactive":
+		var parts []string
+		collectLarkCardText(raw, &parts)
+		incoming.Text = strings.TrimSpace(strings.Join(parts, "\n"))
+		if incoming.Text == "请升级至最新版本客户端，以查看内容" {
+			incoming.Text = ""
+		}
 	case "image":
 		collectLarkAttachmentRefs(raw, &incoming.Attachments)
 		incoming.Text = strings.TrimSpace(collectLarkPlainTextFields(raw))
@@ -3206,6 +3220,29 @@ func extractLarkIncomingMessage(content string, messageType string) larkIncoming
 	}
 	incoming.Attachments = dedupeLarkAttachmentRefs(incoming.Attachments)
 	return incoming
+}
+
+// Read card text in display order, without treating controls, action values or
+// decorative images as Agent input. Handles both received cards and raw cards.
+func collectLarkCardText(value any, parts *[]string) {
+	switch node := value.(type) {
+	case string:
+		if text := strings.TrimSpace(node); text != "" {
+			*parts = append(*parts, text)
+		}
+	case []any:
+		for _, child := range node {
+			collectLarkCardText(child, parts)
+		}
+	case map[string]any:
+		switch stringFromAny(node["tag"]) {
+		case "button", "action", "input", "select_static", "select_person", "overflow", "img", "at":
+			return
+		}
+		for _, key := range []string{"header", "title", "text", "content", "body", "elements", "columns", "fields"} {
+			collectLarkCardText(node[key], parts)
+		}
+	}
 }
 
 func (b *LarkReplyBridge) resolveReferencedIncoming(ctx context.Context, routeCtx larkRouteContext, incoming larkIncomingMessage) larkIncomingMessage {
