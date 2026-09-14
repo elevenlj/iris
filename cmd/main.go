@@ -247,6 +247,7 @@ func run() error {
 		}),
 	)
 	mgr.SetDefaultWorkspaceDir(cfg.DefaultWorkspaceDir)
+	applyAgentLarkIdentity(cfg, mgr)
 	dashboardPort := cfg.Port
 	if err := mgr.SetDashboardURL(cfg.DashboardURL, func() string { return detectedDashboardURL(Config{Port: dashboardPort}) }); err != nil {
 		return err
@@ -1145,6 +1146,7 @@ func applyRuntimeConfig(cfg Config, manager *session.Manager, bridge *session.La
 		return err
 	}
 	manager.SetWaitingTransitionDelays(time.Duration(cfg.FastWaitingTransitionMs)*time.Millisecond, time.Duration(cfg.ConservativeWaitingTransitionMs)*time.Millisecond)
+	applyAgentLarkIdentity(cfg, manager)
 	manager.SetAutoRefreshInterval(time.Duration(cfg.LarkAutoRefreshIntervalMs) * time.Millisecond)
 	manager.SetHeadlessSnapshotTimeout(time.Duration(cfg.HeadlessSnapshotTimeoutMs) * time.Millisecond)
 	manager.SetPreStartCommand(cfg.SessionPreStartCommand)

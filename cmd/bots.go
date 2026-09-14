@@ -143,6 +143,17 @@ func botEffectiveConfig(global Config, bot httpapi.BotConfig) Config {
 	return syncLegacyDefaultAgent(global)
 }
 
+func applyAgentLarkIdentity(cfg Config, manager *session.Manager) {
+	identity := session.LarkAgentIdentity{AppID: cfg.LarkAppID}
+	for _, bot := range cfg.Bots {
+		if bot.AppID != "" && bot.AppID == cfg.LarkAppID {
+			identity.BotID, identity.BotName, identity.AppName = bot.ID, bot.Name, bot.AppName
+			break
+		}
+	}
+	manager.SetLarkAgentIdentity(identity)
+}
+
 func (s *botService) ConnectionStatuses() []httpapi.BotConnectionStatus {
 	s.root.mu.Lock()
 	defer s.root.mu.Unlock()
@@ -192,6 +203,17 @@ func (s *botService) refreshAppNames() {
 		}
 		if writeConfigFile(s.root.path, cfg) == nil {
 			*s.root.cfg = cfg
+			if bot.ID == "default" {
+				applyAgentLarkIdentity(cfg, s.root.manager)
+			} else if rt := s.runtimes[bot.ID]; rt != nil {
+				// Re-read the current binding; credentials may have changed during lookup.
+				for _, current := range cfg.Bots {
+					if current.ID == bot.ID {
+						applyAgentLarkIdentity(botEffectiveConfig(cfg, current), rt.manager)
+						break
+					}
+				}
+			}
 		}
 		s.root.mu.Unlock()
 	}

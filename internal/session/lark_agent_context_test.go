@@ -52,8 +52,11 @@ func TestAgentLarkContextUsesBoundChatWithoutCallerChatID(t *testing.T) {
 		messages: []LarkChatMessage{{MessageID: "om_1", Text: "第一条"}, {MessageID: "om_2", Text: "第二条"}},
 	}
 	manager.SetLarkConversationProvider(provider)
+	self := LarkAgentIdentity{BotID: "bot-a", BotName: "A", AppID: "cli_a", AppName: "Application A"}
+	manager.SetLarkAgentIdentity(self)
 	manager.RecordLarkAgentContext(sess.ID, LarkAgentContext{
 		ChatID: "oc_bound_chat", LatestMessageID: "om_2", LatestSenderID: "ou_sender",
+		Self: LarkAgentIdentity{AppID: "cli_recipient"},
 	})
 
 	current, ok, err := manager.AgentLarkContext(context.Background(), sess.ID, sess.RecoveryKey)
@@ -62,6 +65,9 @@ func TestAgentLarkContextUsesBoundChatWithoutCallerChatID(t *testing.T) {
 	}
 	if current.ChatID != "oc_bound_chat" || current.ChatName != "Iris 方案讨论" || current.LatestMessageID != "om_2" {
 		t.Fatalf("unexpected current context: %#v", current)
+	}
+	if current.Self != self {
+		t.Fatalf("self confused with message sender/recipient: %#v", current.Self)
 	}
 	page, ok, err := manager.AgentLarkMessages(context.Background(), sess.ID, sess.RecoveryKey, 500)
 	if err != nil || !ok {
@@ -72,6 +78,12 @@ func TestAgentLarkContextUsesBoundChatWithoutCallerChatID(t *testing.T) {
 	}
 	if page.Count != 2 || page.Messages[1].Text != "第二条" {
 		t.Fatalf("unexpected page: %#v", page)
+	}
+	self.AppID, self.AppName, self.BotName = "cli_replacement", "Replacement", "Renamed"
+	manager.SetLarkAgentIdentity(self)
+	current, _, err = manager.AgentLarkContext(context.Background(), sess.ID, sess.RecoveryKey)
+	if err != nil || current.Self != self {
+		t.Fatalf("stale identity after app replacement: %#v %v", current.Self, err)
 	}
 }
 
@@ -132,5 +144,37 @@ func TestEnsureAgentContextSkillsWritesCodexAndClaudeSkills(t *testing.T) {
 				t.Fatalf("%s does not contain %q", path, want)
 			}
 		}
+	}
+}
+
+func TestMentionSkillInstallAndPrivateClaudeHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	if err := EnsureAgentContextSkills(); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{".agents", ".claude"} {
+		path := filepath.Join(home, dir, "skills", "iris-feishu-mention", "SKILL.md")
+		content, err := os.ReadFile(path)
+		if err != nil || string(content) != strings.TrimSpace(irisFeishuMentionSkill)+"\n" {
+			t.Fatalf("installed skill differs: %s %v", path, err)
+		}
+		before, _ := os.Stat(path)
+		if err := EnsureAgentContextSkills(); err != nil {
+			t.Fatal(err)
+		}
+		after, _ := os.Stat(path)
+		if !before.ModTime().Equal(after.ModTime()) {
+			t.Fatal("unchanged skill rewritten")
+		}
+	}
+	private := filepath.Join(home, "private-claude")
+	if err := ensureClaudeSessionHome(private); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(private, "skills", "iris-feishu-mention", "SKILL.md"))
+	if err != nil || string(content) != strings.TrimSpace(irisFeishuMentionSkill)+"\n" {
+		t.Fatalf("private Claude home missing skill: %v", err)
 	}
 }

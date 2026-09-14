@@ -106,6 +106,7 @@ type Manager struct {
 	workspaceOptions         []WorkspaceOption
 	larkConversationProvider LarkConversationProvider
 	larkAgentContexts        map[string]LarkAgentContext
+	larkIdentity             LarkAgentIdentity
 }
 
 func (m *Manager) SetAgentConfig(agent AgentConfig, workspaces []WorkspaceOption) {

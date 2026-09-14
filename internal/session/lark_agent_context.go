@@ -45,20 +45,36 @@ type LarkChatMessage struct {
 	Attachments []LarkMessageAttachment `json:"attachments,omitempty"`
 }
 
+// LarkAgentIdentity identifies the sending application, never a user or recipient.
+// Keep credentials out of this type: it is exposed to the session's Agent.
+type LarkAgentIdentity struct {
+	BotID   string `json:"bot_id,omitempty"`
+	BotName string `json:"bot_name,omitempty"`
+	AppID   string `json:"app_id"`
+	AppName string `json:"app_name,omitempty"`
+}
+
+func (m *Manager) SetLarkAgentIdentity(identity LarkAgentIdentity) {
+	m.mu.Lock()
+	m.larkIdentity = identity
+	m.mu.Unlock()
+}
+
 type LarkAgentContext struct {
-	SessionID         string    `json:"session_id"`
-	SessionName       string    `json:"session_name"`
-	ChatID            string    `json:"chat_id"`
-	ChatName          string    `json:"chat_name"`
-	ChatType          string    `json:"chat_type,omitempty"`
-	TopicRootID       string    `json:"topic_root_id,omitempty"`
-	ThreadID          string    `json:"thread_id,omitempty"`
-	LatestMessageID   string    `json:"latest_message_id,omitempty"`
-	LatestParentID    string    `json:"latest_parent_id,omitempty"`
-	LatestRootID      string    `json:"latest_root_id,omitempty"`
-	LatestSenderID    string    `json:"latest_sender_id,omitempty"`
-	LatestMessageTime time.Time `json:"latest_message_time,omitempty"`
-	UpdatedAt         time.Time `json:"updated_at,omitempty"`
+	Self              LarkAgentIdentity `json:"self"`
+	SessionID         string            `json:"session_id"`
+	SessionName       string            `json:"session_name"`
+	ChatID            string            `json:"chat_id"`
+	ChatName          string            `json:"chat_name"`
+	ChatType          string            `json:"chat_type,omitempty"`
+	TopicRootID       string            `json:"topic_root_id,omitempty"`
+	ThreadID          string            `json:"thread_id,omitempty"`
+	LatestMessageID   string            `json:"latest_message_id,omitempty"`
+	LatestParentID    string            `json:"latest_parent_id,omitempty"`
+	LatestRootID      string            `json:"latest_root_id,omitempty"`
+	LatestSenderID    string            `json:"latest_sender_id,omitempty"`
+	LatestMessageTime time.Time         `json:"latest_message_time,omitempty"`
+	UpdatedAt         time.Time         `json:"updated_at,omitempty"`
 }
 
 type LarkChatMessagePage struct {
@@ -130,6 +146,7 @@ func (m *Manager) AgentLarkContext(ctx context.Context, sessionID, token string)
 
 	m.mu.RLock()
 	current := m.larkAgentContexts[sess.ID]
+	current.Self = m.larkIdentity
 	provider := m.larkConversationProvider
 	m.mu.RUnlock()
 	current.SessionID = sess.ID

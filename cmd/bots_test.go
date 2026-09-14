@@ -18,6 +18,56 @@ import (
 	"github.com/elevenlj/iris/internal/store"
 )
 
+func TestAgentIdentityUsesCurrentBotApplication(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Bots = []httpapi.BotConfig{
+		{ID: "default", Name: "Same name", AppID: "cli_a", AppName: "App A", AppSecret: "secret-a"},
+		{ID: "bot-b", Name: "Same name", AppID: "cli_b", AppName: "App B", AppSecret: "secret-b"},
+		{ID: "bot-c", Name: "C", AppID: "cli_c", AppName: "App C", AppSecret: "secret-c"},
+	}
+	for _, bot := range cfg.Bots {
+		t.Run(bot.ID, func(t *testing.T) {
+			st, err := store.Open(filepath.Join(t.TempDir(), "iris.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			m := session.NewManager(st, nil)
+			now := time.Now().UTC()
+			sess := session.Session{ID: "sess-1", Name: "Topic", Live: true, Status: session.StatusWaiting, CreatedAt: now, UpdatedAt: now, LarkChatID: "oc_shared", LarkThreadID: "omt_topic", RecoveryKey: "token-" + bot.ID}
+			if err := st.CreateSession(context.Background(), sess); err != nil {
+				t.Fatal(err)
+			}
+			if err := applyRuntimeConfig(botEffectiveConfig(cfg, bot), m, nil, false); err != nil {
+				t.Fatal(err)
+			}
+			handler := httpapi.NewServer(m, "").Handler()
+			for _, token := range []string{"wrong-bot-token", sess.RecoveryKey} {
+				req := httptest.NewRequest(http.MethodGet, "/api/sessions/sess-1/lark/context?app_id=cli_recipient", nil)
+				req.Header.Set("Authorization", "Bearer "+token)
+				rec := httptest.NewRecorder()
+				handler.ServeHTTP(rec, req)
+				if token != sess.RecoveryKey {
+					if rec.Code != 401 || strings.Contains(rec.Body.String(), bot.AppID) {
+						t.Fatalf("unauthorized identity leaked: %s", rec.Body.String())
+					}
+					continue
+				}
+				var got session.LarkAgentContext
+				if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
+					t.Fatalf("context: %s", rec.Body.String())
+				}
+				if got.Self.AppID != bot.AppID || got.Self.BotID != bot.ID || got.Self.BotName != bot.Name || got.Self.AppName != bot.AppName || got.ThreadID != sess.LarkThreadID {
+					t.Fatalf("wrong identity: %#v", got)
+				}
+				if strings.Contains(rec.Body.String(), "secret") || strings.Contains(rec.Body.String(), sess.RecoveryKey) {
+					t.Fatal("credentials leaked")
+				}
+			}
+		})
+	}
+}
+
 func TestBotsIsolationPersistenceAndLegacyMigration(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
