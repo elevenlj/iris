@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -596,6 +597,8 @@ func TestEnsureConfigFileCreatesMissingDirectoryAndConfig(t *testing.T) {
 func TestConfigDirMissingFileDoesNotFallBackToDefaultConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("IRIS_HOME", "")
+	t.Setenv("IRIS_CONFIG_DIR", "")
 	t.Setenv("EASY_TERMINAL_HOME", "")
 	t.Setenv("EASY_TERMINAL_CONFIG_DIR", "")
 	if err := writeConfigFile(defaultConfigPath(), Config{
@@ -617,6 +620,36 @@ func TestConfigDirMissingFileDoesNotFallBackToDefaultConfig(t *testing.T) {
 	cfg := loadConfig(path)
 	if cfg.LarkDefaultSessionName == "旧默认配置" {
 		t.Fatal("custom config dir should not fall back to the default config file")
+	}
+}
+
+func TestConfigDirTestPreservesInheritedConfig(t *testing.T) {
+	for _, key := range []string{"IRIS_HOME", "IRIS_CONFIG_DIR"} {
+		t.Run(key, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.local.json")
+			if key == "IRIS_HOME" {
+				path = filepath.Join(dir, "conf", "config.local.json")
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			original := []byte(`{"bots":[{"id":"default","name":"keep me"}]}`)
+			if err := os.WriteFile(path, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("IRIS_HOME", "")
+			t.Setenv("IRIS_CONFIG_DIR", "")
+			t.Setenv(key, dir)
+			command := exec.Command(os.Args[0], "-test.run=^TestConfigDirMissingFileDoesNotFallBackToDefaultConfig$", "-test.count=1")
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("isolated config test: %v\n%s", err, output)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(got, original) {
+				t.Fatal("config test changed the inherited service configuration")
+			}
+		})
 	}
 }
 
