@@ -622,14 +622,28 @@ func (b *LarkReplyBridge) handleCardTerminalSelect(ctx context.Context, value ma
 	if blocked != nil {
 		return blocked, nil
 	}
+	rt.terminalMenuInputMu.Lock()
+	defer rt.terminalMenuInputMu.Unlock()
 	sess := rt.Snapshot()
 	if expectedChatID := strings.TrimSpace(sess.LarkChatID); expectedChatID != "" && strings.TrimSpace(openChatID) != "" && expectedChatID != strings.TrimSpace(openChatID) {
 		return larkCardToast("warning", "该选择不属于当前群聊"), nil
 	}
 	interactionID := strings.TrimSpace(fmt.Sprint(value["interaction_id"]))
+	rt.mu.Lock()
+	menuSelection := rt.pendingTerminalInteraction != nil && rt.pendingTerminalInteraction.Kind == TerminalInteractionMenu
+	rt.mu.Unlock()
+	if menuSelection && !rt.RequestFreshSnapshot(800*time.Millisecond) {
+		return larkCardToast("warning", "无法确认当前菜单，请刷新后重试"), nil
+	}
 	selected, err := rt.consumeTerminalInteraction(interactionID, optionID, openMessageID)
 	if err != nil {
 		return larkCardToast("warning", err.Error()), nil
+	}
+	if menuSelection {
+		if err := rt.submitTerminalMenuSelection(selected); err != nil {
+			return larkCardToast("warning", err.Error()), nil
+		}
+		return larkCardToast("info", "已选择 "+truncateLarkInteractionText(selected.Label, 60)), nil
 	}
 	b.manager.EnsureBrowser(sessionID)
 	mentionOpenID := strings.TrimSpace(operatorOpenID)
@@ -1684,8 +1698,15 @@ func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionI
 		return false
 	}
 	starting := rt.discardingStartupNotifications()
-	if !starting && structuredInputNumericOnlyRE.MatchString(strings.TrimSpace(parts[0])) {
+	rt.mu.Lock()
+	menuWaiting := rt.terminalMenuActive || rt.activeTerminalMenuLocked() != nil
+	rt.mu.Unlock()
+	if !starting && !menuWaiting && structuredInputNumericOnlyRE.MatchString(strings.TrimSpace(parts[0])) {
 		return false
+	}
+	if menuWaiting && !starting {
+		b.enqueuePipeline(sessionID, parts, mentionOpenID, origin...)
+		return true
 	}
 	rt.SetNotificationMentionOpenID(mentionOpenID)
 	rt.SetNotificationAssistantName(pipelineOrigin(origin).AssistantName)

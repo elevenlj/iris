@@ -418,6 +418,9 @@ func (rt *RuntimeSession) notificationInteractionLocked(messageID string) *Termi
 		!hasCodexModelInteractionContext(previousSnapshot) {
 		interaction = nil
 	}
+	if menu := rt.activeTerminalMenuLocked(); menu != nil {
+		interaction = menu
+	}
 	if interaction == nil || interaction.ID == rt.lastConsumedTerminalInteractionID {
 		rt.pendingTerminalInteraction = nil
 		return nil
@@ -461,6 +464,12 @@ func (rt *RuntimeSession) consumeTerminalInteraction(interactionID, optionID, me
 	}
 	if expected := strings.TrimSpace(rt.pendingTerminalInteraction.MessageID); expected != "" && messageID != "" && expected != messageID {
 		return TerminalInteractionOption{}, errTerminalInteractionExpired
+	}
+	if rt.pendingTerminalInteraction.Kind == TerminalInteractionMenu {
+		current := rt.activeTerminalMenuLocked()
+		if current == nil || current.Fingerprint != rt.pendingTerminalInteraction.Fingerprint {
+			return TerminalInteractionOption{}, errTerminalInteractionExpired
+		}
 	}
 	for _, option := range rt.pendingTerminalInteraction.Options {
 		if option.ID != optionID {

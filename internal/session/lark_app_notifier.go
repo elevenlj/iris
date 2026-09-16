@@ -298,7 +298,10 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 	}
 	if note.Startup {
 		elements = append(elements, larkTerminalTextElements(note.Content, note.SnapshotSource)...)
-		if note.StartupInputEnabled && !note.StartupComplete && !note.Disabled {
+		if !note.Disabled && note.Interaction != nil {
+			elements = append(elements, larkTerminalInteractionElement(note.SessionID, note.Interaction))
+		}
+		if note.StartupInputEnabled && !note.StartupComplete && !note.Disabled && note.Interaction == nil {
 			elements = append(elements, larkStartupInputFormElement(note.SessionID))
 		}
 		if note.StartupComplete && !note.StartupFailed {
@@ -318,12 +321,15 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		}
 	} else {
 		var interactionElement map[string]any
-		if note.DeveloperModeEnabled && !note.Disabled && !note.Running {
+		if !note.Disabled && !note.Running {
 			interactionElement = larkTerminalInteractionElement(note.SessionID, note.Interaction)
 		}
 		if interactionElement == nil {
 			elements = append(elements, larkTerminalTextElements(note.Content, note.SnapshotSource)...)
 		} else {
+			if note.Interaction.Kind == TerminalInteractionMenu {
+				elements = append(elements, larkTerminalTextElements(note.Content, note.SnapshotSource)...)
+			}
 			if note.Interaction.Kind == TerminalInteractionCodexResume {
 				elements = append(elements, larkTerminalInteractionHeadingElement("选择要恢复的会话"))
 			}
@@ -772,7 +778,7 @@ func larkNotificationAgentLabel(note WaitingNotification) string {
 
 func larkTerminalInteractionElement(sessionID string, interaction *TerminalInteraction) map[string]any {
 	minimumOptions := 2
-	if interaction != nil && interaction.Kind == TerminalInteractionCodexResume {
+	if interaction != nil && (interaction.Kind == TerminalInteractionCodexResume || interaction.Kind == TerminalInteractionMenu) {
 		minimumOptions = 1
 	}
 	if interaction == nil || strings.TrimSpace(interaction.ID) == "" || len(interaction.Options) < minimumOptions {
@@ -833,6 +839,8 @@ func larkTerminalInteractionPlaceholder(interaction *TerminalInteraction) string
 		label = "请选择推理等级"
 	case TerminalInteractionCodexResume:
 		label = "请选择历史会话"
+	case TerminalInteractionMenu:
+		label = interaction.Title
 	}
 	for _, option := range interaction.Options {
 		if option.Current {
@@ -1170,6 +1178,9 @@ func larkCustomShortcutButtonColumn(sessionID string, shortcut LarkCustomShortcu
 }
 
 func larkNotificationTitle(note WaitingNotification) string {
+	if note.Interaction != nil && !note.Disabled && !note.Running {
+		return note.Name + "（等待选择）"
+	}
 	if note.Startup {
 		if note.StartupFailed {
 			return note.Name + "（启动失败）"

@@ -1362,6 +1362,11 @@ type RuntimeSession struct {
 	notifyStableTimer                 *time.Timer
 	startupNotifyTimer                *time.Timer
 	agentRestartPending               bool
+	terminalMenuActive                bool
+	terminalMenuProbe                 *time.Timer
+	terminalMenuProbeTail             string
+	terminalMenuInputMu               sync.Mutex
+	terminalMenuSelecting             bool
 	workspaceTrustAction              string
 	workspaceTrustProbe               *time.Timer
 	workspaceTrustProbeTail           string
@@ -1419,6 +1424,9 @@ func (rt *RuntimeSession) shouldQueueInputWhileRunningLocked(now time.Time) bool
 		return false
 	}
 	if rt.startupNotifyMode == startupNotifyDiscard {
+		return true
+	}
+	if rt.terminalMenuActive || rt.activeTerminalMenuLocked() != nil {
 		return true
 	}
 	return rt.session.Status == StatusRunning &&
@@ -1863,6 +1871,7 @@ func (rt *RuntimeSession) waitForRestartedAgentComposer(agentKind string, baseli
 		return false
 	}
 	deadline := time.Now().Add(timeout)
+	lastPoll := time.Now()
 	for {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
@@ -1879,6 +1888,10 @@ func (rt *RuntimeSession) waitForRestartedAgentComposer(agentKind string, baseli
 		rt.requestFreshSnapshot(minDuration(defaultNotifySnapshotTimeout, remaining), SnapshotPurposeAgentRestart)
 		rt.mu.Lock()
 		live := !rt.closed && rt.session.Live
+		if rt.activeTerminalMenuLocked() != nil {
+			deadline = deadline.Add(time.Since(lastPoll))
+		}
+		lastPoll = time.Now()
 		ready := rt.visibleSnapshotVersion > baselineSnapshotVersion && rt.session.HistorySize > baselineHistorySize && startupAgentComposerReady(rt.visibleSnapshot, rt.visibleSnapshotSource, agentKind)
 		rt.mu.Unlock()
 		if !live {
@@ -2448,13 +2461,21 @@ func (rt *RuntimeSession) setVisibleSnapshot(data string, source string, request
 	}
 	var interactionNotifyVersion int64
 	var interactionSession Session
-	if rt.manager != nil && rt.session.Status == StatusRunning && rt.hasPendingCodexInteractionLocked() {
+	menu := rt.activeTerminalMenuLocked()
+	menuClosed := rt.terminalMenuActive && menu == nil && startupAgentComposerReady(data, source, agentKindForCommand(rt.session.LastAgentStartCommand, rt.session.LastAgentKind))
+	menuChanged := menu != nil && (rt.pendingTerminalInteraction == nil || rt.pendingTerminalInteraction.Fingerprint != menu.Fingerprint || rt.pendingTerminalInteraction.NotifyVersion != rt.notifyVersion)
+	if rt.manager != nil && !rt.terminalMenuSelecting && (menuChanged || (menuClosed && (rt.pendingTerminalInteraction != nil || rt.session.Status == StatusRunning)) || (rt.session.Status == StatusRunning && rt.hasPendingCodexInteractionLocked())) {
 		rt.stopNotifyTimerLocked()
 		rt.stopNotifyStableTimerLocked()
 		rt.session.Status = StatusWaiting
 		rt.session.UpdatedAt = time.Now().UTC()
 		rt.stateVersion++
 		rt.notifyVersion++
+		messageID := rt.lastNotifiedMessageID
+		if rt.startupNotifyMode == startupNotifyDiscard {
+			messageID = rt.startupNotificationMessageID
+		}
+		rt.notificationInteractionLocked(messageID)
 		interactionNotifyVersion = rt.notifyVersion
 		interactionSession = rt.session
 	}
@@ -2773,6 +2794,9 @@ func parseSnapshotSourceContinuity(source string) snapshotSourceContinuity {
 
 func startupAgentComposerReady(snapshot, source, agentKind string) bool {
 	agentKind = strings.ToLower(strings.TrimSpace(agentKind))
+	if DetectTerminalMenu(snapshot, "", 0, 0) != nil {
+		return false
+	}
 	if _, menu := workspaceTrustMenu(snapshot, source, agentKind); menu {
 		return false
 	}
@@ -3583,6 +3607,7 @@ func (rt *RuntimeSession) refreshStartupNotification(messageID string, refreshCo
 		Startup:             true,
 		StartupInputEnabled: true,
 		SnapshotSource:      "startup:refresh",
+		Interaction:         rt.notificationInteractionLocked(messageID),
 	}
 	rt.mu.Unlock()
 
@@ -4166,6 +4191,7 @@ func (rt *RuntimeSession) HandleOutput(chunk []byte) {
 	}
 	rt.session.HistorySize += int64(len(cp))
 	rt.scheduleWorkspaceTrustProbeLocked(cp)
+	rt.scheduleTerminalMenuProbeLocked(cp)
 	rt.session.UpdatedAt = time.Now().UTC()
 	var runningNote WaitingNotification
 	markRunning := false
@@ -4349,6 +4375,9 @@ func (rt *RuntimeSession) Close() {
 	}
 	rt.closed = true
 	rt.session.Live = false
+	if rt.terminalMenuProbe != nil {
+		rt.terminalMenuProbe.Stop()
+	}
 	if rt.workspaceTrustProbe != nil {
 		rt.workspaceTrustProbe.Stop()
 		rt.workspaceTrustProbe = nil
@@ -4572,6 +4601,8 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 		} else {
 			rt.stopNotifyTimerLocked()
 			rt.startupNotifyMode = startupNotifyNormal
+			rt.terminalMenuActive = false
+			rt.pendingTerminalInteraction = nil
 			sessionID := rt.session.ID
 			rt.mu.Unlock()
 			rt.completeStartupNotification()
@@ -4585,7 +4616,7 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 		return
 	}
 	if !startupFallback && rt.session.LastMode == SessionModeAgent {
-		if !rt.hookCompletedCurrentRound {
+		if !rt.hookCompletedCurrentRound && rt.activeTerminalMenuLocked() == nil && !rt.terminalMenuActive && !rt.hasPendingCodexInteractionLocked() {
 			rt.mu.Unlock()
 			return
 		}
@@ -4722,7 +4753,7 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 		return
 	}
 	claimHookCompletionTip := rt.applyHookCompletionTipPolicyLocked(&n)
-	n.Completed = rt.hookCompletedCurrentRound && !n.Startup && !startupFallback
+	n.Completed = rt.hookCompletedCurrentRound && !n.Startup && !startupFallback && !n.SuppressUpdateTip && n.Interaction == nil
 	rt.mu.Unlock()
 	result, err := rt.notifyWaitingWithRetry(n)
 	if err != nil {
@@ -4736,6 +4767,7 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 			if result.MessageID != "" {
 				rt.startupNotificationMessageID = result.MessageID
 			}
+			rt.bindTerminalInteractionMessageLocked(n.Interaction, result.MessageID)
 			rt.startupNotificationContent = n.Content
 			rt.startupNotificationHash = contentHash
 			if result.Updated {
@@ -4790,7 +4822,9 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 	}
 	rt.mu.Unlock()
 	rt.manager.messageRegistry().rememberLatest(n.SessionID)
-	rt.manager.notificationSent(n.SessionID)
+	if n.Interaction == nil && (!n.SuppressUpdateTip || strings.HasPrefix(strings.TrimSpace(roundInput), "/")) {
+		rt.manager.notificationSent(n.SessionID)
+	}
 }
 
 // applyHookCompletionTipPolicyLocked allows at most one completion-tip write
@@ -5074,11 +5108,31 @@ func (rt *RuntimeSession) waitingNotificationCandidateLocked() (WaitingNotificat
 	if rt.requireLarkChat && strings.TrimSpace(rt.session.LarkChatID) == "" {
 		return WaitingNotification{}, "", false, "waiting_for_lark_chat"
 	}
+	menuInteraction := rt.notificationInteractionLocked(rt.lastNotifiedMessageID)
+	if menuInteraction != nil || (rt.terminalMenuActive && !rt.hookCompletedCurrentRound && startupAgentComposerReady(rt.visibleSnapshot, rt.visibleSnapshotSource, agentKindForCommand(rt.session.LastAgentStartCommand, rt.session.LastAgentKind))) {
+		content := "选择已结束"
+		if menuInteraction != nil {
+			content = pickLarkManualRefreshFallbackTailContent(rt.visibleSnapshot)
+			if menuInteraction.Kind != TerminalInteractionMenu {
+				content = rt.currentNotifyContentLocked()
+			}
+		}
+		contentHash := notifyContentHash(content)
+		if menuInteraction != nil {
+			contentHash = notifyContentHash(content + menuInteraction.ID)
+		}
+		if contentHash == rt.lastNotifiedRoundHash {
+			return WaitingNotification{}, "", false, "duplicate_hash"
+		}
+		rt.terminalMenuActive = menuInteraction != nil
+		return WaitingNotification{SessionID: rt.session.ID, Name: rt.session.Name, Content: content, ChatID: rt.session.LarkChatID, InputMessageID: rt.notificationInputMessageID, MentionOpenID: rt.notificationMentionOpenID, SuppressUpdateTip: true, SnapshotSource: rt.visibleSnapshotSource, Interaction: menuInteraction, AgentContext: rt.notificationAgentContextLocked()}, contentHash, true, "ready"
+	}
 	hookContent := rt.hookAssistantNotifyContentLocked()
 	if rt.session.LastMode == SessionModeAgent {
 		if !rt.hookCompletedCurrentRound {
 			return WaitingNotification{}, "", false, "waiting_for_agent_hook"
 		}
+		rt.terminalMenuActive = false
 		if hookContent == "" {
 			hookContent = EmptyNotificationPlaceholder
 		}
@@ -5154,6 +5208,10 @@ func (rt *RuntimeSession) startupFallbackWaitingNotificationCandidateLocked() (W
 		return WaitingNotification{}, "", false
 	}
 	contentHash := notifyContentHash(content)
+	interaction := rt.notificationInteractionLocked(rt.startupNotificationMessageID)
+	if interaction != nil {
+		contentHash = notifyContentHash(content + interaction.ID)
+	}
 	if contentHash == rt.startupNotificationHash {
 		return WaitingNotification{}, "", false
 	}
@@ -5180,6 +5238,7 @@ func (rt *RuntimeSession) startupFallbackWaitingNotificationCandidateLocked() (W
 		SnapshotSource:      source,
 		Startup:             true,
 		StartupInputEnabled: true,
+		Interaction:         interaction,
 	}, contentHash, true
 }
 
