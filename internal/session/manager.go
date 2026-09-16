@@ -5112,7 +5112,9 @@ func (rt *RuntimeSession) waitingNotificationCandidateLocked() (WaitingNotificat
 	if menuInteraction != nil || (rt.terminalMenuActive && !rt.hookCompletedCurrentRound && startupAgentComposerReady(rt.visibleSnapshot, rt.visibleSnapshotSource, agentKindForCommand(rt.session.LastAgentStartCommand, rt.session.LastAgentKind))) {
 		content := "选择已结束"
 		if menuInteraction != nil {
-			content = pickLarkManualRefreshFallbackTailContent(rt.visibleSnapshot)
+			// Running-marker updates reuse this content without the selector.
+			// Never cache the terminal transcript as an automatic menu's body.
+			content = menuInteraction.Title
 			if menuInteraction.Kind != TerminalInteractionMenu {
 				content = rt.currentNotifyContentLocked()
 			}

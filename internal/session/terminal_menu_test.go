@@ -131,6 +131,24 @@ func TestBoxedAidenMenuAndSelectorOnlyCard(t *testing.T) {
 	}
 }
 
+func TestTerminalMenuRunningMarkerDoesNotLeakTranscript(t *testing.T) {
+	notifier := &recordingNotifier{createMessageIDs: []string{"card"}}
+	m := NewManager(nil, nil, WithNotifier(notifier), WithIsolatedMessageRegistry())
+	rt := &RuntimeSession{manager: m, session: Session{ID: "menu", Live: true, Status: StatusWaiting, NotifyOnWaiting: true, LastMode: SessionModeAgent, LastAgentKind: "aiden"}, notifyVersion: 1, visibleSnapshotVersion: 1, visibleSnapshotSource: aidenReadySource, visibleSnapshot: boxedAidenMenu}
+	defer rt.Close()
+	rt.notifyIfStillWaitingForInteraction(1)
+	rt.mu.Lock()
+	note, ok := rt.markNotificationRunningLocked()
+	rt.mu.Unlock()
+	if !ok || note.Content != "Select Model" {
+		t.Fatalf("running marker retained terminal output: %#v", note)
+	}
+	card, err := larkNotificationCardContent(note, "", false)
+	if err != nil || strings.Contains(card, "gopls") || strings.Contains(card, "reposearch") || strings.Contains(card, "你好") {
+		t.Fatalf("running marker leaked terminal transcript: %s %v", card, err)
+	}
+}
+
 func TestTerminalMenuDetection(t *testing.T) {
 	for _, tc := range []struct {
 		name, screen, key string
