@@ -66,6 +66,7 @@ type LarkReplyBridge struct {
 
 var structuredInputEnterDelay = 200 * time.Millisecond
 var structuredInputEnterSequence = "\r"
+var larkAgentSlashCommandRE = regexp.MustCompile(`^/[A-Za-z][A-Za-z0-9:_-]*(?:[ \t]+[^\r\n]*)?$`)
 var structuredInputNumericOnlyRE = regexp.MustCompile(`^\d+$`)
 var workspaceSwitchToastDelay = 2 * time.Second
 
@@ -3267,6 +3268,14 @@ func collectLarkCardText(value any, parts *[]string) {
 }
 
 func (b *LarkReplyBridge) resolveReferencedIncoming(ctx context.Context, routeCtx larkRouteContext, incoming larkIncomingMessage) larkIncomingMessage {
+	// A CLI command must reach the composer verbatim. Prepending quoted text
+	// (or downloading a quoted attachment) turns /model into an ordinary prompt.
+	// Iris topic commands are different: their question still needs the quote.
+	text := cleanLarkText(incoming.Text)
+	if _, topic := parseLarkTopicCommand(text); !topic && larkAgentSlashCommandRE.MatchString(text) {
+		incoming.Referenced = nil
+		return incoming
+	}
 	parentID := strings.TrimSpace(routeCtx.ParentID)
 	if parentID == "" || b.fetchReferencedMessages == nil {
 		return incoming

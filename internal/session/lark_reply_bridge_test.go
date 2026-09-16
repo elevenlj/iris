@@ -138,6 +138,51 @@ func TestLarkReplyBridgeReferencedTextIsSubmittedAsContext(t *testing.T) {
 	}
 }
 
+func TestLarkReplyBridgeReferencedSlashCommandIsSubmittedVerbatim(t *testing.T) {
+	for _, command := range []string{"/model", "/model gpt-6-astra", "/permissions"} {
+		for _, text := range []string{"@_user_1 " + command, command + " @_user_1"} {
+			launcher := &recordingLauncher{}
+			manager := NewManager(nil, launcher, WithIsolatedMessageRegistry())
+			bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+			bridge.fetchReferencedMessages = func(context.Context, string) ([]larkReferencedMessage, error) {
+				t.Fatal("CLI command should not fetch or attach a quoted message")
+				return nil, nil
+			}
+			sess, err := manager.CreateSession(context.Background(), "命令测试")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rt, _ := manager.GetRuntime(sess.ID)
+			defer rt.Close()
+			manager.messageRegistry().remember(sess.ID, "quoted-card")
+			key := "@_user_1"
+			_, err = bridge.RouteIncomingWithContext(context.Background(), larkRouteContext{
+				MessageID: "command-message", ParentID: "quoted-card", Mentions: []*larkim.MentionEvent{{Key: &key}},
+			}, larkIncomingMessage{Text: text})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := launcher.terminals[0].writes(); got != command+"\r" {
+				t.Fatalf("command became a prompt: got %q want %q", got, command+"\r")
+			}
+			if rt.notificationInputMessageID != "command-message" {
+				t.Fatal("lost the input message used to quote the reply card")
+			}
+		}
+	}
+	for _, text := range []string{"请解释 /model", "/tmp/project/file.go", "/model\n解释这个命令", "/t 根据引用排查", "/topic 根据引用排查"} {
+		fetched := false
+		bridge := &LarkReplyBridge{fetchReferencedMessages: func(context.Context, string) ([]larkReferencedMessage, error) {
+			fetched = true
+			return []larkReferencedMessage{{MessageType: "text", Content: `{"text":"需要保留的上下文"}`}}, nil
+		}}
+		incoming := bridge.resolveReferencedIncoming(context.Background(), larkRouteContext{ParentID: "quoted"}, larkIncomingMessage{Text: text})
+		if !fetched || incoming.Referenced == nil {
+			t.Fatalf("lost context for non-CLI input %q", text)
+		}
+	}
+}
+
 func TestLarkReplyBridgeReferencedAttachmentUsesOriginalMessageAndDegradesOnFailure(t *testing.T) {
 	resetLarkRegistryForTest()
 	launcher := &recordingLauncher{}
