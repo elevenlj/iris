@@ -92,6 +92,7 @@ type WaitingNotification struct {
 	UpdateNo             int
 	Running              bool
 	Completed            bool
+	CompletionTipSent    bool
 	Disabled             bool
 	AutoRefreshEnabled   bool
 	AutoSummaryEnabled   bool

@@ -35,6 +35,9 @@ func TestCompletionCardMentionsOnlyAfterCompletionAcrossRestart(t *testing.T) {
 			if strings.Contains(transport.lastCard, "sender") {
 				t.Fatal("waiting marker mentioned sender before completion")
 			}
+			if len(transport.posts) != 0 {
+				t.Fatal("notified before completion")
+			}
 			note.Running, note.Completed, note.UpdateNo = false, true, 1
 			note.Content = "回答正文 <at id=chosen></at>"
 			if _, err := n.NotifyWaiting(note); err != nil {
@@ -56,8 +59,61 @@ func TestCompletionCardMentionsOnlyAfterCompletionAcrossRestart(t *testing.T) {
 			if strings.Contains(transport.lastCard, "sender") != (senderType != "app") || strings.Contains(transport.lastCard, "other-user") || !strings.Contains(transport.lastCard, "chosen") {
 				t.Fatalf("refresh changed mentions: %s", transport.lastCard)
 			}
-			if len(transport.posts) != 0 {
-				t.Fatalf("completion sent extra messages: %#v", transport.posts)
+			wantTips := 1
+			if senderType == "app" {
+				wantTips = 0
+			}
+			if len(transport.posts) != wantTips {
+				t.Fatalf("completion tips=%d want=%d", len(transport.posts), wantTips)
+			}
+			if wantTips != 0 {
+				post := transport.posts[0]
+				var content map[string]string
+				if err := json.Unmarshal([]byte(post.body["content"].(string)), &content); err != nil {
+					t.Fatal(err)
+				}
+				if post.path != "/open-apis/im/v1/messages/card/reply" || post.body["msg_type"] != "text" || content["text"] != `<at user_id="sender"></at> 任务已完成` {
+					t.Fatalf("wrong completion reply: %#v", post)
+				}
+			}
+		})
+	}
+}
+
+func TestCompletionTipSuppressionAndTopic(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		note    WaitingNotification
+		wantTip bool
+	}{
+		{"running", WaitingNotification{Completed: true, Running: true}, false},
+		{"startup", WaitingNotification{Completed: true, Startup: true}, false},
+		{"waiting", WaitingNotification{}, false},
+		{"refresh", WaitingNotification{Completed: true, SuppressUpdateTip: true}, false},
+		{"retired", WaitingNotification{Completed: true, Disabled: true}, false},
+		{"topic", WaitingNotification{Completed: true, TopicRootID: "root"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := &completionCardHTTPClient{}
+			n := NewLarkAppNotifier("tip-test", "secret", "developer", true)
+			n.client = newLarkReplyAPIClient("tip-test", "secret", lark.WithHttpClient(transport))
+			note := tc.note
+			note.SessionID, note.ChatID, note.MessageID, note.MentionOpenID = "session", "chat", "answer", "sender"
+			for i := 0; i < 2; i++ {
+				note.UpdateNo++
+				if _, err := n.NotifyWaiting(note); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := 0
+			if tc.wantTip {
+				want = 1
+			}
+			if len(transport.posts) != want {
+				t.Fatalf("tips=%d want=%d", len(transport.posts), want)
+			}
+			if tc.wantTip && (transport.posts[0].body["reply_in_thread"] != true || transport.posts[0].path != "/open-apis/im/v1/messages/answer/reply") {
+				t.Fatalf("lost topic reply: %#v", transport.posts[0])
 			}
 		})
 	}

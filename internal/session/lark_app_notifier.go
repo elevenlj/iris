@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -214,6 +215,7 @@ func (n *LarkAppNotifier) NotifyWaiting(note WaitingNotification) (WaitingNotifi
 		note.TopicRootID = previous.TopicRootID
 		note.MentionOpenID = previous.MentionOpenID
 		note.Completed = note.Completed || previous.Completed
+		note.CompletionTipSent = previous.CompletionTipSent
 	}
 	if state.recalled[note.MessageID] {
 		return WaitingNotificationResult{MessageID: note.MessageID, Updated: true}, nil
@@ -228,6 +230,13 @@ func (n *LarkAppNotifier) NotifyWaiting(note WaitingNotification) (WaitingNotifi
 	}
 	if result.MessageID != "" && !note.Disabled {
 		note.MessageID = result.MessageID
+		if note.Completed && !note.Running && !note.Startup && !note.BotInput && !note.SuppressUpdateTip && !note.CompletionTipSent {
+			if err := retryLarkVoid(func() error { return n.sendCompletionTip(note) }); err != nil {
+				log.Printf("send completion tip failed message=%s: %v", note.MessageID, err)
+			} else {
+				note.CompletionTipSent = true
+			}
+		}
 		state.latest[key] = note
 		if previous.MessageID != "" && previous.MessageID != note.MessageID {
 			previous.Disabled = true
@@ -1280,6 +1289,7 @@ func (n *LarkAppNotifier) UpdateWaitingRunning(note WaitingNotification, running
 		note.TopicRootID = previous.TopicRootID
 		note.MentionOpenID = previous.MentionOpenID
 		note.Completed = note.Completed || previous.Completed
+		note.CompletionTipSent = previous.CompletionTipSent
 	}
 	if state.recalled[note.MessageID] {
 		return nil
@@ -1310,6 +1320,49 @@ func (n *LarkAppNotifier) UpdateWaitingRunning(note WaitingNotification, running
 	if !note.Disabled && state.latest[key].MessageID == note.MessageID {
 		state.latest[key] = note
 		n.persistCards(state)
+	}
+	return nil
+}
+
+func (n *LarkAppNotifier) sendCompletionTip(note WaitingNotification) error {
+	text := "任务已完成"
+	if id := larkNotificationMentionID(note, n.receiveID); n.mention && id != "" {
+		text = `<at user_id="` + id + `"></at> ` + text
+	}
+	content, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		return err
+	}
+	// The answer card identifies a round, including retries across restarts.
+	uuid := fmt.Sprintf("%x", sha256.Sum256([]byte(n.appID+":"+note.MessageID+":completion")))[:32]
+	req := larkim.NewReplyMessageReqBuilder().MessageId(note.MessageID).Body(
+		larkim.NewReplyMessageReqBodyBuilder().MsgType("text").Content(string(content)).ReplyInThread(note.TopicRootID != "").Uuid(uuid).Build(),
+	).Build()
+	call := func(token string) (*larkim.ReplyMessageResp, error) {
+		if token == "" {
+			return n.client.Im.V1.Message.Reply(context.Background(), req)
+		}
+		if n.uncachedClient == nil {
+			return nil, errors.New("lark uncached client is not configured")
+		}
+		return n.uncachedClient.Im.V1.Message.Reply(context.Background(), req, larkcore.WithTenantAccessToken(token))
+	}
+	token := n.tenantTokenSnapshot()
+	resp, err := call(token)
+	if err == nil && resp != nil && invalidLarkAccessTokenCode(resp.Code) {
+		token, err = n.refreshTenantToken(token)
+		if err == nil {
+			resp, err = call(token)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if resp == nil {
+		return errors.New("empty lark completion reply response")
+	}
+	if !resp.Success() {
+		return fmt.Errorf("lark completion reply API returned code %d: %s", resp.Code, resp.Msg)
 	}
 	return nil
 }
