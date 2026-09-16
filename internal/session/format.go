@@ -151,12 +151,27 @@ func pickLarkNotifyFallbackTailContent(visibleSnapshot string) string {
 // an updater, trust prompt, approval, or future Codex modal must remain visible
 // even when it does not belong to a normal Agent reply.
 func pickLarkStartupFallbackContent(visibleSnapshot string) string {
+	if containsInternalLaunchEnvironment(visibleSnapshot) {
+		return StartupNotificationPlaceholder
+	}
 	body := trimVisibleText(visibleSnapshot)
 	if body == "" {
 		return ""
 	}
 	body = truncateLinesFromTail(body, startupFallbackTailLines, "")
 	return truncateForLark(sanitizeForLarkAudit(body))
+}
+
+// Fail closed for echoed launch scripts: terminal wrapping can split both
+// variable names and values, so dropping individual matching rows is unsafe.
+func containsInternalLaunchEnvironment(text string) bool {
+	compact := strings.Join(strings.Fields(text), "")
+	for _, marker := range []string{"IRIS_SESSION_TOKEN=", "IRIS_API_URL=", "IRIS_SESSION_ID=", "CLAUDE_CONFIG_DIR=", "CODEX_HOME=", "unsetCODEX_HOME", "EASY_TERMINAL_HOOK_TOKEN="} {
+		if strings.Contains(compact, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // pickLarkManualRefreshFallbackTailContent preserves terminal state lines such

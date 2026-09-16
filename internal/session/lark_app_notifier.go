@@ -288,6 +288,13 @@ func (n *LarkAppNotifier) writeWaiting(note WaitingNotification) (WaitingNotific
 }
 
 func larkNotificationCardContent(note WaitingNotification, receiveID string, mention bool, customShortcuts ...LarkCustomShortcut) (string, error) {
+	// Also protect manual refreshes and cached cards created by older versions.
+	if containsInternalLaunchEnvironment(note.Content) {
+		note.Content = RunningNotificationPlaceholder
+		if note.Startup {
+			note.Content = StartupNotificationPlaceholder
+		}
+	}
 	elements := []map[string]any{}
 	if !note.Startup && !note.Running && strings.TrimSpace(note.AssistantName) != "" {
 		elements = append(elements, map[string]any{"tag": "div", "text": map[string]any{"tag": "plain_text", "content": "我是" + strings.TrimSpace(note.AssistantName) + "的助理。"}})
