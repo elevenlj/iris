@@ -57,7 +57,7 @@ func TestTerminalMenuDetection(t *testing.T) {
 func TestTerminalMenuStartupAndChainedNotifications(t *testing.T) {
 	for _, startup := range []bool{false, true} {
 		notifier := &recordingNotifier{createMessageIDs: []string{"card"}}
-		m := NewManager(nil, nil, WithNotifier(notifier))
+		m := NewManager(nil, nil, WithNotifier(notifier), WithIsolatedMessageRegistry())
 		rt := &RuntimeSession{manager: m, session: Session{ID: "s", Live: true, Status: StatusWaiting, NotifyOnWaiting: true, LastMode: SessionModeAgent, LastAgentKind: "aiden", LastAgentStartCommand: AidenAgentCommand}, notifyVersion: 1, visibleSnapshotVersion: 1, visibleSnapshotSource: aidenReadySource, visibleSnapshot: nativeModelMenu}
 		if startup {
 			rt.startupNotifyMode = startupNotifyDiscard
@@ -115,7 +115,7 @@ func TestTerminalMenuSelectionRejectsChangedScreen(t *testing.T) {
 
 func TestTerminalMenuLiveStartupSnapshotDoesNotLoop(t *testing.T) {
 	notifier := &recordingNotifier{createMessageIDs: []string{"startup-card"}}
-	m := NewManager(nil, nil, WithNotifier(notifier))
+	m := NewManager(nil, nil, WithNotifier(notifier), WithIsolatedMessageRegistry())
 	var released, requests atomic.Int32
 	m.SetNotificationSentHook(func(string) { released.Add(1) })
 	rt := &RuntimeSession{manager: m, session: Session{ID: "live-menu", Live: true, Status: StatusRunning, NotifyOnWaiting: true, LastMode: SessionModeAgent, LastAgentKind: "aiden"}, startupNotifyMode: startupNotifyDiscard}

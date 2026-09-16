@@ -143,7 +143,7 @@ func TestClaudeTrustMenuDoesNotReleaseStartupInput(t *testing.T) {
 
 func TestClaudeTrustMenuRemainsVisibleWithoutReleasingQueuedMessage(t *testing.T) {
 	notifier := &recordingNotifier{messageID: "trust-card"}
-	m := NewManager(nil, nil, WithNotifier(notifier))
+	m := NewManager(nil, nil, WithNotifier(notifier), WithIsolatedMessageRegistry())
 	released := false
 	m.SetNotificationSentHook(func(string) { released = true })
 	rt := &RuntimeSession{manager: m,
@@ -152,6 +152,7 @@ func TestClaudeTrustMenuRemainsVisibleWithoutReleasingQueuedMessage(t *testing.T
 		visibleSnapshot:       "Accessing workspace: /tmp/project\n❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel",
 		visibleSnapshotSource: strings.Replace(aidenReadySource, "cursor_line=-1", "cursor_line=1", 1),
 	}
+	defer rt.Close()
 	rt.notifyIfStillWaitingForInteraction(1)
 	if released || !rt.discardingStartupNotifications() {
 		t.Fatal("trust prompt released queued message")
