@@ -12,11 +12,21 @@ const TerminalInteractionMenu = "terminal_menu"
 
 var menuFocusRE = regexp.MustCompile(`^(\s*)[❯›>▶]\s+(.+)$`)
 var menuNumberRE = regexp.MustCompile(`^\s*(\d{1,3})[.)]\s+(.+)$`)
+var menuContextUsageRE = regexp.MustCompile(`^\d+(?:\.\d+)?[kKmM]?/\d+(?:\.\d+)?[kKmM]?(?:\s|$)`)
 
 // DetectTerminalMenu recognizes an active selector, not an arbitrary numbered
 // answer: navigation instructions, one focus marker and an active tail are required.
 func DetectTerminalMenu(text, sessionID string, version, snapshotVersion int64) *TerminalInteraction {
 	lines := splitVisibleLines(trimVisibleText(text))
+	// Ink borders are outside the menu's indentation. Strip them, including
+	// padded empty rows, before locating the focus marker and navigation footer.
+	for i, line := range lines {
+		left := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(left, "│") || strings.HasPrefix(left, "┃") {
+			line = strings.TrimPrefix(strings.TrimPrefix(left, "│"), "┃")
+		}
+		lines[i] = strings.TrimRight(line, " \t│┃")
+	}
 	footer := -1
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.ToLower(lines[i])
@@ -31,8 +41,17 @@ func DetectTerminalMenu(text, sessionID string, version, snapshotVersion int64) 
 	if footer < 0 {
 		return nil
 	}
+	aidenStatus := false
 	for _, line := range lines[footer+1:] {
 		line = strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToLower(line), "recent context usage:") {
+			aidenStatus = true
+			continue
+		}
+		if aidenStatus && menuContextUsageRE.MatchString(line) {
+			aidenStatus = false
+			continue
+		}
 		if line != "" && !isPureHorizontalRuleLine(line) && !strings.HasPrefix(line, "╰") && !strings.HasPrefix(line, "└") && !isCodexInteractionStatusLine(line) {
 			return nil
 		}

@@ -297,8 +297,9 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 		elements = append(elements, map[string]any{"tag": "markdown", "content": "<at id=" + mentionID + "></at>"})
 	}
 	if note.Startup {
-		elements = append(elements, larkTerminalTextElements(note.Content, note.SnapshotSource)...)
-		if !note.Disabled && note.Interaction != nil {
+		if note.Interaction == nil {
+			elements = append(elements, larkTerminalTextElements(note.Content, note.SnapshotSource)...)
+		} else if !note.Disabled {
 			elements = append(elements, larkTerminalInteractionElement(note.SessionID, note.Interaction))
 		}
 		if note.StartupInputEnabled && !note.StartupComplete && !note.Disabled && note.Interaction == nil {
@@ -325,11 +326,10 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 			interactionElement = larkTerminalInteractionElement(note.SessionID, note.Interaction)
 		}
 		if interactionElement == nil {
-			elements = append(elements, larkTerminalTextElements(note.Content, note.SnapshotSource)...)
-		} else {
-			if note.Interaction.Kind == TerminalInteractionMenu {
+			if note.Interaction == nil {
 				elements = append(elements, larkTerminalTextElements(note.Content, note.SnapshotSource)...)
 			}
+		} else {
 			if note.Interaction.Kind == TerminalInteractionCodexResume {
 				elements = append(elements, larkTerminalInteractionHeadingElement("选择要恢复的会话"))
 			}

@@ -12,6 +12,63 @@ import (
 const nativeModelMenu = "Select Model\n\n❯  1. gateway model-a\n   2. gateway model-b\n\n↑↓ Navigate • Enter Confirm • Esc Cancel"
 const nativeReasoningMenu = "Select Reasoning Level for model-b\nCurrent reasoning: Medium\n\n   1. Low\n❯  2. Medium\n   3. High\n\n↑/↓ select · Enter confirm · ← back to models"
 
+// Layout captured from the reported Aiden session: padded border-only rows,
+// a highlighted tenth item, and a two-line MCP/context status bar below the box.
+const boxedAidenMenu = `LSP server 'go': command 'gopls' not found.
+> hi
+你好，需要我帮你做什么？
+╭────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                    │
+│   Select Model                                                                     │
+│                                                                                    │
+│      1. gateway Doubao-Seed-2.1-Pro  (可用额度: 100%)                                  │
+│      2. gateway Doubao-Seed-2.1-turbo  (可用额度: 100%)                                │
+│      3. gateway ark-deepseek-v4-flash  (可用额度: 100%)                                │
+│      4. gateway ark-deepseek-v4-pro  (可用额度: 100%)                                  │
+│      5. gateway ark-glm-5.2  (可用额度: 100%)                                          │
+│      6. gateway deepseek-v4-flash  (可用额度: 100%)                                    │
+│      7. gateway deepseek-v4-pro  (可用额度: 100%)                                      │
+│      8. gateway gemini-3.5-flash  (可用额度: 100%)                                     │
+│      9. gateway glm-5.2  (可用额度: 100%)                                              │
+│   ❯  10. gateway gpt-5.6-sol  (可用额度: 100%)                                        │
+│      11. gateway gpt-6-astra  (可用额度: 100%)                                         │
+│                                                                                    │
+│   Responses API models support reasoning levels — press Enter to choose.            │
+│                                                                                    │
+│   ↑↓ Navigate • Enter Confirm • Esc Cancel                                          │
+│                                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────╯
+Recent context usage:      |🔌 MCP      (2/3        ❌ reposearch: Failed to connect to stdio server "reposearch": McpError: MCP error    Type /mcp to view
+98.5K/372.0K                Servers     connected) -32000: Connection closed                                                             details`
+
+func TestBoxedAidenMenuAndSelectorOnlyCard(t *testing.T) {
+	for _, screen := range []string{boxedAidenMenu, "  " + strings.ReplaceAll(boxedAidenMenu, "\n", "\n  ")} {
+		menu := DetectTerminalMenu(screen, "s", 1, 2)
+		if menu == nil || menu.Title != "Select Model" || len(menu.Options) != 14 {
+			t.Fatalf("boxed menu = %#v", menu)
+		}
+		if menu.Options[9].Input != "" || menu.Options[10].Input != "\x1b[B" || menu.Options[0].Input != strings.Repeat("\x1b[A", 9) {
+			t.Fatalf("wrong focus or navigation: %#v", menu.Options)
+		}
+		for _, startup := range []bool{false, true} {
+			for _, disabled := range []bool{false, true} {
+				card, err := larkNotificationCardContent(WaitingNotification{SessionID: "s", Content: screen, Interaction: menu, Startup: startup, Disabled: disabled}, "u", true)
+				if err != nil || strings.Contains(card, "gopls") || strings.Contains(card, "reposearch") || strings.Contains(card, "你好") || strings.Contains(card, "↑↓ Navigate") {
+					t.Fatalf("menu card leaked terminal transcript: %s %v", card, err)
+				}
+				if !disabled && (!strings.Contains(card, `"tag":"select_static"`) || !strings.Contains(card, "gpt-6-astra")) {
+					t.Fatalf("selector missing: %s", card)
+				}
+			}
+		}
+		for _, tail := range []string{"\n❯ new question", "\n$ ", "\nAn unrelated answer"} {
+			if DetectTerminalMenu(screen+tail, "s", 1, 2) != nil {
+				t.Fatal("historical boxed menu treated as active")
+			}
+		}
+	}
+}
+
 func TestTerminalMenuDetection(t *testing.T) {
 	for _, tc := range []struct {
 		name, screen, key string
