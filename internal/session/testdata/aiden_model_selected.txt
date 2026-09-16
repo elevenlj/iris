@@ -1,0 +1,20 @@
+> /model
+  ⎿  Set model to gpt-6-astra (reasoning: Medium (default))
+
+ ✦ +135 skills loaded (agent-browser, analyze-voip-rubric-case, auto-improve, ..., use /skills for details)
+
+✦ ⚠ LSP server 'go': command 'gopls' not found. Install it (e.g. npm install -g gopls) to enable type checking.
+  ⚠ LSP server 'typescript': command 'typescript-language-server' not found. Install it (e.g. npm install -g typescript-language-server) to enable type
+   checking.
+  ⚠ LSP server 'css': command 'vscode-css-language-server' not found. Install it (e.g. npm install -g vscode-css-language-server) to enable type checking.
+  ⚠ LSP server 'html': command 'vscode-html-language-server' not found. Install it (e.g. npm install -g vscode-html-language-server) to enable type checking.
+  ⚠ LSP server 'java': command 'jdtls' not found. Install it (e.g. npm install -g jdtls) to enable type checking.
+
+                                                                                                                     agent full mode (shift + tab to toggle)
+warning: 代码改动上报服务异常，将导致 AI 代码贡献率统计缺失。请运行 `aiden doctor code-adoption --fix` 修复
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+> Summarize the key points...
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Recent context usage:       |🔌 MCP      (2/3        ❌ reposearch: Failed to connect to stdio server "reposearch": McpError: MCP error   Type /mcp to view
+102.5K/200.0K                Servers     connected) -32000: Connection closed                                                            details

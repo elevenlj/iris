@@ -220,6 +220,34 @@ func TestTerminalMenuStartupAndChainedNotifications(t *testing.T) {
 	}
 }
 
+func TestTerminalMenuSelectedAidenReturnsToWaiting(t *testing.T) {
+	snapshot, err := os.ReadFile("testdata/aiden_model_selected.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, active := range []bool{true, false} {
+		notifier := &recordingNotifier{createMessageIDs: []string{"card"}}
+		m := NewManager(nil, nil, WithNotifier(notifier), WithIsolatedMessageRegistry())
+		rt := &RuntimeSession{manager: m, session: Session{ID: "selected", Live: true, Status: StatusRunning, NotifyOnWaiting: true, LastMode: SessionModeAgent, LastAgentKind: "aiden"}, terminalMenuActive: active, notifyVersion: 1}
+		defer rt.Close()
+		rt.SetVisibleSnapshotWithSource(string(snapshot), aidenReadySource)
+		if !active {
+			if rt.Snapshot().Status != StatusRunning || len(notifier.notes()) != 0 {
+				t.Fatal("ordinary task was completed by terminal output")
+			}
+			continue
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for len(notifier.notes()) == 0 && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		notes := notifier.notes()
+		if rt.Snapshot().Status != StatusWaiting || len(notes) != 1 || notes[0].Interaction != nil || notes[0].Completed || notes[0].Content != "选择已结束" {
+			t.Fatalf("menu closure status=%s notes=%#v", rt.Snapshot().Status, notes)
+		}
+	}
+}
+
 func TestTerminalMenuSelectionRejectsChangedScreen(t *testing.T) {
 	rt := &RuntimeSession{session: Session{ID: "s", Live: true, Status: StatusWaiting}, notifyVersion: 1, visibleSnapshotVersion: 2, visibleSnapshot: nativeModelMenu, visibleSnapshotSource: aidenReadySource, lastNotifiedMessageID: "card"}
 	menu := rt.notificationInteractionLocked("card")

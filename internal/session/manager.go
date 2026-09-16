@@ -2873,7 +2873,7 @@ func startupAgentComposerReady(snapshot, source, agentKind string) bool {
 			return false
 		}
 		footer := strings.TrimSpace(strings.Join(lines[bottom+1:], "\n"))
-		if footer != "" && !strings.HasPrefix(footer, "◯ IDE:") && !strings.HasPrefix(footer, "🔌 MCP") {
+		if footer != "" && !strings.HasPrefix(footer, "◯ IDE:") && !strings.HasPrefix(footer, "🔌 MCP") && !strings.HasPrefix(footer, "Recent context usage:") {
 			return false
 		}
 		for _, line := range lines[bottom+1:] {

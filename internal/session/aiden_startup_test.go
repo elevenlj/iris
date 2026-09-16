@@ -102,6 +102,8 @@ func TestAidenStartupRecognizesFramedComposerWithoutCursor(t *testing.T) {
 		ready                        bool
 	}{
 		{"native with MCP errors", aidenReadySnapshot, aidenReadySource, "aiden", true},
+		{"context usage footer", strings.Replace(aidenReadySnapshot, "🔌 MCP", "Recent context usage: |🔌 MCP", 1), aidenReadySource, "aiden", true},
+		{"context usage with stale composer", strings.Replace(aidenReadySnapshot, "🔌 MCP", "Recent context usage: |🔌 MCP", 1) + "\n> 1. Allow\n  2. Deny", aidenReadySource, "aiden", false},
 		{"empty input", strings.ReplaceAll(aidenReadySnapshot, "> Summarize the main points...", ">"), aidenReadySource, "aiden", true},
 		{"plan mode", strings.ReplaceAll(aidenReadySnapshot, "agent full mode", "plan mode"), aidenReadySource, "aiden", true},
 		{"browser", aidenReadySnapshot, strings.Replace(aidenReadySource, "headless:", "browser:", 1), "aiden", true},
