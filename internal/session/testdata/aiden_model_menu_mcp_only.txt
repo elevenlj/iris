@@ -1,0 +1,23 @@
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                            │
+│   Select Model                                                                                                                                             │
+│                                                                                                                                                            │
+│      1. gateway Doubao-Seed-2.1-Pro  (可用额度: 100%)                                                                                                      │
+│      2. gateway Doubao-Seed-2.1-turbo  (可用额度: 100%)                                                                                                    │
+│      3. gateway ark-deepseek-v4-flash  (可用额度: 100%)                                                                                                    │
+│      4. gateway ark-deepseek-v4-pro  (可用额度: 100%)                                                                                                      │
+│      5. gateway ark-glm-5.2  (可用额度: 100%)                                                                                                              │
+│      6. gateway deepseek-v4-flash  (可用额度: 100%)                                                                                                        │
+│      7. gateway deepseek-v4-pro  (可用额度: 100%)                                                                                                          │
+│      8. gateway gemini-3.5-flash  (可用额度: 100%)                                                                                                         │
+│      9. gateway glm-5.2  (可用额度: 100%)                                                                                                                  │
+│   ❯  10. gateway gpt-5.6-sol  (可用额度: 100%)                                                                                                             │
+│      11. gateway gpt-6-astra  (可用额度: 100%)                                                                                                             │
+│                                                                                                                                                            │
+│   Responses API models support reasoning levels — press Enter to choose.                                                                                   │
+│                                                                                                                                                            │
+│   ↑↓ Navigate • Enter Confirm • Esc Cancel                                                                                                                 │
+│                                                                                                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+🔌 MCP Servers(2/3 connected ❌ reposearch: Failed to connect to stdio server "reposearch": McpError: MCP error -32000: Connection    Type /mcp to view
+                            closed                                                                                                   details

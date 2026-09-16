@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -11,6 +12,67 @@ import (
 // Aiden OptionsList/KeyTips render numbered rows but accept arrows, not digits.
 const nativeModelMenu = "Select Model\n\n❯  1. gateway model-a\n   2. gateway model-b\n\n↑↓ Navigate • Enter Confirm • Esc Cancel"
 const nativeReasoningMenu = "Select Reasoning Level for model-b\nCurrent reasoning: Medium\n\n   1. Low\n❯  2. Medium\n   3. High\n\n↑/↓ select · Enter confirm · ← back to models"
+
+func TestTerminalMenuCapturedLayouts(t *testing.T) {
+	for _, tc := range []struct {
+		file, kind string
+		models     int
+	}{
+		{"aiden_model_menu_mcp_only.txt", "aiden", 11},
+		{"claude_model_menu_effort.txt", "claude", 4},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			data, err := os.ReadFile("testdata/" + tc.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			screen := string(data)
+			menu := DetectTerminalMenu(screen, "s", 1, 1)
+			if menu == nil {
+				t.Fatal("actual rendered menu was not recognized")
+			}
+			models := 0
+			keys := map[string]string{}
+			for _, option := range menu.Options {
+				if strings.HasPrefix(option.ID, "opt_") {
+					models++
+				}
+				keys[option.ID] = option.Input
+			}
+			if models != tc.models {
+				t.Fatalf("model count=%d", models)
+			}
+			if tc.kind == "claude" && (keys["effort_left"] != "\x1b[D" || keys["effort_right"] != "\x1b[C" || keys["use_session"] != "s") {
+				t.Fatalf("missing model controls: %#v", menu.Options)
+			}
+			for _, tail := range []string{"\n❯ next prompt", "\n  ❯ ", "\n  • New answer", "\nAn unrelated answer"} {
+				if DetectTerminalMenu(screen+tail, "s", 1, 1) != nil {
+					t.Fatalf("accepted historical menu before %q", tail)
+				}
+			}
+			notifier := &recordingNotifier{}
+			rt := &RuntimeSession{manager: NewManager(nil, nil, WithNotifier(notifier), WithIsolatedMessageRegistry()), session: Session{ID: "s", Live: true, Status: StatusRunning, NotifyOnWaiting: true, LastMode: SessionModeAgent, LastAgentKind: tc.kind}}
+			defer rt.Close()
+			source := aidenReadySource
+			if tc.kind == "claude" {
+				source = strings.Replace(source, "buffer_type=normal", "buffer_type=alternate", 1)
+			}
+			rt.SetVisibleSnapshotWithSource(screen, source)
+			deadline := time.Now().Add(time.Second)
+			for notifier.count() == 0 && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			notes := notifier.notes()
+			if len(notes) != 1 || notes[0].Interaction == nil || notes[0].Completed {
+				t.Fatalf("menu did not become selector notification: %#v", notes)
+			}
+			card, err := larkNotificationCardContent(notes[0], "", false)
+			if err != nil || !strings.Contains(card, `"tag":"select_static"`) || strings.Contains(card, "reposearch") || strings.Contains(card, "Switch between Claude") {
+				t.Fatalf("wrong selector card: %s %v", card, err)
+			}
+		})
+	}
+}
 
 // Layout captured from the reported Aiden session: padded border-only rows,
 // a highlighted tenth item, and a two-line MCP/context status bar below the box.

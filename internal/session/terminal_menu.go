@@ -13,6 +13,8 @@ const TerminalInteractionMenu = "terminal_menu"
 var menuFocusRE = regexp.MustCompile(`^(\s*)[❯›>▶]\s+(.+)$`)
 var menuNumberRE = regexp.MustCompile(`^\s*(\d{1,3})[.)]\s+(.+)$`)
 var menuContextUsageRE = regexp.MustCompile(`^\d+(?:\.\d+)?[kKmM]?/\d+(?:\.\d+)?[kKmM]?(?:\s|$)`)
+var menuMCPStatusRE = regexp.MustCompile(`^[^\p{L}\p{N}]*MCP\s+Servers\s*\(\d+/\d+\s+connected`)
+var menuPromptTailRE = regexp.MustCompile(`^[❯›>▶$%#✦⏺•](?:\s|$)`)
 
 // DetectTerminalMenu recognizes an active selector, not an arbitrary numbered
 // answer: navigation instructions, one focus marker and an active tail are required.
@@ -32,7 +34,9 @@ func DetectTerminalMenu(text, sessionID string, version, snapshotVersion int64) 
 		line := strings.ToLower(lines[i])
 		navigation := (strings.Contains(line, "↑") && strings.Contains(line, "↓")) || strings.Contains(line, "arrow keys") || strings.Contains(line, "上下")
 		confirm := strings.Contains(line, "enter") || strings.Contains(line, "回车")
-		confirmFooter := strings.Contains(line, "esc") && (strings.Contains(line, "confirm") || strings.Contains(line, "select") || strings.Contains(line, "continue") || strings.Contains(line, "确认"))
+		// CLIs phrase Enter differently (confirm, set as default, submit, etc.).
+		// Pair it with navigation/Esc, then require actual focused menu rows below.
+		confirmFooter := strings.Contains(line, "esc")
 		if confirm && (navigation || confirmFooter) {
 			footer = i
 			break
@@ -42,8 +46,19 @@ func DetectTerminalMenu(text, sessionID string, version, snapshotVersion int64) 
 		return nil
 	}
 	aidenStatus := false
-	for _, line := range lines[footer+1:] {
-		line = strings.TrimSpace(line)
+	mcpContinuation := 0
+	for _, raw := range lines[footer+1:] {
+		line := strings.TrimSpace(raw)
+		if menuMCPStatusRE.MatchString(line) {
+			// ponytail: allow four indented status wraps, not arbitrary output;
+			// add a status-layout adapter if narrower terminals need more.
+			mcpContinuation = 4
+			continue
+		}
+		if mcpContinuation > 0 && strings.HasPrefix(raw, "  ") && !menuPromptTailRE.MatchString(line) && !menuNumberRE.MatchString(line) {
+			mcpContinuation--
+			continue
+		}
 		if strings.HasPrefix(strings.ToLower(line), "recent context usage:") {
 			aidenStatus = true
 			continue
@@ -153,6 +168,17 @@ func DetectTerminalMenu(text, sessionID string, version, snapshotVersion int64) 
 	}
 	if toggleSpace {
 		options = append(options, TerminalInteractionOption{ID: "confirm", Label: "确认选择", SubmitWithEnter: true})
+	}
+	for _, line := range lines[end:footer] {
+		if index := strings.Index(line, "←/→ to adjust"); index >= 0 && strings.Contains(strings.ToLower(line), "effort") {
+			effort := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line[:index]), "●"))
+			options = append(options,
+				TerminalInteractionOption{ID: "effort_left", Label: "← 调整推理强度（当前：" + effort + "）", Input: "\x1b[D"},
+				TerminalInteractionOption{ID: "effort_right", Label: "→ 调整推理强度（当前：" + effort + "）", Input: "\x1b[C"})
+		}
+	}
+	if strings.Contains(footerText, "s to use this session only") {
+		options = append(options, TerminalInteractionOption{ID: "use_session", Label: "使用当前选中项（仅本会话）", Input: "s"})
 	}
 	// Navigation also makes clipped/paged menus reachable without inventing hidden options.
 	options = append(options, TerminalInteractionOption{ID: "up", Label: "↑ 向上浏览", Input: "\x1b[A"}, TerminalInteractionOption{ID: "down", Label: "↓ 向下浏览", Input: "\x1b[B"})
