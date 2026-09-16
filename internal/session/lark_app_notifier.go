@@ -3,7 +3,6 @@ package session
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,9 +52,6 @@ type LarkAppNotifier struct {
 	mention          bool
 	customShortcutMu sync.RWMutex
 	customShortcuts  []LarkCustomShortcut
-	tipMu            sync.Mutex
-	tipSent          map[string]map[int]bool
-	tipSender        func(string, string, int) error
 }
 
 type larkCardState struct {
@@ -134,7 +130,6 @@ func NewLarkAppNotifier(appID, appSecret, receiveID string, mention bool) *LarkA
 		uncachedClient: lark.NewClient(appID, appSecret, lark.WithEnableTokenCache(false)),
 		receiveID:      receiveID,
 		mention:        mention,
-		tipSent:        make(map[string]map[int]bool),
 	}
 }
 
@@ -217,6 +212,8 @@ func (n *LarkAppNotifier) NotifyWaiting(note WaitingNotification) (WaitingNotifi
 		note.InputMessageID = previous.InputMessageID
 		note.BotInput = previous.BotInput
 		note.TopicRootID = previous.TopicRootID
+		note.MentionOpenID = previous.MentionOpenID
+		note.Completed = note.Completed || previous.Completed
 	}
 	if state.recalled[note.MessageID] {
 		return WaitingNotificationResult{MessageID: note.MessageID, Updated: true}, nil
@@ -522,7 +519,7 @@ func larkTerminalInteractionHeadingElement(title string) map[string]any {
 }
 
 func larkNotificationMentionID(note WaitingNotification, receiveID string) string {
-	if note.BotInput {
+	if note.BotInput || note.Running || note.Startup || !note.Completed {
 		return ""
 	}
 	if id := strings.TrimSpace(note.MentionOpenID); id != "" {
@@ -1202,10 +1199,14 @@ func (n *LarkAppNotifier) createWaiting(note WaitingNotification, content string
 		"content":    string(content),
 	}
 	endpoint := "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=" + receiveIDType
-	if note.TopicRootID != "" {
+	replyTo := strings.TrimSpace(note.InputMessageID)
+	if replyTo == "" {
+		replyTo = note.TopicRootID
+	}
+	if replyTo != "" {
 		delete(body, "receive_id")
-		body["reply_in_thread"] = true
-		endpoint = "https://open.feishu.cn/open-apis/im/v1/messages/" + url.PathEscape(note.TopicRootID) + "/reply"
+		body["reply_in_thread"] = note.TopicRootID != ""
+		endpoint = "https://open.feishu.cn/open-apis/im/v1/messages/" + url.PathEscape(replyTo) + "/reply"
 	}
 	payload, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, endpoint, bytes.NewReader(payload))
@@ -1258,16 +1259,10 @@ func (n *LarkAppNotifier) updateWaiting(note WaitingNotification, content string
 	if !resp.Success() {
 		return WaitingNotificationResult{}, fmt.Errorf("lark patch message API returned code %d: %s", resp.Code, resp.Msg)
 	}
-	tipSent := false
-	if note.UpdateNo > 0 && !note.SuppressUpdateTip && !note.BotInput {
-		if err := n.sendUpdateTipOnce(note); err == nil {
-			tipSent = true
-		}
-	}
 	if !note.Disabled {
 		n.messageRegistry().remember(note.SessionID, note.MessageID)
 	}
-	return WaitingNotificationResult{MessageID: note.MessageID, Updated: true, TipSent: tipSent}, nil
+	return WaitingNotificationResult{MessageID: note.MessageID, Updated: true}, nil
 }
 
 func (n *LarkAppNotifier) UpdateWaitingRunning(note WaitingNotification, running bool) error {
@@ -1283,6 +1278,8 @@ func (n *LarkAppNotifier) UpdateWaitingRunning(note WaitingNotification, running
 		note.InputMessageID = previous.InputMessageID
 		note.BotInput = previous.BotInput
 		note.TopicRootID = previous.TopicRootID
+		note.MentionOpenID = previous.MentionOpenID
+		note.Completed = note.Completed || previous.Completed
 	}
 	if state.recalled[note.MessageID] {
 		return nil
@@ -1313,91 +1310,6 @@ func (n *LarkAppNotifier) UpdateWaitingRunning(note WaitingNotification, running
 	if !note.Disabled && state.latest[key].MessageID == note.MessageID {
 		state.latest[key] = note
 		n.persistCards(state)
-	}
-	return nil
-}
-
-func (n *LarkAppNotifier) sendUpdateTipOnce(note WaitingNotification) error {
-	messageID, chatID, updateNo := note.MessageID, note.ChatID, note.UpdateNo
-	if messageID == "" || updateNo <= 0 {
-		return nil
-	}
-	n.tipMu.Lock()
-	if n.tipSent == nil {
-		n.tipSent = make(map[string]map[int]bool)
-	}
-	sent := n.tipSent[messageID]
-	if sent == nil {
-		sent = make(map[int]bool)
-		n.tipSent[messageID] = sent
-	}
-	if sent[updateNo] {
-		n.tipMu.Unlock()
-		return nil
-	}
-	n.tipMu.Unlock()
-
-	send := n.sendUpdateTip
-	if n.tipSender != nil {
-		send = func(_ WaitingNotification) error {
-			return n.tipSender(messageID, chatID, updateNo)
-		}
-	}
-	if err := retryLarkVoid(func() error { return send(note) }); err != nil {
-		return err
-	}
-
-	n.tipMu.Lock()
-	if n.tipSent[messageID] == nil {
-		n.tipSent[messageID] = make(map[int]bool)
-	}
-	n.tipSent[messageID][updateNo] = true
-	n.tipMu.Unlock()
-	return nil
-}
-
-func (n *LarkAppNotifier) sendUpdateTip(note WaitingNotification) error {
-	if note.SuppressUpdateTip || note.BotInput {
-		return nil
-	}
-	content, err := larkUpdateTipTextContent(larkNotificationMentionID(note, n.receiveID), n.mention)
-	if err != nil {
-		return err
-	}
-	uuid := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%d", n.appID, note.MessageID, note.UpdateNo))))[:32]
-	cardID := strings.TrimSpace(note.MessageID)
-	if cardID == "" {
-		return errors.New("completion tip requires an answer card ID")
-	}
-
-	req := larkim.NewReplyMessageReqBuilder().MessageId(cardID).Body(
-		larkim.NewReplyMessageReqBodyBuilder().MsgType("text").Content(content).ReplyInThread(note.TopicRootID != "").Uuid(uuid).Build(),
-	).Build()
-	call := func(token string) (*larkim.ReplyMessageResp, error) {
-		if token == "" {
-			return n.client.Im.V1.Message.Reply(context.Background(), req)
-		}
-		if n.uncachedClient == nil {
-			return nil, errors.New("lark uncached client is not configured")
-		}
-		return n.uncachedClient.Im.V1.Message.Reply(context.Background(), req, larkcore.WithTenantAccessToken(token))
-	}
-	token := n.tenantTokenSnapshot()
-	resp, err := call(token)
-	if err == nil && resp != nil && invalidLarkAccessTokenCode(resp.Code) {
-		token, err = n.refreshTenantToken(token)
-		if err == nil {
-			resp, err = call(token)
-		}
-	}
-	if err != nil {
-		return err
-	}
-	if resp == nil {
-		return errors.New("empty lark completion reply response")
-	}
-	if !resp.Success() {
-		return fmt.Errorf("lark completion reply API returned code %d: %s", resp.Code, resp.Msg)
 	}
 	return nil
 }
@@ -1472,15 +1384,6 @@ func larkAccessTokenInvalid(resp *larkim.PatchMessageResp) bool {
 
 func invalidLarkAccessTokenCode(code int) bool {
 	return code == 99991663
-}
-
-func larkUpdateTipTextContent(receiveID string, mention bool) (string, error) {
-	text := "任务已完成"
-	if mention && strings.TrimSpace(receiveID) != "" {
-		text = `<at user_id="` + strings.TrimSpace(receiveID) + `"></at> ` + text
-	}
-	b, err := json.Marshal(map[string]string{"text": text})
-	return string(b), err
 }
 
 func (n *LarkAppNotifier) tenantAccessToken(ctx context.Context) (string, error) {

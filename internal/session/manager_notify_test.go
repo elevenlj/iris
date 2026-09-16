@@ -146,7 +146,7 @@ func TestClaudeStopOnlyNotifiesAfterBackgroundWork(t *testing.T) {
 		t.Fatalf("final completion: %v %v", accepted, err)
 	}
 	notes := waitForNotifierNotes(t, notifier, 1)
-	if notes[0].Running || notes[0].SuppressUpdateTip || notes[0].Content != "最终汇总" || notes[0].SnapshotSource != "claude_hook:last_assistant_message" {
+	if notes[0].Running || !notes[0].Completed || notes[0].SuppressUpdateTip || notes[0].Content != "最终汇总" || notes[0].SnapshotSource != "claude_hook:last_assistant_message" {
 		t.Fatalf("final notification=%#v", notes[0])
 	}
 }
@@ -2281,6 +2281,7 @@ func TestLarkNotificationCardContentMentionsRoundSender(t *testing.T) {
 		Content:       "done",
 		ChatID:        "oc_group",
 		MentionOpenID: "ou_asker",
+		Completed:     true,
 	}
 	content, err := larkNotificationCardContent(note, "ou_owner", true)
 	if err != nil {
@@ -2291,10 +2292,6 @@ func TestLarkNotificationCardContentMentionsRoundSender(t *testing.T) {
 	}
 	if strings.Contains(content, `ou_owner`) {
 		t.Fatalf("card content should not mention fallback receiver when asker is known, got %s", content)
-	}
-	tip, err := larkUpdateTipTextContent(larkNotificationMentionID(note, "ou_owner"), true)
-	if err != nil || !strings.Contains(tip, `\u003cat user_id=\"ou_asker\"\u003e\u003c/at\u003e`) || strings.Contains(tip, `ou_owner`) {
-		t.Fatalf("completion tip should mention the same asker as the card, got %s err=%v", tip, err)
 	}
 }
 
@@ -2843,34 +2840,6 @@ func TestUpdateNotificationRunningRetriesNotifierFailures(t *testing.T) {
 	}
 }
 
-func TestLarkUpdateWaitingSendsTaskCompletedTip(t *testing.T) {
-	notifier := &LarkAppNotifier{}
-	notifier.client = fakeLarkSuccessClient(t)
-	var sent int
-	notifier.tipSender = func(messageID, chatID string, updateNo int) error {
-		sent++
-		return nil
-	}
-
-	result, err := notifier.updateWaiting(WaitingNotification{
-		SessionID: "sess-1",
-		Name:      "A",
-		Content:   "updated",
-		MessageID: "msg-1",
-		UpdateNo:  2,
-	}, "{}")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.TipSent || sent != 1 {
-		t.Fatalf("card completion should create one completion-tip message, got result=%#v sent=%d", result, sent)
-	}
-	content, err := larkUpdateTipTextContent("", false)
-	if err != nil || content != `{"text":"任务已完成"}` {
-		t.Fatalf("completion tip content is wrong: content=%s err=%v", content, err)
-	}
-}
-
 func TestAutoRefreshNotificationMessageKeepsUpdateNumberButAllowsTip(t *testing.T) {
 	notifier := &recordingNotifier{messageID: "bot-card"}
 	m := NewManager(nil, nil, WithNotifier(notifier), WithNotificationUpdateCoalesce(0))
@@ -2958,7 +2927,6 @@ func TestLarkPatchRefreshesClientAfterAccessTokenExpires(t *testing.T) {
 		client:    lark.NewClient("token-recovery-test-app", "secret", lark.WithHttpClient(httpClient)),
 		uncachedClient: lark.NewClient("token-recovery-test-app", "secret",
 			lark.WithHttpClient(httpClient), lark.WithEnableTokenCache(false)),
-		tipSent: make(map[string]map[int]bool),
 	}
 	notifier.tokenFetcher = func(context.Context) (string, error) {
 		tokenFetches++

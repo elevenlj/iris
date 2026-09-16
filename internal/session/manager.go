@@ -3733,6 +3733,7 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 		MentionOpenID:       rt.notificationMentionOpenID,
 		UpdateNo:            updateNo,
 		Running:             running,
+		Completed:           rt.hookCompletedCurrentRound,
 		AutoRefreshEnabled:  rt.autoRefreshEnabled,
 		AutoSummaryEnabled:  rt.autoSummaryEnabled,
 		MentionModeEnabled:  rt.session.LarkMentionModeEnabled,
@@ -4721,6 +4722,7 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 		return
 	}
 	claimHookCompletionTip := rt.applyHookCompletionTipPolicyLocked(&n)
+	n.Completed = rt.hookCompletedCurrentRound && !n.Startup && !startupFallback
 	rt.mu.Unlock()
 	result, err := rt.notifyWaitingWithRetry(n)
 	if err != nil {

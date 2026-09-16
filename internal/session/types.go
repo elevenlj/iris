@@ -91,6 +91,7 @@ type WaitingNotification struct {
 	MentionOpenID        string
 	UpdateNo             int
 	Running              bool
+	Completed            bool
 	Disabled             bool
 	AutoRefreshEnabled   bool
 	AutoSummaryEnabled   bool
@@ -224,7 +225,6 @@ type WaitingNotificationResult struct {
 	RootID    string
 	ParentID  string
 	Updated   bool
-	TipSent   bool
 }
 
 type WaitingNotifier interface {

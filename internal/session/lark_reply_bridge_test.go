@@ -794,25 +794,19 @@ func TestLarkReplyBridgeGroupInputMentionsSender(t *testing.T) {
 			for _, phase := range []string{"running", "complete"} {
 				note := got
 				note.Running = phase == "running"
+				note.Completed = phase == "complete"
 				note.SnapshotSource = "aiden_hook:last_assistant_message"
 				note.Content = "Agent reply <at id=ou-chosen></at>"
 				card, err := larkNotificationCardContent(note, "ou-developer", true)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if strings.Contains(card, "ou-bob") != (wantMention != "") {
+				if strings.Contains(card, "ou-bob") != (wantMention != "" && phase == "complete") {
 					t.Fatalf("%s card has incorrect automatic mention: %s", phase, card)
 				}
 				if !strings.Contains(card, "ou-chosen") {
 					t.Fatal("Agent-authored mention removed")
 				}
-			}
-			tip, err := larkUpdateTipTextContent(larkNotificationMentionID(got, "ou-developer"), true)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if strings.Contains(tip, "ou-bob") != (wantMention != "") || strings.Contains(tip, "ou-developer") {
-				t.Fatalf("completion tip has incorrect automatic mention: %s", tip)
 			}
 		})
 	}
