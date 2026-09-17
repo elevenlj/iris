@@ -144,7 +144,7 @@ func TestRestartAgentSubmitsFollowUpAfterNewComposerIsReady(t *testing.T) {
 	close(terminal.release)
 	waitForAgentRestartWrites(t, terminal, 3)
 	writes := terminal.snapshotWrites()
-	if writes[0] != "codex --dangerously-bypass-approvals-and-sandbox\r" || writes[1] != prompt || writes[2] != "\r" {
+	if writes[0] != "codex --dangerously-bypass-approvals-and-sandbox\r" || writes[1] != "\x1b[200~"+prompt+"\x1b[201~" || writes[2] != "\r" {
 		t.Fatalf("restart follow-up writes = %#v", writes)
 	}
 	rt.mu.Lock()

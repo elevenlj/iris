@@ -7,6 +7,7 @@ import pty
 import select
 import struct
 import subprocess
+import sys
 import tempfile
 import termios
 import threading
@@ -64,7 +65,7 @@ with tempfile.TemporaryDirectory(prefix="iris-paste-check-") as work:
         drain(2)
         os.write(master, b"\r")  # Trust only this empty temporary directory.
         drain(2)
-        text = "IRIS paste boundary test 中文 multi-line\n" * 800 + "END-IRIS-PASTE"
+        text = sys.argv[1] if len(sys.argv) > 1 else "IRIS paste boundary test 中文 multi-line\n" * 800 + "END-IRIS-PASTE"
         payload = ("\x1b[200~" + text + "\x1b[201~").encode()
         pos = 0
         while pos < len(payload):

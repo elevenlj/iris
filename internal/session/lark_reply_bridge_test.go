@@ -2265,18 +2265,18 @@ func TestLarkReplyBridgeQueuesRecoveryInputUntilComposerReady(t *testing.T) {
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		if lastSubmittedWrite(launcher.terminals[0].writeParts(), "我重启了一下，你好呀") {
+		if lastSubmittedWrite(launcher.terminals[0].writeParts(), "\x1b[200~我重启了一下，你好呀\x1b[201~") {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	parts := launcher.terminals[0].writeParts()
-	if !lastSubmittedWrite(parts, "我重启了一下，你好呀") {
+	if !lastSubmittedWrite(parts, "\x1b[200~我重启了一下，你好呀\x1b[201~") {
 		t.Fatalf("queued startup input was not submitted after composer readiness: %#v", parts)
 	}
 	textWrites := 0
 	for _, part := range parts {
-		if part == "我重启了一下，你好呀" {
+		if part == "\x1b[200~我重启了一下，你好呀\x1b[201~" {
 			textWrites++
 		}
 	}
@@ -3252,7 +3252,7 @@ func TestLarkReplyBridgeRestartAgentReadsGroupContextAfterComposerReady(t *testi
 		time.Sleep(10 * time.Millisecond)
 	}
 	parts := launcher.terminals[0].writeParts()
-	if len(parts) < before+4 || parts[before] != "\x03\x03" || parts[before+1] != expectedStartCommand+"\r" || parts[before+2] != larkAgentContextPrompt || parts[before+3] != "\r" {
+	if len(parts) < before+4 || parts[before] != "\x03\x03" || parts[before+1] != expectedStartCommand+"\r" || parts[before+2] != "\x1b[200~"+larkAgentContextPrompt+"\x1b[201~" || parts[before+3] != "\r" {
 		t.Fatalf("restart context writes = %#v", parts)
 	}
 	notes := notifier.notes()
