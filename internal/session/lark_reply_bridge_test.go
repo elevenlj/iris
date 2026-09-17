@@ -582,6 +582,20 @@ func TestLarkReplyBridgeIgnoresConfiguredP2PrefixWithFollowingSpace(t *testing.T
 	}
 }
 
+func TestLarkReplyBridgeEmptyIgnorePrefixKeepsDefault(t *testing.T) {
+	bridge := &LarkReplyBridge{}
+	for _, prefix := range []string{"", "  ", "/silent"} {
+		bridge.SetIgnoreMessagePrefix(prefix)
+		want := strings.TrimSpace(prefix)
+		if want == "" {
+			want = "/i"
+		}
+		if !bridge.shouldIgnoreIncomingText(want+" 文档链接") || bridge.shouldIgnoreIncomingText(want+"test") {
+			t.Fatalf("incorrect ignore boundary for prefix %q", prefix)
+		}
+	}
+}
+
 func TestLarkReplyBridgeIgnoresCustomP1PrefixWithFollowingSpace(t *testing.T) {
 	resetLarkRegistryForTest()
 	launcher := &recordingLauncher{}

@@ -213,6 +213,9 @@ func (b *LarkReplyBridge) SetIgnoreMessagePrefix(prefix string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.ignoreMessagePrefix = strings.TrimSpace(prefix)
+	if b.ignoreMessagePrefix == "" {
+		b.ignoreMessagePrefix = "/i"
+	}
 }
 
 func (b *LarkReplyBridge) SetAutoSummaryPrompt(prompt string) {
