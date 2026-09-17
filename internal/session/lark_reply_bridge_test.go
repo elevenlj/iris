@@ -1374,6 +1374,9 @@ func TestLarkReplyBridgeImageWaitsForTextBeforeEnter(t *testing.T) {
 }
 
 func TestSubmitStructuredInputDelaysEnterForTUI(t *testing.T) {
+	if structuredInputEnterDelay != 500*time.Millisecond {
+		t.Fatalf("default Enter delay = %s, want 500ms", structuredInputEnterDelay)
+	}
 	term := &recordingTerminal{readCh: make(chan []byte)}
 	rt := &RuntimeSession{
 		manager:  NewManager(nil, nil),
@@ -1381,11 +1384,12 @@ func TestSubmitStructuredInputDelaysEnterForTUI(t *testing.T) {
 		session:  Session{ID: "sess-1", Name: "TUI", Status: StatusWaiting, Live: true},
 	}
 
-	if err := SubmitStructuredInput(rt, "hello tui"); err != nil {
+	text := strings.Repeat("长文本输入\n", 2000) + "结束"
+	if err := SubmitStructuredInput(rt, text); err != nil {
 		t.Fatal(err)
 	}
 	parts := term.writeParts()
-	if !lastSubmittedWrite(parts, "hello tui") {
+	if len(parts) != 2 || !lastSubmittedWrite(parts, text) {
 		t.Fatalf("structured input should write text and enter separately, got %#v", parts)
 	}
 	times := term.writeTimes()

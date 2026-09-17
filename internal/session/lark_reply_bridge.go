@@ -64,7 +64,7 @@ type LarkReplyBridge struct {
 	startID                 int64
 }
 
-var structuredInputEnterDelay = 200 * time.Millisecond
+var structuredInputEnterDelay = 500 * time.Millisecond
 var structuredInputEnterSequence = "\r"
 var larkAgentSlashCommandRE = regexp.MustCompile(`^/[A-Za-z][A-Za-z0-9:_-]*(?:[ \t]+[^\r\n]*)?$`)
 var structuredInputNumericOnlyRE = regexp.MustCompile(`^\d+$`)
