@@ -3554,10 +3554,7 @@ func (rt *RuntimeSession) RefreshNotificationControls(messageID string, preserve
 	if handled, err := rt.refreshStartupNotification(messageID, false, preserveUpdateNo...); handled {
 		return err
 	}
-	rt.mu.Lock()
-	preserveContent := strings.TrimSpace(rt.lastNotifiedContent) != ""
-	rt.mu.Unlock()
-	return rt.refreshNotificationMessage(messageID, true, preserveContent, preserveUpdateNo...)
+	return rt.refreshNotificationMessage(messageID, true, true, preserveUpdateNo...)
 }
 
 func (rt *RuntimeSession) RefreshNotificationControlsPreservingContent(messageID string, preserveUpdateNo ...int) error {
@@ -3663,9 +3660,12 @@ func (rt *RuntimeSession) refreshNotificationMessage(messageID string, suppressU
 	if preserveContent {
 		rt.mu.Lock()
 		content = rt.lastNotifiedContent
+		if messageID == rt.startupNotificationMessageID {
+			content = rt.startupNotificationContent
+		}
 		rt.mu.Unlock()
 		if strings.TrimSpace(content) == "" {
-			return errors.New("notification content is not available")
+			content = RunningNotificationPlaceholder
 		}
 	} else {
 		content, fresh = rt.currentRoundContentWithFreshSnapshot(800 * time.Millisecond)
