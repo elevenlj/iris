@@ -3086,7 +3086,19 @@ func submitStructuredInputWithMode(rt *RuntimeSession, text string, mentionOpenI
 		return fmt.Errorf("runtime not found")
 	}
 	text = strings.TrimRight(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n"), "\n")
-	sessionID := rt.Snapshot().ID
+	sess := rt.Snapshot()
+	sessionID := sess.ID
+	payload := text
+	// Explicit paste boundaries bypass Codex's timing-based paste detection.
+	// Keep native slash commands, menu input, other Agents and shells unchanged.
+	if pressEnter && sess.LastMode == SessionModeAgent &&
+		agentKindForCommand(sess.LastAgentStartCommand, sess.LastAgentKind) == "codex" &&
+		(len(text) >= 1024 || strings.Contains(text, "\n")) && !larkAgentSlashCommandRE.MatchString(text) {
+		if strings.ContainsAny(text, "\x1b\u009b") {
+			return errors.New("输入包含终端控制字符，无法安全粘贴，请移除后重试")
+		}
+		payload = "\x1b[200~" + text + "\x1b[201~"
+	}
 	enterLen := 0
 	if pressEnter {
 		enterLen = len(structuredInputEnterSequence)
@@ -3106,8 +3118,10 @@ func submitStructuredInputWithMode(rt *RuntimeSession, text string, mentionOpenI
 		rt.SetNotificationMentionOpenID(mentionOpenID)
 		rt.markStructuredInputActivity(text, nil, false, inputMessageID...)
 	}
-	if _, err := rt.terminal.Write([]byte(text)); err != nil {
+	if n, err := rt.terminal.Write([]byte(payload)); err != nil {
 		return err
+	} else if n != len(payload) {
+		return io.ErrShortWrite
 	}
 	if !pressEnter {
 		return nil
