@@ -5115,9 +5115,6 @@ func (rt *RuntimeSession) waitingNotificationCandidateLocked() (WaitingNotificat
 			// Running-marker updates reuse this content without the selector.
 			// Never cache the terminal transcript as an automatic menu's body.
 			content = menuInteraction.Title
-			if menuInteraction.Kind != TerminalInteractionMenu {
-				content = rt.currentNotifyContentLocked()
-			}
 		}
 		contentHash := notifyContentHash(content)
 		if menuInteraction != nil {
@@ -5205,10 +5202,9 @@ func (rt *RuntimeSession) startupFallbackWaitingNotificationCandidateLocked() (W
 	if rt.requireLarkChat && strings.TrimSpace(rt.session.LarkChatID) == "" {
 		return WaitingNotification{}, "", false
 	}
-	content := strings.TrimSpace(pickLarkStartupFallbackContent(rt.visibleSnapshot))
-	if content == "" {
-		return WaitingNotification{}, "", false
-	}
+	// Automatic startup updates never publish terminal text. Only the explicit
+	// refresh action reads it; detected selectors are rendered separately.
+	content := StartupNotificationPlaceholder
 	contentHash := notifyContentHash(content)
 	interaction := rt.notificationInteractionLocked(rt.startupNotificationMessageID)
 	if interaction != nil {

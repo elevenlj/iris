@@ -160,7 +160,7 @@ func TestClaudeTrustMenuRemainsVisibleWithoutReleasingQueuedMessage(t *testing.T
 		t.Fatal("trust prompt released queued message")
 	}
 	notes := notifier.notes()
-	if len(notes) == 0 || notes[len(notes)-1].StartupComplete || !strings.Contains(notes[len(notes)-1].Content, "Yes, I trust this folder") {
+	if len(notes) == 0 || notes[len(notes)-1].StartupComplete || notes[len(notes)-1].Interaction == nil || notes[len(notes)-1].Content != StartupNotificationPlaceholder {
 		t.Fatalf("trust prompt not shown: %#v", notes)
 	}
 }

@@ -827,13 +827,7 @@ func TestWaitingNotificationKeepsCodexModelMenusFromVisibleSnapshot(t *testing.T
 	if !ok {
 		t.Fatalf("expected model menu notification, reason=%s", reason)
 	}
-	wantModel := strings.Join([]string{
-		"Select Model and Effort",
-		"Access legacy models by running codex -m <model_name> or in your config.toml",
-		"› 1. gpt-5.5 (current)   Frontier model for complex coding, research, and real-world work.",
-		"  2. gpt-5.4             Strong model for everyday coding.",
-		"Press enter to confirm or esc to go back",
-	}, "\n")
+	wantModel := "Select Model and Effort"
 	if n.Content != wantModel {
 		t.Fatalf("model menu should preserve visible formatting:\n%q\nwant:\n%q", n.Content, wantModel)
 	}
@@ -864,14 +858,7 @@ func TestWaitingNotificationKeepsCodexModelMenusFromVisibleSnapshot(t *testing.T
 	if !ok {
 		t.Fatalf("expected reasoning menu notification, reason=%s", reason)
 	}
-	wantReasoning := strings.Join([]string{
-		"Select Reasoning Level for gpt-5.5",
-		"1. Low                  Fast responses with lighter reasoning",
-		"2. Medium (default)     Balances speed and reasoning depth for everyday tasks",
-		"3. High                 Greater reasoning depth for complex problems",
-		"› 4. Extra high (current)  Extra high reasoning depth for complex problems",
-		"Press enter to confirm or esc to go back",
-	}, "\n")
+	wantReasoning := "Select Reasoning Level for gpt-5.5"
 	if n.Content != wantReasoning {
 		t.Fatalf("reasoning menu should preserve visible formatting:\n%q\nwant:\n%q", n.Content, wantReasoning)
 	}
@@ -4021,9 +4008,9 @@ func TestStartupPresetNotificationSuppressionSkipsExternalNotifyAndHook(t *testi
 	}
 }
 
-func TestStartupBlockerUsesOrdinaryFallbackNotification(t *testing.T) {
+func TestStartupBlockerHidesTerminalUntilManualRefresh(t *testing.T) {
 	notifier := &recordingNotifier{messageID: "fallback-card"}
-	m := NewManager(nil, nil, WithNotifier(notifier))
+	m := NewManager(nil, nil, WithNotifier(notifier), WithIsolatedMessageRegistry())
 	ready := make(chan string, 1)
 	m.SetNotificationSentHook(func(sessionID string) { ready <- sessionID })
 	rt := &RuntimeSession{
@@ -4047,13 +4034,11 @@ func TestStartupBlockerUsesOrdinaryFallbackNotification(t *testing.T) {
 		visibleSnapshotSource: "browser:buffer;continuity_version=2;render_epoch=1;buffer_type=normal;buffer_at_capacity=false;anchor_guard_active=false;anchor_guard_line=-1;cursor_line=1",
 	}
 
+	defer rt.Close()
 	rt.notifyIfStillWaiting(7)
 	notes := notifier.notes()
-	if len(notes) != 2 || !notes[0].Startup || !notes[0].StartupInputEnabled || notes[1].MessageID != "fallback-card" || !notes[1].Startup || !notes[1].SuppressUpdateTip {
-		t.Fatalf("startup blocker should create and update a dedicated startup card, got %#v", notes)
-	}
-	if !strings.Contains(notes[1].Content, "Update available!") || !strings.Contains(notes[1].Content, "Press enter to continue") {
-		t.Fatalf("startup card must preserve the visible terminal prompt, got %q", notes[1].Content)
+	if len(notes) != 1 || !notes[0].Startup || !notes[0].StartupInputEnabled || notes[0].Content != StartupNotificationPlaceholder {
+		t.Fatalf("startup blocker must only show the startup placeholder, got %#v", notes)
 	}
 	select {
 	case sessionID := <-ready:
@@ -4064,8 +4049,15 @@ func TestStartupBlockerUsesOrdinaryFallbackNotification(t *testing.T) {
 		t.Fatal("startup fallback should keep startup protection active")
 	}
 	rt.notifyIfStillWaiting(7)
-	if got := notifier.count(); got != 2 {
+	if got := notifier.count(); got != 1 {
 		t.Fatalf("unchanged startup waiting content should not update the card again, got %d writes", got)
+	}
+	if err := rt.RefreshNotificationMessage("fallback-card"); err != nil {
+		t.Fatal(err)
+	}
+	notes = notifier.notes()
+	if len(notes) != 2 || !strings.Contains(notes[1].Content, "Update available!") {
+		t.Fatalf("explicit manual refresh must still show terminal content: %#v", notes)
 	}
 	rt.mu.Lock()
 	if rt.startupNotificationMessageID != "fallback-card" || rt.lastNotifiedMessageID != "" {

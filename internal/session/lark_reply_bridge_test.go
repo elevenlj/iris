@@ -2243,7 +2243,7 @@ func TestLarkReplyBridgeQueuesRecoveryInputUntilComposerReady(t *testing.T) {
 	rt.notifyIfStillWaiting(version)
 
 	notes = notifier.notes()
-	if len(notes) != 2 || notes[1].MessageID != "startup-card" || !notes[1].Startup || notes[1].Running || !notes[1].SuppressUpdateTip || !strings.Contains(notes[1].Content, "Choose working directory") {
+	if len(notes) != 1 || !notes[0].Startup || notes[0].Content != StartupNotificationPlaceholder {
 		t.Fatalf("startup waiting state should update only the startup card, got %#v", notes)
 	}
 	if got := launcher.terminals[0].writes(); strings.Contains(got, "我重启了一下，你好呀") {
@@ -2284,7 +2284,7 @@ func TestLarkReplyBridgeQueuesRecoveryInputUntilComposerReady(t *testing.T) {
 		t.Fatalf("queued startup input should be submitted once, writes=%#v", parts)
 	}
 	notes = notifier.notes()
-	if len(notes) != 4 || !notes[2].StartupComplete || !notes[3].Running || notes[3].MentionOpenID != "ou-sender" {
+	if len(notes) != 3 || !notes[1].StartupComplete || !notes[2].Running || notes[2].MentionOpenID != "ou-sender" {
 		t.Fatalf("task card should be created only after startup completion, got %#v", notes)
 	}
 	rt.mu.Lock()
