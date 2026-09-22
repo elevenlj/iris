@@ -2480,6 +2480,12 @@ func (rt *RuntimeSession) setVisibleSnapshot(data string, source string, request
 		rt.stateVersion++
 		rt.notifyVersion++
 		messageID := rt.lastNotifiedMessageID
+		if menu != nil {
+			rt.terminalMenuActive = true
+		}
+		if menuClosed && strings.TrimSpace(rt.lastInputText) == "/model" {
+			rt.startupComposerIdle = true // Back at the composer; no Agent task was submitted.
+		}
 		if rt.startupNotifyMode == startupNotifyDiscard {
 			messageID = rt.startupNotificationMessageID
 		}
@@ -4210,7 +4216,8 @@ func (rt *RuntimeSession) HandleOutput(chunk []byte) {
 	// that tail repaint, but do not reopen the completed round or re-arm the idle
 	// completion fallback. A submitted input clears hookCompletedCurrentRound.
 	completedHookRound := rt.agentTurnHookVerified && rt.hookCompletedCurrentRound && rt.session.Status == StatusWaiting
-	if renderable && !completedHookRound && !rt.startupComposerIdle && !controlOutput && !restartOutput {
+	waitingForMenu := rt.terminalMenuActive && rt.session.Status == StatusWaiting
+	if renderable && !completedHookRound && !waitingForMenu && !rt.startupComposerIdle && !controlOutput && !restartOutput {
 		previousStatus := rt.session.Status
 		rt.session.Status = StatusRunning
 		rt.stateVersion++

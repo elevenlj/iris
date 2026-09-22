@@ -13,6 +13,53 @@ import (
 const nativeModelMenu = "Select Model\n\n❯  1. gateway model-a\n   2. gateway model-b\n\n↑↓ Navigate • Enter Confirm • Esc Cancel"
 const nativeReasoningMenu = "Select Reasoning Level for model-b\nCurrent reasoning: Medium\n\n   1. Low\n❯  2. Medium\n   3. High\n\n↑/↓ select · Enter confirm · ← back to models"
 
+func TestTraeModelMenuSurvivesAnimatedOutput(t *testing.T) {
+	n := &recordingNotifier{messageID: "model-card"}
+	m := NewManager(nil, nil, WithNotifier(n), WithIsolatedMessageRegistry())
+	rt := &RuntimeSession{manager: m, session: Session{ID: "trae-model", Live: true, NotifyOnWaiting: true, LastMode: SessionModeAgent, LastAgentKind: "traecli"}}
+	defer rt.Close()
+	rt.MarkStructuredInputActivity("/model")
+	sub, cancel := rt.Subscribe()
+	defer cancel()
+	menu := "Select Model and Effort\n[Session]  Review  Plan\nType to search models\n  1. Seed-Evolving   1000K context window\n❯ 2. GPT-5.6-Sol (current)   support reasoning\nPress enter to confirm or esc to go back"
+	source := strings.Replace(aidenReadySource, "headless:", "browser:", 1)
+	go func() {
+		for ev := range sub {
+			if ev.Type == RuntimeEventSnapshotRequest {
+				rt.SetVisibleSnapshotResponseFrom(menu, source, ev.RequestID, sub)
+			}
+		}
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		// Trigger words can be repainted repeatedly too; the probe must still fire.
+		rt.HandleOutput([]byte("\x1b7Select Model and Effort\x1b8"))
+		if notes := n.notes(); len(notes) > 0 && notes[len(notes)-1].Interaction != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if notes := n.notes(); len(notes) == 0 || notes[len(notes)-1].Interaction == nil || strings.Contains(notes[len(notes)-1].Content, "Seed-Evolving") {
+		t.Fatal("menu not delivered as a selector-only card")
+	}
+	for range 10 {
+		rt.HandleOutput([]byte("\x1b7\x1b[3;5H◆\x1b8"))
+	}
+	if rt.Snapshot().Status != StatusWaiting {
+		t.Fatal("menu repaint reopened Running")
+	}
+	cancel()
+	rt.SetVisibleSnapshotWithSource("TraeCode CLI\n❯ Write tests for @filename\nGPT-5.6-Sol medium · Context 100% left", strings.Replace(aidenReadySource, "cursor_line=-1", "cursor_line=1", 1))
+	rt.HandleOutput([]byte("\x1b7◆\x1b8"))
+	if rt.Snapshot().Status != StatusWaiting {
+		t.Fatal("closed model menu did not stay idle")
+	}
+	rt.MarkStructuredInputActivity("hello")
+	if rt.Snapshot().Status != StatusRunning {
+		t.Fatal("new task did not run")
+	}
+}
+
 func TestTerminalMenuCapturedLayouts(t *testing.T) {
 	for _, tc := range []struct {
 		file, kind string

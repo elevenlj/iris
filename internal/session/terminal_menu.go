@@ -214,15 +214,22 @@ func (rt *RuntimeSession) scheduleTerminalMenuProbeLocked(chunk []byte) {
 		return
 	}
 	if rt.terminalMenuProbe != nil {
-		rt.terminalMenuProbe.Stop()
+		return // Continuous TUI animation must not postpone the pending probe.
 	}
 	rt.terminalMenuProbe = time.AfterFunc(300*time.Millisecond, func() {
 		rt.mu.Lock()
 		live := rt.session.Live && !rt.closed
+		historySize := rt.session.HistorySize
 		rt.mu.Unlock()
 		if live {
 			rt.RequestFreshSnapshot(defaultNotifySnapshotTimeout)
 		}
+		rt.mu.Lock()
+		rt.terminalMenuProbe = nil
+		if rt.session.Live && !rt.closed && rt.session.HistorySize != historySize {
+			rt.scheduleTerminalMenuProbeLocked(nil)
+		}
+		rt.mu.Unlock()
 	})
 }
 
