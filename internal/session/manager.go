@@ -1366,6 +1366,7 @@ type RuntimeSession struct {
 	notifyVersion                     int64
 	notifyRetryTimer                  *time.Timer
 	notifyStableTimer                 *time.Timer
+	startupComposerIdle               bool
 	startupNotifyTimer                *time.Timer
 	agentRestartPending               bool
 	terminalMenuActive                bool
@@ -2028,6 +2029,7 @@ func (rt *RuntimeSession) SuppressStartupNotifications() {
 }
 
 func (rt *RuntimeSession) resetStartupNotificationLocked(mentionOpenID string) {
+	rt.startupComposerIdle = false
 	if rt.lastNotifiedMessageID != "" {
 		rt.freezeNotificationMessageLocked(rt.lastNotifiedMessageID)
 	}
@@ -3363,6 +3365,7 @@ func (rt *RuntimeSession) markInputActivityLocked(submitted bool, previousInput 
 }
 
 func (rt *RuntimeSession) markInputActivityLockedWithPreviousRoundState(submitted bool, previousInput string, previousRoundUnfinished bool, preserveRunningNotification bool) (WaitingNotification, bool) {
+	rt.startupComposerIdle = false
 	var disabledNote WaitingNotification
 	disabledOK := false
 	rt.controlInputActive = false
@@ -4196,6 +4199,7 @@ func (rt *RuntimeSession) HandleOutput(chunk []byte) {
 		}
 	}
 	rt.session.HistorySize += int64(len(cp))
+	rt.scheduleStartupComposerProbeLocked()
 	rt.scheduleWorkspaceTrustProbeLocked(cp)
 	rt.scheduleTerminalMenuProbeLocked(cp)
 	rt.session.UpdatedAt = time.Now().UTC()
@@ -4206,7 +4210,7 @@ func (rt *RuntimeSession) HandleOutput(chunk []byte) {
 	// that tail repaint, but do not reopen the completed round or re-arm the idle
 	// completion fallback. A submitted input clears hookCompletedCurrentRound.
 	completedHookRound := rt.agentTurnHookVerified && rt.hookCompletedCurrentRound && rt.session.Status == StatusWaiting
-	if renderable && !completedHookRound && !controlOutput && !restartOutput {
+	if renderable && !completedHookRound && !rt.startupComposerIdle && !controlOutput && !restartOutput {
 		previousStatus := rt.session.Status
 		rt.session.Status = StatusRunning
 		rt.stateVersion++
@@ -4616,6 +4620,8 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 		} else {
 			rt.stopNotifyTimerLocked()
 			rt.startupNotifyMode = startupNotifyNormal
+			rt.startupComposerIdle = true
+			rt.stopStartupNotifyTimerLocked()
 			rt.terminalMenuActive = false
 			rt.pendingTerminalInteraction = nil
 			sessionID := rt.session.ID
