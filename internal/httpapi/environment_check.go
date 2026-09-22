@@ -231,6 +231,13 @@ func checkAgentCompletionHook(cfg RuntimeConfig) *EnvironmentCheckStep {
 	case "codex":
 		path = filepath.Join(home, ".codex", "config.toml")
 		marker = "--codex-notify"
+	case "traecli":
+		configDir := strings.TrimSpace(os.Getenv("TRAE_HOME"))
+		if configDir == "" {
+			configDir = filepath.Join(home, ".trae")
+		}
+		path = filepath.Join(configDir, "traecli.toml")
+		marker = "--codex-notify"
 	case "claude", "aiden":
 		configDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
 		if kind == "aiden" {
@@ -257,6 +264,8 @@ func environmentAgentKind(cfg RuntimeConfig) string {
 	switch command {
 	case "codex":
 		return "codex"
+	case "traecli", "traex":
+		return "traecli"
 	case "claude", "claude-code":
 		return "claude"
 	case "aiden":

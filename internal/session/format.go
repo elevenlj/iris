@@ -310,7 +310,7 @@ func looksLikeUntitledCodexToolFragment(lines []string) bool {
 }
 
 func cleanLarkNotifyContentForAgent(text string, mode string, agentKind string) string {
-	if strings.TrimSpace(mode) != SessionModeAgent || !strings.EqualFold(strings.TrimSpace(agentKind), "codex") {
+	if strings.TrimSpace(mode) != SessionModeAgent || !isCodexFamily(strings.ToLower(strings.TrimSpace(agentKind))) {
 		return text
 	}
 	return dropLeadingUntitledCodexFragment(text)

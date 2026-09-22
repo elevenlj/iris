@@ -524,6 +524,8 @@ func loadConfig(path string) Config {
 		cfg.AgentName = "Aiden X Codex"
 	case "aiden-claude":
 		cfg.AgentName = "Aiden X Claude Code"
+	case "traecli":
+		cfg.AgentName = "TRAE CLI"
 	case "custom":
 		if strings.TrimSpace(cfg.AgentName) == "" {
 			cfg.AgentName = "自定义 Agent"
@@ -611,6 +613,9 @@ func migrateAgentDefinitions(cfg Config) (Config, bool) {
 		copy(agents[insertAt+1:], agents[insertAt:])
 		agents[insertAt] = session.AgentConfig{ID: "aiden-claude", Name: "Aiden X Claude Code", Kind: "aiden-claude", Command: session.AidenClaudeAgentCommand}
 	}
+	if agentConfigByID(agents, "traecli").ID == "" {
+		agents = append(agents, session.AgentConfig{ID: "traecli", Name: "TRAE CLI", Kind: "traecli", Command: session.TraeAgentCommand})
+	}
 	normalized := make([]session.AgentConfig, 0, len(agents))
 	seen := map[string]bool{}
 	for _, agent := range agents {
@@ -633,10 +638,13 @@ func migrateAgentDefinitions(cfg Config) (Config, bool) {
 		if agent.ID == "aiden-claude" {
 			agent.Name, agent.Kind, agent.Command = "Aiden X Claude Code", "aiden-claude", session.AidenClaudeAgentCommand
 		}
+		if agent.ID == "traecli" {
+			agent.Name, agent.Kind, agent.Command = "TRAE CLI", "traecli", session.TraeAgentCommand
+		}
 		if agent.ID == "" || seen[agent.ID] || agent.Name == "" || agent.Command == "" {
 			continue
 		}
-		if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "aiden" && agent.Kind != "aiden-codex" && agent.Kind != "aiden-claude" && agent.Kind != "custom" {
+		if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "aiden" && agent.Kind != "aiden-codex" && agent.Kind != "aiden-claude" && agent.Kind != "traecli" && agent.Kind != "custom" {
 			continue
 		}
 		seen[agent.ID] = true
@@ -646,7 +654,7 @@ func migrateAgentDefinitions(cfg Config) (Config, bool) {
 	cfg.DefaultAgentID = strings.ToLower(strings.TrimSpace(cfg.DefaultAgentID))
 	if cfg.DefaultAgentID == "" {
 		switch legacyKind {
-		case "codex", "claude", "aiden", "aiden-codex", "aiden-claude":
+		case "codex", "claude", "aiden", "aiden-codex", "aiden-claude", "traecli":
 			cfg.DefaultAgentID = legacyKind
 		case "custom":
 			cfg.DefaultAgentID = legacyCustomID
@@ -683,6 +691,8 @@ func validateAgentList(agents []session.AgentConfig) ([]session.AgentConfig, err
 			agent.Name, agent.Kind, agent.Command = "Aiden X Codex", "aiden-codex", session.AidenCodexAgentCommand
 		} else if agent.ID == "aiden-claude" {
 			agent.Name, agent.Kind, agent.Command = "Aiden X Claude Code", "aiden-claude", session.AidenClaudeAgentCommand
+		} else if agent.ID == "traecli" {
+			agent.Name, agent.Kind, agent.Command = "TRAE CLI", "traecli", session.TraeAgentCommand
 		} else if agent.Kind != "custom" {
 			return nil, errors.New("自定义 Agent 类型无效")
 		}
@@ -751,7 +761,7 @@ func autoSelectFirstUseAgent(cfg Config, options []session.AgentOption) (Config,
 		return cfg, false
 	}
 	for _, option := range options {
-		if option.Kind != "codex" && option.Kind != "claude" && option.Kind != "aiden" && option.Kind != "aiden-codex" && option.Kind != "aiden-claude" {
+		if option.Kind != "codex" && option.Kind != "claude" && option.Kind != "aiden" && option.Kind != "aiden-codex" && option.Kind != "aiden-claude" && option.Kind != "traecli" {
 			continue
 		}
 		cfg.AgentKind = option.Kind
@@ -993,6 +1003,7 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 				{ID: "aiden", Name: "Aiden", Kind: "aiden", Command: session.AidenAgentCommand},
 				{ID: "aiden-codex", Name: "Aiden X Codex", Kind: "aiden-codex", Command: session.AidenCodexAgentCommand},
 				{ID: "aiden-claude", Name: "Aiden X Claude Code", Kind: "aiden-claude", Command: session.AidenClaudeAgentCommand},
+				{ID: "traecli", Name: "TRAE CLI", Kind: "traecli", Command: session.TraeAgentCommand},
 				{ID: "custom", Name: req.AgentName, Kind: "custom", Command: req.AgentCommand},
 			}
 			req.DefaultAgentID = "custom"

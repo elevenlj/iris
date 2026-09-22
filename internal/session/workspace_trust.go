@@ -113,7 +113,7 @@ func workspaceTrustMenu(snapshot, source, kind string) (string, bool) {
 	}
 	lines := splitVisibleLines(snapshot)
 	cursor := metadata.cursorLine
-	if kind == "codex" {
+	if isCodexFamily(kind) {
 		// Codex hides the hardware cursor at the footer, not on the highlighted
 		// option. Require exactly one selected option in the final active menu.
 		cursor = -1
@@ -144,7 +144,7 @@ func workspaceTrustMenu(snapshot, source, kind string) (string, bool) {
 	}
 	yes := "yes, i trust this folder"
 	header := "accessing workspace:"
-	if kind == "codex" {
+	if isCodexFamily(kind) {
 		yes = "yes, continue"
 		header = "do you trust the contents of this directory?"
 	} else if kind != "claude" {
@@ -169,7 +169,7 @@ func workspaceTrustMenu(snapshot, source, kind string) (string, bool) {
 	if start < 0 || end < 0 || end-start > 25 || !codexInteractionHasActiveTail(lines[end+1:]) {
 		return "", false
 	}
-	if kind == "codex" && metadata.cursorLine >= 0 && (metadata.cursorLine < start || metadata.cursorLine > end) {
+	if isCodexFamily(kind) && metadata.cursorLine >= 0 && (metadata.cursorLine < start || metadata.cursorLine > end) {
 		return "", false
 	}
 	for i := start + 1; i < end; i++ {
@@ -229,7 +229,7 @@ func (rt *RuntimeSession) autoTrustWorkspaceLocked() bool {
 // output only requests a snapshot; it never authorizes a keypress itself.
 func (rt *RuntimeSession) scheduleWorkspaceTrustProbeLocked(chunk []byte) {
 	kind := agentKindForCommand(rt.session.LastAgentStartCommand, rt.session.LastAgentKind)
-	if rt.manager == nil || rt.session.LastMode != SessionModeAgent || (kind != "claude" && kind != "codex") {
+	if rt.manager == nil || rt.session.LastMode != SessionModeAgent || (kind != "claude" && !isCodexFamily(kind)) {
 		return
 	}
 	text := rt.workspaceTrustProbeTail + string(chunk)

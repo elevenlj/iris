@@ -1,4 +1,7 @@
-"""Optional: python3 tests/codex_paste_smoke.py. Uses local Codex, no real API."""
+"""Optional: IRIS_SMOKE_AGENT=traecli python3 tests/codex_paste_smoke.py.
+
+Defaults to Codex. Uses an isolated home and local API; no real API requests.
+"""
 import fcntl
 import gzip
 import json
@@ -12,9 +15,16 @@ import tempfile
 import termios
 import threading
 import time
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+if len(sys.argv) > 1 and sys.argv[1] == "--notify":
+    urllib.request.urlopen(urllib.request.Request(sys.argv[2], data=sys.argv[3].encode())).close()
+    sys.exit(0)
+
+agent = os.environ.get("IRIS_SMOKE_AGENT", "codex")
 requests = []
+notifications = []
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -23,6 +33,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if self.path in ("/notify", "/api/sessions/smoke/hook/turn-ended"):
+            if self.path != "/notify":
+                assert self.headers.get("X-Iris-Agent-Token") == "smoke-token"
+            notifications.append(json.loads(body))
+            self.send_response(200)
+            self.end_headers()
+            return
         if self.headers.get("Content-Encoding") == "gzip":
             body = gzip.decompress(body)
         requests.append(json.loads(body))
@@ -30,8 +47,11 @@ class Handler(BaseHTTPRequestHandler):
                     "output": [{"id": "msg_test", "type": "message", "role": "assistant",
                                 "status": "completed", "content": [{"type": "output_text", "text": "OK", "annotations": []}]}],
                     "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}
-        event = {"type": "response.completed", "response": response}
-        data = ("event: response.completed\ndata: " + json.dumps(event) + "\n\n").encode()
+        events = [
+            {"type": "response.output_item.done", "output_index": 0, "item": response["output"][0]},
+            {"type": "response.completed", "response": response},
+        ]
+        data = "".join("event: " + event["type"] + "\ndata: " + json.dumps(event) + "\n\n" for event in events).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Content-Length", str(len(data)))
@@ -44,12 +64,17 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 with tempfile.TemporaryDirectory(prefix="iris-paste-check-") as work:
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 36, 120, 0, 0))
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("IRIS_", "EASY_TERMINAL_", "OPENAI_", "CODEX_"))}
-    env.update(CODEX_HOME=work, TERM="xterm-256color")
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("IRIS_", "EASY_TERMINAL_", "OPENAI_", "CODEX_", "TRAE_"))}
+    env.update(CODEX_HOME=work, TRAE_HOME=work, TERM="xterm-256color")
     provider = 'model_providers.localtest={name="localtest",base_url="http://127.0.0.1:%d/v1",wire_api="responses",requires_openai_auth=false,request_max_retries=0}' % server.server_port
-    proc = subprocess.Popen(["codex", "--no-alt-screen", "--sandbox", "read-only", "-a", "never",
+    notify = json.dumps([sys.executable, os.path.abspath(__file__), "--notify", f"http://127.0.0.1:{server.server_port}/notify"])
+    if os.environ.get("IRIS_SMOKE_IRIS"):
+        notify = json.dumps([os.environ["IRIS_SMOKE_IRIS"], "--codex-notify"])
+        env.update(IRIS_API_URL=f"http://127.0.0.1:{server.server_port}", IRIS_SESSION_ID="smoke", IRIS_SESSION_TOKEN="smoke-token")
+    flags = ["--yolo"] if agent == "traecli" else ["--no-alt-screen", "--sandbox", "read-only", "-a", "never"]
+    proc = subprocess.Popen([agent, *flags,
                              "-c", 'model_provider="localtest"', "-c", provider,
-                             "-c", "check_for_update_on_startup=false"],
+                             "-c", "notify=" + notify, "-c", "check_for_update_on_startup=false"],
                             cwd=work, env=env, stdin=slave, stdout=slave, stderr=slave)
     os.close(slave)
 
@@ -79,7 +104,12 @@ with tempfile.TemporaryDirectory(prefix="iris-paste-check-") as work:
             if isinstance(item, dict) and item.get("role") == "user"
             for c in item.get("content", []) if isinstance(c, dict))]
         assert len(submitted) == 1, f"expected one complete submission, got {len(submitted)}"
-        print(f"PASS: {len(text.encode())} UTF-8 bytes, no submission before Enter, one complete submission after Enter")
+        # Some CLIs also run a separate conversation-title task.
+        completed = [n for n in notifications if n.get("input-messages") == [text]]
+        assert len(completed) == 1, f"expected one user-turn completion, got {completed}"
+        assert completed[0]["type"] == "agent-turn-complete", completed
+        assert completed[0]["last-assistant-message"] == "OK", completed
+        print(f"PASS: {agent}, {len(text.encode())} UTF-8 bytes, one complete submission after Enter, one final-reply notification")
     finally:
         proc.terminate()
         proc.wait(timeout=5)

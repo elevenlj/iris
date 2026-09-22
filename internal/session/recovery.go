@@ -392,6 +392,17 @@ func agentLaunchInfo(argv []string) (agentInfo, bool) {
 	switch cmd {
 	case "codex":
 		return codexAgentInfo(argv[0], args)
+	case "traecli", "traex":
+		if hasAnyArg(args, "--acp") {
+			return agentInfo{}, false
+		}
+		switch firstCodexSubcommand(args) {
+		case "backend", "dashboard", "acp", "channel", "models", "archive", "delete", "unarchive", "doctor", "migrate":
+			return agentInfo{}, false
+		}
+		info, ok := codexAgentInfo(argv[0], args)
+		info.Kind = "traecli"
+		return info, ok
 	case "claude", "claude-code":
 		return claudeAgentInfo(argv[0], args)
 	case "aiden":
@@ -411,6 +422,10 @@ func agentLaunchInfo(argv []string) (agentInfo, bool) {
 
 func codexAgentInfo(command string, args []string) (agentInfo, bool) {
 	return codexAgentInfoWithPrefix([]string{command}, args)
+}
+
+func isCodexFamily(kind string) bool {
+	return kind == "codex" || kind == "traecli"
 }
 
 func codexAgentInfoWithPrefix(command []string, args []string) (agentInfo, bool) {
@@ -774,7 +789,7 @@ func codexResumeThreadID(command string) string {
 func exactAgentResumeCommand(sess Session) string {
 	command := strings.TrimSpace(sess.LastAgentResumeCommand)
 	switch strings.ToLower(strings.TrimSpace(sess.LastAgentKind)) {
-	case "codex":
+	case "codex", "traecli":
 		if codexResumeThreadID(command) != "" {
 			return command
 		}
@@ -819,7 +834,7 @@ func pinCodexResumeCommand(command, threadID string) (string, bool) {
 		return command, false
 	}
 	base := shellCommandBase(argv[envEnd])
-	if base != "codex" && (base != "aiden" || envEnd+2 >= len(argv) || argv[envEnd+1] != "x" || argv[envEnd+2] != "codex") {
+	if base != "codex" && base != "traecli" && base != "traex" && (base != "aiden" || envEnd+2 >= len(argv) || argv[envEnd+1] != "x" || argv[envEnd+2] != "codex") {
 		return command, false
 	}
 	replaced := false

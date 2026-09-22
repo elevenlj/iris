@@ -185,7 +185,10 @@ func normalizeAgentConfig(agent AgentConfig) AgentConfig {
 	if agent.Kind == "custom" && agent.Name == "" {
 		agent.Name = "自定义 Agent"
 	}
-	if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "aiden" && agent.Kind != "aiden-codex" && agent.Kind != "aiden-claude" && agent.Kind != "custom" {
+	if agent.Kind == "traecli" {
+		agent.ID, agent.Name, agent.Command = "traecli", "TRAE CLI", TraeAgentCommand
+	}
+	if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "aiden" && agent.Kind != "aiden-codex" && agent.Kind != "aiden-claude" && agent.Kind != "traecli" && agent.Kind != "custom" {
 		return AgentConfig{}
 	}
 	return agent
@@ -687,7 +690,7 @@ func (m *Manager) WorkspaceOptionsForSession(_ Session) []WorkspaceOption {
 // sessionSupportsWorkspaceSwitch reports whether the active Agent supports Iris's workspace control input.
 func sessionSupportsWorkspaceSwitch(sess Session) bool {
 	switch strings.ToLower(strings.TrimSpace(sess.LastAgentKind)) {
-	case "codex", "claude", "aiden":
+	case "codex", "claude", "aiden", "traecli":
 		return true
 	}
 	argv := shellFields(sess.LastAgentStartCommand)
@@ -695,7 +698,7 @@ func sessionSupportsWorkspaceSwitch(sess Session) bool {
 		argv = argv[1:]
 	}
 	info, ok := agentLaunchInfo(argv)
-	return ok && (info.Kind == "codex" || info.Kind == "claude" || info.Kind == "aiden")
+	return ok && (isCodexFamily(info.Kind) || info.Kind == "claude" || info.Kind == "aiden")
 }
 
 func agentKindForCommand(command, fallback string) string {
@@ -731,6 +734,8 @@ func (m *Manager) sessionAgentHome(sess Session, kind string) string {
 	switch strings.TrimSpace(kind) {
 	case "codex":
 		return defaultCodexHome()
+	case "traecli":
+		return defaultTraeHome()
 	case "claude":
 		dir := m.sessionRecoveryDir(sess)
 		if dir == "" {
@@ -816,6 +821,7 @@ func (m *Manager) RecoverRuntime(ctx context.Context, id string) (*RuntimeSessio
 	} else {
 		sess = migrated
 	}
+	sess = normalizeTraeRecovery(sess)
 	hadExactAidenResume := claudeResumeSessionID(sess.LastAgentResumeCommand) != ""
 	sess = normalizeAidenRecoveryCommands(sess)
 	if (sess.LastAgentID == "aiden" || sess.LastAgentKind == "aiden") && !hadExactAidenResume {
@@ -2801,7 +2807,7 @@ func startupAgentComposerReady(snapshot, source, agentKind string) bool {
 		return false
 	}
 	switch agentKind {
-	case "codex", "claude", "aiden":
+	case "codex", "claude", "aiden", "traecli":
 	default:
 		return true
 	}
@@ -4264,17 +4270,26 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSes
 		return s, false, nil
 	}
 	agentKind := strings.TrimSpace(rt.session.LastAgentKind)
-	if strings.TrimSpace(rt.session.LastMode) != SessionModeAgent || (agentKind != "codex" && agentKind != "claude" && agentKind != "aiden") {
+	if strings.TrimSpace(rt.session.LastMode) != SessionModeAgent || (!isCodexFamily(agentKind) && agentKind != "claude" && agentKind != "aiden") {
 		s := rt.session
 		rt.mu.Unlock()
 		return s, false, nil
 	}
 	pinnedRecovery := false
 	switch agentKind {
-	case "codex":
-		if command, ok := pinCodexResumeCommand(rt.session.LastAgentResumeCommand, strings.TrimSpace(agentSessionID)); ok {
+	case "codex", "traecli":
+		resume := rt.session.LastAgentResumeCommand
+		if agentKind == "traecli" && exactAgentResumeCommand(rt.session) == "" {
+			if info, ok := agentLaunchInfo(shellFields(rt.session.LastAgentStartCommand)); ok {
+				resume = info.ResumeCommand
+			}
+		}
+		if command, ok := pinCodexResumeCommand(resume, strings.TrimSpace(agentSessionID)); ok {
 			rt.session.LastAgentResumeCommand = command
 			rt.session.LastAgentHome = defaultCodexHome()
+			if agentKind == "traecli" {
+				rt.session.LastAgentHome = defaultTraeHome()
+			}
 			pinnedRecovery = true
 		}
 	case "claude":

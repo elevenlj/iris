@@ -3092,7 +3092,7 @@ func submitStructuredInputWithMode(rt *RuntimeSession, text string, mentionOpenI
 	// Explicit paste boundaries bypass Codex's timing-based paste detection.
 	// Keep native slash commands, menu input, other Agents and shells unchanged.
 	if pressEnter && sess.LastMode == SessionModeAgent &&
-		agentKindForCommand(sess.LastAgentStartCommand, sess.LastAgentKind) == "codex" &&
+		isCodexFamily(agentKindForCommand(sess.LastAgentStartCommand, sess.LastAgentKind)) &&
 		text != "" && !larkAgentSlashCommandRE.MatchString(text) {
 		if strings.ContainsAny(text, "\x1b\u009b") {
 			return errors.New("输入包含终端控制字符，无法安全粘贴，请移除后重试")

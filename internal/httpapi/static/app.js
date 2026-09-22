@@ -118,7 +118,7 @@ function renderActiveTitle() {
   $("session-feishu").href = chatID ? `https://applink.feishu.cn/client/chat/open?openChatId=${encodeURIComponent(chatID)}` : "";
   $("session-status").textContent = sess?.status || "";
   $("session-status").className = sess ? `status-${sess.status}` : "";
-  const labels = {codex: "Codex", claude: "Claude Code", aiden: "Aiden", "aiden-codex": "Aiden X Codex", "aiden-claude": "Aiden X Claude Code"};
+  const labels = {codex: "Codex", claude: "Claude Code", aiden: "Aiden", "aiden-codex": "Aiden X Codex", "aiden-claude": "Aiden X Claude Code", traecli: "TRAE CLI"};
   const agent = state.config?.agents?.find(item => item.id === sess?.last_agent_id);
   $("session-agent").textContent = sess?.agent_name || agent?.name || labels[sess?.last_agent_id] || labels[sess?.last_agent_kind] || sess?.last_agent_id || "";
   $("session-agent").hidden = !$("session-agent").textContent;

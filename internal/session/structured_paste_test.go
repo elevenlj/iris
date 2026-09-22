@@ -17,6 +17,7 @@ func TestStructuredCodexPasteBoundaries(t *testing.T) {
 		enter, paste, rejected    bool
 	}{
 		{"codex long", CodexAgentCommand, SessionModeAgent, long, true, true, false},
+		{"trae long", TraeAgentCommand, SessionModeAgent, long, true, true, false},
 		{"aiden codex long", AidenCodexAgentCommand, SessionModeAgent, long, true, true, false},
 		{"multiline", AidenCodexAgentCommand, SessionModeAgent, "first\nsecond", true, true, false},
 		{"short", CodexAgentCommand, SessionModeAgent, "hello", true, true, false},
