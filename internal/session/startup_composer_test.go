@@ -6,8 +6,22 @@ import (
 	"time"
 )
 
+type slowStartupNotifier struct {
+	recordingNotifier
+	started     chan struct{}
+	allowCreate chan struct{}
+}
+
+func (n *slowStartupNotifier) NotifyWaiting(note WaitingNotification) (WaitingNotificationResult, error) {
+	if note.Startup && note.MessageID == "" {
+		close(n.started)
+		<-n.allowCreate
+	}
+	return n.recordingNotifier.NotifyWaiting(note)
+}
+
 func TestStartupComposerProbeSurvivesContinuousRepaint(t *testing.T) {
-	notifier := &recordingNotifier{messageID: "startup"}
+	notifier := &slowStartupNotifier{recordingNotifier: recordingNotifier{messageID: "startup"}, started: make(chan struct{}), allowCreate: make(chan struct{})}
 	m := NewManager(nil, nil, WithNotifier(notifier), WithIsolatedMessageRegistry())
 	released := make(chan string, 4)
 	m.SetNotificationSentHook(func(id string) { released <- id })
@@ -17,6 +31,8 @@ func TestStartupComposerProbeSurvivesContinuousRepaint(t *testing.T) {
 	sub, cancel := rt.Subscribe()
 	defer cancel()
 	defer rt.Close()
+	go rt.beginStartupNotification("")
+	<-notifier.started
 	ready := make(chan struct{})
 	go func() {
 		for event := range sub {
@@ -50,6 +66,22 @@ loading:
 		}
 	}
 	close(ready)
+	// The composer is ready while Feishu is still creating its startup card.
+	// Completion must not be lost, and queued input must not run before the card exists.
+	deadline = time.After(1500 * time.Millisecond)
+creating:
+	for {
+		select {
+		case <-ticker.C:
+			rt.HandleOutput(repaint)
+		case <-released:
+			close(notifier.allowCreate)
+			t.Fatal("released startup while its card was still being created")
+		case <-deadline:
+			break creating
+		}
+	}
+	close(notifier.allowCreate)
 	deadline = time.After(4 * time.Second)
 waiting:
 	for {
@@ -76,7 +108,16 @@ waiting:
 	if !completed {
 		t.Fatal("startup card was not marked complete")
 	}
+	before := notifier.count()
+	rt.NotifyInputRunning()
+	if notifier.count() != before {
+		t.Fatal("idle startup created a phantom task card")
+	}
 	rt.MarkStructuredInputActivity("hello")
+	rt.NotifyInputRunning()
+	if notifier.count() != before+1 {
+		t.Fatal("real user input did not create its running card")
+	}
 	rt.HandleOutput(repaint)
 	if rt.Snapshot().Status != StatusRunning || rt.hookCompletedCurrentRound {
 		t.Fatal("normal tasks must still wait for the real completion event")

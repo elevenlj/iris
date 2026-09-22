@@ -3461,7 +3461,7 @@ func (rt *RuntimeSession) NotifyInputRunningOnMessage(messageID string) {
 		return
 	}
 	rt.mu.Lock()
-	if !rt.session.Live || !rt.session.NotifyOnWaiting {
+	if !rt.session.Live || !rt.session.NotifyOnWaiting || rt.startupComposerIdle {
 		rt.mu.Unlock()
 		return
 	}
@@ -4610,6 +4610,11 @@ func (rt *RuntimeSession) notifyIfStillWaitingWithMode(version int64, immediate,
 			return
 		}
 		agentKind := agentKindForCommand(rt.session.LastAgentStartCommand, rt.session.LastAgentKind)
+		if rt.startupNotificationCreating {
+			rt.rescheduleNotifyRetryLocked(version)
+			rt.mu.Unlock()
+			return
+		}
 		composerReady := startupAgentComposerReady(rt.visibleSnapshot, rt.visibleSnapshotSource, agentKind)
 		if !composerReady || rt.agentRestartPending {
 			startupFallback = true

@@ -29,7 +29,7 @@ func (rt *RuntimeSession) probeStartupComposer() {
 		return
 	}
 	kind := agentKindForCommand(rt.session.LastAgentStartCommand, rt.session.LastAgentKind)
-	if !fresh || rt.agentRestartPending || rt.controlInputActive || !startupAgentComposerReady(rt.visibleSnapshot, rt.visibleSnapshotSource, kind) {
+	if !fresh || rt.startupNotificationCreating || rt.agentRestartPending || rt.controlInputActive || !startupAgentComposerReady(rt.visibleSnapshot, rt.visibleSnapshotSource, kind) {
 		rt.scheduleStartupComposerProbeLocked()
 		rt.mu.Unlock()
 		return
