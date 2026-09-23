@@ -2505,11 +2505,11 @@ document.addEventListener("paste", handleImagePaste);
 async function initializeIris() {
   const security = await loadSecurityStatus();
 	const settingsRequested = new URLSearchParams(location.search).get("settings") === "1";
-	if (settingsRequested && !security.configured) {
+	if (!security.configured) {
 		location.replace(settingsAuthURL("/setup-password"));
     return;
   }
-	if (settingsRequested && !security.authenticated) {
+	if (!security.authenticated) {
 		location.replace(settingsAuthURL("/login"));
 		return;
 	}

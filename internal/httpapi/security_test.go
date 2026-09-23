@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/cookiejar"
@@ -9,6 +10,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/elevenlj/iris/internal/session"
+	"github.com/gorilla/websocket"
 )
 
 type secureTestConfig struct {
@@ -225,4 +229,93 @@ func requestStatus(t *testing.T, client *http.Client, method, url string, body a
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode
+}
+
+func TestDashboardAuthenticationCoversAllRoutes(t *testing.T) {
+	cfg := &secureTestConfig{security: SettingsSecurity{PasswordHash: "configured", AuthVersion: 1}}
+	s := NewServer(nil, "", cfg)
+	// A sentinel handler verifies the authentication boundary without starting terminals.
+	s.mux = http.NewServeMux()
+	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	cookie := &http.Cookie{Name: settingsCookieName, Value: signSettingsSession(cfg.security, time.Now().Add(time.Hour), "test")}
+	for _, target := range []string{"/", "/index.html", "/?session=sess-1&headless=1", "/app.js", "/api/bots", "/api/sessions", "/api/sessions/sess-1/output", "/api/sessions/sess-1/ws?headless=1", "/api/sessions/sess-1/uploads", "/api/quick-commands", "/bots/default/api/sessions", "/bots/bot-test/api/sessions/sess-1/ws", "/api/sessions/sess-1/hook/../output"} {
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete} {
+			req := httptest.NewRequest(method, target, nil)
+			rec := httptest.NewRecorder()
+			s.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusUnauthorized && rec.Code != http.StatusSeeOther {
+				t.Fatalf("anonymous %s %s bypassed auth: %d", method, target, rec.Code)
+			}
+			req.AddCookie(cookie)
+			rec = httptest.NewRecorder()
+			s.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusNoContent && rec.Code != http.StatusMovedPermanently {
+				t.Fatalf("authenticated %s %s blocked: %d", method, target, rec.Code)
+			}
+		}
+	}
+	for _, target := range []string{"/login", "/auth.js", "/api/settings/security/login", "/api/runtime", "/api/sessions/sess-1/hook/turn-ended", "/bots/bot-test/api/sessions/sess-1/lark/context"} {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("independently authenticated endpoint blocked: %s", target)
+		}
+	}
+	for _, remote := range []string{"127.0.0.1:1234", "192.0.2.1:1234"} {
+		for _, token := range []string{s.HeadlessToken(), "invalid"} {
+			req := httptest.NewRequest(http.MethodGet, "/?session=sess-1&headless_token="+token, nil)
+			req.RemoteAddr = remote
+			rec := httptest.NewRecorder()
+			s.Handler().ServeHTTP(rec, req)
+			cookies := rec.Result().Cookies()
+			want := remote == "127.0.0.1:1234" && token == s.HeadlessToken()
+			if (len(cookies) > 0) != want {
+				t.Fatal("headless bootstrap must require loopback AND secret token")
+			}
+			if want && (!validSettingsSession(cookies[0].Value, cfg.security, time.Now()) || strings.Contains(rec.Header().Get("Location"), "headless_token")) {
+				t.Fatal("invalid bootstrap cookie or leaked token in redirect")
+			}
+		}
+	}
+}
+
+func TestTerminalWebSocketRequiresLoginAndSameOrigin(t *testing.T) {
+	m := session.NewManager(nil, wsBridgeTestLauncher{terminal: newWSBridgeTestTerminal()})
+	sess, err := m.CreateSession(context.Background(), "auth-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := m.GetRuntime(sess.ID)
+	defer rt.Close()
+	cfg := &secureTestConfig{security: SettingsSecurity{PasswordHash: "configured", AuthVersion: 1}}
+	s := NewServer(m, "", cfg)
+	host := httptest.NewServer(s.Handler())
+	defer host.Close()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Get(host.URL + "/?headless_token=" + s.HeadlessToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(resp.Cookies()) != 1 {
+		t.Fatal("headless browser did not get a login cookie")
+	}
+	for _, tc := range []struct {
+		cookie bool
+		origin string
+		status int
+	}{{false, host.URL, 401}, {true, "https://untrusted.example", 403}, {true, host.URL, 101}} {
+		headers := http.Header{"Origin": {tc.origin}}
+		if tc.cookie {
+			headers.Set("Cookie", resp.Cookies()[0].String())
+		}
+		conn, response, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(host.URL, "http")+"/api/sessions/"+sess.ID+"/ws?headless=1", headers)
+		if conn != nil {
+			conn.Close()
+		}
+		if response == nil || response.StatusCode != tc.status {
+			t.Fatalf("websocket cookie=%v origin=%s: response=%v err=%v", tc.cookie, tc.origin, response, err)
+		}
+		response.Body.Close()
+	}
 }

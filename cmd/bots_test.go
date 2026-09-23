@@ -119,9 +119,18 @@ func TestBotsIsolationPersistenceAndLegacyMigration(t *testing.T) {
 	if len(statuses) != 2 || statuses[0].ID != "default" || statuses[0].Status != "stopped" || statuses[1].ID != other.ID || statuses[1].Status != "unconfigured" {
 		t.Fatalf("per-bot connection states mixed: %#v", statuses)
 	}
+	bootstrap := httptest.NewRequest(http.MethodGet, "/?headless_token="+server.HeadlessToken(), nil)
+	bootstrap.RemoteAddr = "127.0.0.1:1234"
+	login := httptest.NewRecorder()
+	server.Handler().ServeHTTP(login, bootstrap)
+	if len(login.Result().Cookies()) != 1 {
+		t.Fatal("internal browser authentication failed")
+	}
 	for path, want := range map[string]string{"/api/sessions": "legacy", "/bots/bot-test/api/sessions": "other"} {
 		rec := httptest.NewRecorder()
-		server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(login.Result().Cookies()[0])
+		server.Handler().ServeHTTP(rec, req)
 		var sessions []session.Session
 		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &sessions) != nil || len(sessions) != 1 || sessions[0].Name != want {
 			t.Fatalf("%s isolation failed: %s", path, rec.Body.String())

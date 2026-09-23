@@ -38,6 +38,7 @@ type Server struct {
 	mux                *http.ServeMux
 	runtimeInstanceID  string
 	runtimeToken       string
+	headlessToken      string
 	runtimeVersion     string
 	runtimePID         int
 	runtimeStop        func()
@@ -58,6 +59,7 @@ func NewServer(manager *session.Manager, uploadsDir string, config ...ConfigServ
 		larkConfigTester:    realLarkConfigTester{probe: manager},
 		environmentChecker:  realEnvironmentChecker{},
 		mux:                 http.NewServeMux(),
+		headlessToken:       randomToken(32),
 	}
 	if len(config) > 0 {
 		s.config = config[0]
@@ -69,7 +71,9 @@ func NewServer(manager *session.Manager, uploadsDir string, config ...ConfigServ
 	return s
 }
 
-func (s *Server) Handler() http.Handler { return s.mux }
+func (s *Server) Handler() http.Handler { return http.HandlerFunc(s.serveAuthenticated) }
+
+func (s *Server) HeadlessToken() string { return s.headlessToken }
 
 func (s *Server) SetRuntimeControl(instanceID, token, version string, pid int, stop func(), botStatuses func() []BotConnectionStatus) {
 	s.runtimeInstanceID = instanceID

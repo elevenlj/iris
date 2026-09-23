@@ -12,7 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+var upgrader = websocket.Upgrader{} // Use the default same-origin check.
 
 type wsBridge struct {
 	rt         *session.RuntimeSession

@@ -275,6 +275,7 @@ func run() error {
 
 	configSvc := &appConfigService{path: configPath, cfg: &cfg, manager: mgr, bridge: bridge}
 	srv := httpapi.NewServer(mgr, uploadsDir, configSvc)
+	headless.authToken = srv.HeadlessToken()
 	bots := newBotService(configSvc, srv, dataDir)
 	bots.defaultStore, bots.defaultUploads = st, uploadsDir
 	if err := bots.Start(); err != nil {
@@ -1284,6 +1285,7 @@ func envBool(key string, fallback bool) bool {
 }
 
 type headlessBrowserManager struct {
+	authToken  string
 	pathPrefix string
 	port       string
 	mu         sync.Mutex
@@ -1345,6 +1347,7 @@ func (m *headlessBrowserManager) Ensure(sessionID string) {
 		return
 	}
 	pageURL := "http://localhost:" + m.port + m.pathPrefix + "/?session=" + url.QueryEscape(sessionID) + "&headless=1"
+	pageURL += "&headless_token=" + url.QueryEscape(m.authToken)
 	cmd := exec.Command(chrome, headlessChromeArgs(profile, pageURL)...)
 	cmd.Stderr = log.Writer()
 	configureDetachedCommand(cmd)

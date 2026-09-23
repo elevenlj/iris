@@ -375,6 +375,7 @@ func (s *botService) startBot(global Config, bot httpapi.BotConfig) (*botRuntime
 		return nil, err
 	}
 	headless := newHeadlessBrowserManager(global.Port)
+	headless.authToken = s.server.HeadlessToken()
 	headless.pathPrefix = "/bots/" + bot.ID
 	mgr := session.NewManager(st, session.ShellLauncher{}, session.WithIsolatedMessageRegistry(),
 		session.WithRecoveryBaseDir(filepath.Join(base, "data", "sessions")),

@@ -9,11 +9,60 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// All browser entry points share the same gate, including bot-scoped APIs and WS.
+func (s *Server) serveAuthenticated(w http.ResponseWriter, r *http.Request) {
+	p := path.Clean(r.URL.Path)
+	security := s.settingsSecurity()
+	if token := r.URL.Query().Get("headless_token"); token != "" {
+		host, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if net.ParseIP(host).IsLoopback() && s.headlessToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.headlessToken)) == 1 && security.PasswordHash != "" {
+			s.issueSettingsSession(w, r, security)
+			next := *r.URL
+			query := next.Query()
+			query.Del("headless_token")
+			next.RawQuery = query.Encode()
+			w.Header().Set("Cache-Control", "no-store")
+			http.Redirect(w, r, safeSettingsNextPath(next.RequestURI()), http.StatusSeeOther)
+			return
+		}
+	}
+	public := false
+	switch p {
+	case "/login", "/login.html", "/setup-password", "/setup-password.html", "/auth.js", "/auth.css", "/favicon.svg",
+		"/api/settings/security", "/api/settings/security/status", "/api/settings/security/setup", "/api/settings/security/login", "/api/settings/security/logout", "/api/runtime":
+		public = true
+	}
+	// Agent endpoints authenticate their own session tokens, not browser cookies.
+	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	if len(parts) >= 2 && parts[0] == "bots" {
+		parts = parts[2:]
+	}
+	if len(parts) == 5 && parts[0] == "api" && parts[1] == "sessions" {
+		public = (parts[3] == "hook" && parts[4] == "turn-ended") || (parts[3] == "lark" && (parts[4] == "context" || parts[4] == "messages"))
+	}
+	if !public && !s.settingsAuthenticated(r, security) {
+		w.Header().Set("Cache-Control", "no-store")
+		if strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/bots/") && strings.Contains(p, "/api/") {
+			writeError(w, http.StatusUnauthorized, errors.New("请先输入访问密码"))
+		} else {
+			login := "/login"
+			if security.PasswordHash == "" {
+				login = "/setup-password"
+			}
+			http.Redirect(w, r, settingsAuthPageURL(login, r.URL.RequestURI()), http.StatusSeeOther)
+		}
+		return
+	}
+	s.mux.ServeHTTP(w, r)
+}
 
 const (
 	settingsCookieName     = "iris_settings_session"

@@ -98,6 +98,7 @@ func TestEmbeddedStaticAssetsDisableStaleBrowserCaching(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest(http.MethodGet, path, nil)
+			request.AddCookie(&http.Cookie{Name: settingsCookieName, Value: signSettingsSession(server.settingsSecurity(), time.Now().Add(time.Hour), "test")})
 
 			server.Handler().ServeHTTP(recorder, request)
 
@@ -137,7 +138,7 @@ func TestAgentStopHookAcceptsLastAssistantMessage(t *testing.T) {
 	}`))
 	req.Header.Set("X-Iris-Agent-Token", sess.RecoveryKey)
 	rec := httptest.NewRecorder()
-	NewServer(manager, "").Handler().ServeHTTP(rec, req)
+	NewServer(manager, "", &secureTestConfig{security: SettingsSecurity{PasswordHash: "configured"}}).Handler().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("hook status = %d, body=%s", rec.Code, rec.Body.String())
@@ -196,7 +197,7 @@ func TestAgentLarkContextEndpointsUseSessionTokenAndBoundChat(t *testing.T) {
 	}
 	manager.SetLarkConversationProvider(httpTestLarkProvider{})
 	manager.RecordLarkAgentContext(sess.ID, session.LarkAgentContext{LatestMessageID: "om_latest"})
-	server := NewServer(manager, "").Handler()
+	server := NewServer(manager, "", &secureTestConfig{security: SettingsSecurity{PasswordHash: "configured"}}).Handler()
 
 	unauthorized := httptest.NewRecorder()
 	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID+"/lark/context", nil))
