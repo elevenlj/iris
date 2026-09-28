@@ -1336,6 +1336,7 @@ type RuntimeSession struct {
 	agentTurnHookVerified             bool
 	hookCompletedCurrentRound         bool
 	hookBackgroundPending             bool
+	hookRoundSubmittedAt              time.Time
 	hookCompletionTipClaimed          bool
 	hookLastAssistantMessage          string
 	suppressRunningMarker             bool
@@ -3417,6 +3418,7 @@ func (rt *RuntimeSession) markInputActivityLockedWithPreviousRoundState(submitte
 		rt.hookCompletedCurrentRound = false
 		rt.hookCompletionTipClaimed = false
 		rt.hookLastAssistantMessage = ""
+		rt.hookRoundSubmittedAt = time.Now().UTC()
 		rt.suppressRunningMarker = false
 	}
 	rt.session.Status = StatusRunning
@@ -4259,14 +4261,19 @@ func (rt *RuntimeSession) HandleOutput(chunk []byte) {
 // Optional backgroundPending is Claude's in-flight task snapshot; nil means
 // the CLI omitted the field and must not clear previously known pending work.
 func (m *Manager) CompleteAgentTurn(ctx context.Context, sessionID, token, agentSessionID, lastAssistantMessage string, backgroundPending ...*bool) (Session, bool, error) {
+	return m.CompleteAgentTurnForTurn(ctx, sessionID, token, agentSessionID, "", lastAssistantMessage, backgroundPending...)
+}
+
+// CompleteAgentTurnForTurn carries the native Codex turn identity through to validation.
+func (m *Manager) CompleteAgentTurnForTurn(ctx context.Context, sessionID, token, agentSessionID, turnID, lastAssistantMessage string, backgroundPending ...*bool) (Session, bool, error) {
 	rt, ok := m.GetRuntime(strings.TrimSpace(sessionID))
 	if !ok {
 		return Session{}, false, nil
 	}
-	return rt.completeAgentTurn(ctx, token, agentSessionID, lastAssistantMessage, backgroundPending...)
+	return rt.completeAgentTurn(ctx, token, agentSessionID, turnID, lastAssistantMessage, backgroundPending...)
 }
 
-func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSessionID, lastAssistantMessage string, backgroundPending ...*bool) (Session, bool, error) {
+func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSessionID, turnID, lastAssistantMessage string, backgroundPending ...*bool) (Session, bool, error) {
 	if rt == nil || rt.manager == nil {
 		return Session{}, false, nil
 	}
@@ -4285,6 +4292,28 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSes
 		s := rt.session
 		rt.mu.Unlock()
 		return s, false, nil
+	}
+	if isCodexFamily(agentKind) {
+		pinned := codexResumeThreadID(rt.session.LastAgentResumeCommand)
+		if agentSessionID != "" && pinned != "" && agentSessionID != pinned {
+			s := rt.session
+			rt.mu.Unlock()
+			log.Printf("agent completion ignored session=%s reason=foreign_thread", s.ID)
+			return s, false, nil
+		}
+		if agentKind == "codex" && turnID != "" {
+			s := rt.session
+			generation, submitted := rt.snapshotRoundGeneration, rt.hookRoundSubmittedAt
+			rt.mu.Unlock()
+			err := validateCodexCompletion(s, agentSessionID, turnID, submitted)
+			rt.mu.Lock()
+			if err != nil || rt.closed || !rt.session.Live || rt.snapshotRoundGeneration != generation || rt.session.LastAgentKind != agentKind || rt.session.LastAgentStartCommand != s.LastAgentStartCommand || rt.session.LastAgentResumeCommand != s.LastAgentResumeCommand || rt.session.RecoveryKey != token {
+				s = rt.session
+				rt.mu.Unlock()
+				log.Printf("agent completion ignored session=%s reason=unverified_turn detail=%v", s.ID, err)
+				return s, false, nil
+			}
+		}
 	}
 	pinnedRecovery := false
 	switch agentKind {

@@ -457,6 +457,8 @@ func (s *Server) handleAgentHook(w http.ResponseWriter, r *http.Request, session
 	var payload struct {
 		SessionID                  string            `json:"session_id"`
 		ThreadID                   string            `json:"thread-id"`
+		TurnID                     string            `json:"turn-id"`
+		Type                       string            `json:"type"`
 		LastAssistantMessage       string            `json:"last_assistant_message"`
 		LegacyLastAssistantMessage string            `json:"last-assistant-message"`
 		BackgroundTasks            []json.RawMessage `json:"background_tasks"`
@@ -466,9 +468,13 @@ func (s *Server) handleAgentHook(w http.ResponseWriter, r *http.Request, session
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	agentSessionID := strings.TrimSpace(payload.SessionID)
+	if payload.Type == "agent-turn-complete" && (strings.TrimSpace(payload.ThreadID) == "" || strings.TrimSpace(payload.TurnID) == "") {
+		writeError(w, http.StatusBadRequest, errors.New("completion requires thread-id and turn-id"))
+		return
+	}
+	agentSessionID := strings.TrimSpace(payload.ThreadID)
 	if agentSessionID == "" {
-		agentSessionID = strings.TrimSpace(payload.ThreadID)
+		agentSessionID = strings.TrimSpace(payload.SessionID)
 	}
 	lastAssistantMessage := strings.TrimSpace(payload.LastAssistantMessage)
 	if lastAssistantMessage == "" {
@@ -479,7 +485,7 @@ func (s *Server) handleAgentHook(w http.ResponseWriter, r *http.Request, session
 		pending := len(payload.BackgroundTasks) > 0
 		backgroundPending = &pending
 	}
-	sess, accepted, err := s.manager.CompleteAgentTurn(r.Context(), sessionID, token, agentSessionID, lastAssistantMessage, backgroundPending)
+	sess, accepted, err := s.manager.CompleteAgentTurnForTurn(r.Context(), sessionID, token, agentSessionID, payload.TurnID, lastAssistantMessage, backgroundPending)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err)
 		return
