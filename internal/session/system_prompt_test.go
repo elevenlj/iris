@@ -20,6 +20,9 @@ func TestSystemPromptLaunchAndFallback(t *testing.T) {
 				t.Fatal(err)
 			}
 			kind := agentKindForCommand(command, "")
+			if isAidenCodexCommand(command) {
+				kind = "custom"
+			}
 			out, err := exec.Command("sh", "-c", "set -- "+launch+`; printf '%s\000' "$@"`).Output()
 			if err != nil {
 				t.Fatal(err)

@@ -7,10 +7,61 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestAidenCodexUsesPrivateConfigWithoutForbiddenFlags(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	source := filepath.Join(defaultCodexHome(), "config.toml")
+	original := "model = \"user-model\"\nnotify = [\"computer-use\", \"turn-ended\"]\n[features]\nweb_search = true\n"
+	if err := writeFileAtomically(source, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(nil, nil, WithAgentTurnHookURL("http://127.0.0.1:8080/bots/b"))
+	m.recoveryBaseDir = t.TempDir()
+	m.SetSystemPrompt("bot instructions")
+	var previousHome string
+	for _, command := range []string{AidenCodexAgentCommand, "FOO=bar '/usr/local/bin/aiden' x codex resume exact-thread --no-alt-screen"} {
+		rt := &RuntimeSession{manager: m, session: Session{ID: "session-b", RecoveryKey: "secret-b"}}
+		launch, err := rt.agentLaunchCommand(command)
+		if err != nil || strings.Contains(launch, " -c ") || strings.Contains(launch, "secret-b") || rt.pendingSystemPrompt != "bot instructions" {
+			t.Fatalf("invalid launch %q: %v", launch, err)
+		}
+		out, err := exec.Command("sh", "-c", "set -- "+strings.TrimPrefix(launch, "FOO=bar ")+`; printf '%s\000' "$@"`).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		args := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+		home := strings.TrimPrefix(args[len(args)-1], "CODEX_HOME=")
+		if args[len(args)-2] != "--env" || home == defaultCodexHome() || (previousHome != "" && previousHome != home) {
+			t.Fatalf("incorrect config home: %q", args)
+		}
+		previousHome = home
+		content, err := os.ReadFile(filepath.Join(home, "config.toml"))
+		if err != nil || !strings.Contains(string(content), "--route-file") || !strings.Contains(string(content), codexNotifyForwardFlag) || !strings.Contains(string(content), "[features]") {
+			t.Fatalf("lost config or notify: %s, %v", content, err)
+		}
+		if info, err := os.Stat(filepath.Join(home, "config.toml")); err != nil || info.Mode().Perm() != 0600 {
+			t.Fatal("config not private")
+		}
+		shared, err := os.Readlink(filepath.Join(home, "sessions"))
+		if err != nil || shared != filepath.Join(defaultCodexHome(), "sessions") {
+			t.Fatalf("lost existing history: %q %v", shared, err)
+		}
+	}
+	content, _ := os.ReadFile(source)
+	if string(content) != original {
+		t.Fatal("overwrote global configuration")
+	}
+	rt := &RuntimeSession{manager: m, session: Session{ID: "session-c", RecoveryKey: "secret-c"}}
+	launch, err := rt.agentLaunchCommand(AidenCodexAgentCommand)
+	if err != nil || strings.Contains(launch, previousHome) {
+		t.Fatal("two sessions shared their config")
+	}
+}
 
 func TestNotifyRouteOverridesSharedDaemonEnvironment(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
@@ -34,7 +85,7 @@ func TestNotifyRouteOverridesSharedDaemonEnvironment(t *testing.T) {
 	m := NewManager(nil, nil, WithAgentTurnHookURL(server.URL+"/bots/bot-b"))
 	m.recoveryBaseDir = t.TempDir()
 	rt := &RuntimeSession{manager: m, session: Session{ID: "session-b", RecoveryKey: "secret-b"}}
-	for _, command := range []string{CodexAgentCommand, AidenCodexAgentCommand, "codex resume exact-thread", "traecli --yolo"} {
+	for _, command := range []string{CodexAgentCommand, "codex resume exact-thread", "traecli --yolo"} {
 		launch, err := rt.agentNotifyLaunchCommand(command)
 		if err != nil || !strings.Contains(launch, "--route-file") || strings.Contains(launch, "secret-b") {
 			t.Fatalf("launch = %q, err = %v", launch, err)

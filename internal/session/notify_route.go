@@ -67,5 +67,52 @@ func (rt *RuntimeSession) agentNotifyLaunchCommand(command string) (string, erro
 	if err != nil {
 		return "", err
 	}
+	if isAidenCodexCommand(command) {
+		// Aiden forbids notify CLI overrides. Keep config and daemon state
+		// private, but share rollouts so exact-thread recovery still works.
+		target := filepath.Join(home, "iris", fmt.Sprintf("%x", sha256.Sum256([]byte(sess.RecoveryKey)))[:16])
+		content, err := os.ReadFile(filepath.Join(home, config))
+		if err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+		start, end, _, found, err := findTopLevelNotify(content)
+		if err != nil {
+			return "", err
+		}
+		if found {
+			content = append(content[:start:start], content[end:]...)
+		}
+		content = append([]byte("notify = "+string(value)+"\n"), content...)
+		if err := writeFileAtomically(filepath.Join(target, config), content, 0600); err != nil {
+			return "", err
+		}
+		for _, name := range []string{"sessions", "archived_sessions", "skills", "rules", "plugins", "vendor_imports"} {
+			if err := os.MkdirAll(filepath.Join(home, name), 0700); err != nil {
+				return "", err
+			}
+		}
+		for _, name := range []string{"sessions", "archived_sessions", "skills", "rules", "plugins", "vendor_imports", "agents", "prompts", "auth.json", "AGENTS.md", "AGENTS.override.md", "hooks.json", "models_cache.json"} {
+			if err := linkAgentHomeEntry(home, target, name); err != nil {
+				return "", err
+			}
+		}
+		sourceInfo, err := os.Stat(filepath.Join(home, "sessions"))
+		if err != nil {
+			return "", err
+		}
+		targetInfo, err := os.Stat(filepath.Join(target, "sessions"))
+		if err != nil || !os.SameFile(sourceInfo, targetInfo) {
+			return "", fmt.Errorf("cannot share Codex history with %s", target)
+		}
+		return strings.TrimSpace(command) + " --env " + shellQuote("CODEX_HOME="+target), nil
+	}
 	return strings.TrimSpace(command) + " -c " + shellQuote("notify="+string(value)), nil
+}
+
+func isAidenCodexCommand(command string) bool {
+	args := shellFields(command)
+	for len(args) > 0 && isShellEnvAssignment(args[0]) {
+		args = args[1:]
+	}
+	return len(args) >= 3 && shellCommandBase(args[0]) == "aiden" && args[1] == "x" && args[2] == "codex"
 }

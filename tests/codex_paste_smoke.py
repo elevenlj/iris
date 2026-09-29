@@ -1,4 +1,4 @@
-"""Optional: IRIS_SMOKE_AGENT=traecli python3 tests/codex_paste_smoke.py.
+"""Optional: IRIS_SMOKE_AGENT=traecli (or aiden-codex) python3 tests/codex_paste_smoke.py.
 
 Defaults to Codex. Uses an isolated home and local API; no real API requests.
 """
@@ -23,6 +23,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "--notify":
     sys.exit(0)
 
 agent = os.environ.get("IRIS_SMOKE_AGENT", "codex")
+is_aiden = agent == "aiden-codex"
 requests = []
 notifications = []
 terminal_output = bytearray()
@@ -79,11 +80,24 @@ with tempfile.TemporaryDirectory(prefix="iris-paste-check-") as work:
         env.update(IRIS_API_URL="http://127.0.0.1:1", IRIS_SESSION_ID="wrong", IRIS_SESSION_TOKEN="wrong")
     flags = ["--yolo"] if agent == "traecli" else ["--no-alt-screen", "--sandbox", "read-only", "-a", "never"]
     system_prompt = os.environ.get("IRIS_SMOKE_SYSTEM_PROMPT")
-    if system_prompt and agent != "traecli":
+    if system_prompt and agent != "traecli" and not is_aiden:
         flags += ["-c", "developer_instructions=" + json.dumps(system_prompt)]
-    proc = subprocess.Popen([agent, *flags,
-                             "-c", 'model_provider="localtest"', "-c", provider,
-                             "-c", "notify=" + notify, "-c", "check_for_update_on_startup=false"],
+    launch = [agent, *flags,
+              "-c", 'model_provider="localtest"', "-c", provider,
+              "-c", "notify=" + notify, "-c", "check_for_update_on_startup=false"]
+    if is_aiden:
+        private_home = os.path.join(work, "private-codex")
+        os.mkdir(private_home)
+        os.mkdir(os.path.join(work, "sessions"))
+        os.symlink(os.path.join(work, "sessions"), os.path.join(private_home, "sessions"))
+        with open(os.path.join(private_home, "config.toml"), "w") as config:
+            config.write("notify = " + notify + "\ncheck_for_update_on_startup = false\n")
+        # Aiden's own test mode; this provider only serves the local mock API.
+        env.update(SKIP_LOGIN="1", AIDEN_DISABLE_CODE_ADOPTION="1", AIDEN_DISABLE_CODE_ADOPTION_DAEMON="1")
+        launch = ["aiden", "x", "codex", "--provider", "localtest", "--model", "gpt-5.4",
+                  "--base-url", f"http://127.0.0.1:{server.server_port}/v1", "--api-key", "local-test",
+                  "--env", "CODEX_HOME=" + private_home, *flags]
+    proc = subprocess.Popen(launch,
                             cwd=work, env=env, stdin=slave, stdout=slave, stderr=slave)
     os.close(slave)
 
@@ -97,11 +111,11 @@ with tempfile.TemporaryDirectory(prefix="iris-paste-check-") as work:
                     os.write(master, b"\x1b[1;1R")
 
     try:
-        drain(2)
+        drain(10 if is_aiden else 2)
         os.write(master, b"\r")  # Trust only this empty temporary directory.
         drain(2)
         text = sys.argv[1] if len(sys.argv) > 1 else "IRIS paste boundary test 中文 multi-line\n" * 800 + "END-IRIS-PASTE"
-        if system_prompt and agent == "traecli":
+        if system_prompt and (agent == "traecli" or is_aiden):
             text = "【机器人指令】\n" + system_prompt + "\n\n【当前请求】\n" + text
         payload = ("\x1b[200~" + text + "\x1b[201~").encode()
         pos = 0
@@ -115,7 +129,7 @@ with tempfile.TemporaryDirectory(prefix="iris-paste-check-") as work:
             c.get("text") == text for item in r.get("input", [])
             if isinstance(item, dict) and item.get("role") == "user"
             for c in item.get("content", []) if isinstance(c, dict))]
-        assert len(submitted) == 1, f"expected one complete submission, got {len(submitted)}"
+        assert len(submitted) == 1, f"expected one complete submission, got {len(submitted)}: " + terminal_output[-4000:].decode(errors="replace")
         if system_prompt:
             assert system_prompt in json.dumps(submitted[0], ensure_ascii=False), "missing bot instructions"
         # Some CLIs also run a separate conversation-title task.
@@ -134,20 +148,32 @@ with tempfile.TemporaryDirectory(prefix="iris-paste-check-") as work:
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 36, 120, 0, 0))
             updated_prompt = system_prompt + "_UPDATED"
             args = [agent, "resume", thread_id] + proc.args[1:]
-            if agent != "traecli":
+            if is_aiden:
+                args = proc.args[:3] + ["resume", thread_id] + proc.args[3:]
+                # No private DB/cache: recovery must find an existing shared rollout.
+                resume_home = os.path.join(work, "resume-codex")
+                os.mkdir(resume_home)
+                os.symlink(os.path.join(work, "sessions"), os.path.join(resume_home, "sessions"))
+                with open(os.path.join(resume_home, "config.toml"), "w") as config:
+                    config.write("notify = " + notify + "\ncheck_for_update_on_startup = false\n")
+                args[args.index("--env") + 1] = "CODEX_HOME=" + resume_home
+            elif agent != "traecli":
                 args += ["-c", "developer_instructions=" + json.dumps(updated_prompt)]
             requests.clear()
             notifications.clear()
             terminal_output.clear()
             proc = subprocess.Popen(args, cwd=work, env=env, stdin=slave, stdout=slave, stderr=slave)
             os.close(slave)
-            drain(4)
+            drain(10 if is_aiden else 4)
             if b"Continue without trusting" in terminal_output:
                 # The mock-provider test does not need any lifecycle hooks.
                 os.write(master, b"3\r")
                 drain(2)
+            elif is_aiden and b"Trust and continue" in terminal_output:
+                os.write(master, b"\r")  # Only the empty temporary test workspace.
+                drain(3)
             resume_text = "resume-check"
-            if agent == "traecli":
+            if agent == "traecli" or is_aiden:
                 resume_text = "【机器人指令】\n" + updated_prompt + "\n\n【当前请求】\n" + resume_text
             os.write(master, ("\x1b[200~" + resume_text + "\x1b[201~").encode())
             drain(0.5)

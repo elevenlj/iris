@@ -22,6 +22,11 @@ func (rt *RuntimeSession) agentLaunchCommand(command string) (string, error) {
 	prompt := rt.manager.systemPrompt
 	rt.manager.mu.RUnlock()
 	kind := agentKindForCommand(command, "")
+	if isAidenCodexCommand(command) {
+		// Aiden rejects developer_instructions via -c. Use the existing
+		// first-request path, including after an exact-thread resume.
+		kind = "custom"
+	}
 	fallback := ""
 	if prompt != "" {
 		switch kind {
