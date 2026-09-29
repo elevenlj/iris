@@ -66,3 +66,17 @@ func TestCodexCompletionRejectsChildAndStaleTurns(t *testing.T) {
 	}
 	complete(root, "next-turn", true)
 }
+
+func TestCodexRecapCannotCompleteOrOverwriteRound(t *testing.T) {
+	for _, status := range []string{StatusRunning, StatusWaiting} {
+		n := &recordingNotifier{}
+		m := NewManager(nil, nil, WithNotifier(n))
+		rt := &RuntimeSession{manager: m, session: Session{ID: "recap", Live: true, Status: status, RecoveryKey: "token", LastMode: SessionModeAgent, LastAgentKind: "codex", NotifyOnWaiting: true}, hookLastAssistantMessage: "已加上，刷新即可。", hookCompletedCurrentRound: status == StatusWaiting, notifyVersion: 7}
+		m.sessions[rt.session.ID] = rt
+		_, accepted, err := m.CompleteAgentTurn(context.Background(), rt.session.ID, "token", "", `{"summary":"内部摘要","next_action":null}`)
+		if err != nil || accepted || rt.Snapshot().Status != status || rt.hookLastAssistantMessage != "已加上，刷新即可。" || rt.notifyVersion != 7 || rt.hookCompletedCurrentRound != (status == StatusWaiting) || len(n.notes()) != 0 {
+			t.Fatalf("recap changed round or notification: status=%s accepted=%v err=%v", status, accepted, err)
+		}
+		rt.Close()
+	}
+}

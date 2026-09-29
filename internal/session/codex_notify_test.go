@@ -195,10 +195,26 @@ func TestRunCodexNotifyIgnoresInternalMetadata(t *testing.T) {
 	for _, message := range []string{
 		`{\"title\":\"排查未完成任务的异常推送\"}`,
 		`{\"recap\":\"已确认正常回复，下一步继续补充证据\"}`,
+		`{\"summary\":\"标注任务详情已修复列表重叠\",\"next_action\":null}`,
+		`{\"summary\":\"本轮已完成\",\"next_action\":\"继续验证\"}`,
 	} {
 		payload := `{"type":"agent-turn-complete","thread-id":"thread-metadata","last-assistant-message":"` + message + `"}`
 		if err := RunCodexNotify([]string{payload}); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func TestCodexMetadataFilterPreservesOrdinaryReplies(t *testing.T) {
+	for _, message := range []string{
+		"已加上，刷新即可。", `{"summary":"正常摘要"}`,
+		`{"summary":"业务结果","next_action":null,"result":42}`,
+		`{"summary":42,"next_action":null}`, `{"summary":null,"next_action":null}`,
+		`{"summary":"结果","next_action":{"command":"test"}}`, `{"title":null}`,
+		"说明：{\"summary\":\"结果\",\"next_action\":null}",
+	} {
+		if isCodexInternalMetadataMessage(message) {
+			t.Fatalf("ordinary reply filtered: %s", message)
 		}
 	}
 }

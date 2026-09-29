@@ -509,15 +509,24 @@ func RunCodexNotify(args []string) error {
 // isCodexInternalMetadataMessage identifies Codex's internal title and conversation-recap responses.
 func isCodexInternalMetadataMessage(message string) bool {
 	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(strings.TrimSpace(message)), &fields); err != nil || len(fields) != 1 {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(message)), &fields); err != nil {
+		return false
+	}
+	if len(fields) == 2 {
+		summary, hasSummary := fields["summary"]
+		next, hasNext := fields["next_action"]
+		var summaryText, nextText *string
+		return hasSummary && hasNext && json.Unmarshal(summary, &summaryText) == nil && summaryText != nil && json.Unmarshal(next, &nextText) == nil
+	}
+	if len(fields) != 1 {
 		return false
 	}
 	value, ok := fields["title"]
 	if !ok {
 		value, ok = fields["recap"]
 	}
-	var text string
-	return ok && json.Unmarshal(value, &text) == nil
+	var text *string
+	return ok && json.Unmarshal(value, &text) == nil && text != nil
 }
 
 func postAgentTurnCompleted(payload []byte) error {

@@ -4294,6 +4294,12 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSes
 		return s, false, nil
 	}
 	if isCodexFamily(agentKind) {
+		if isCodexInternalMetadataMessage(lastAssistantMessage) {
+			s := rt.session
+			rt.mu.Unlock()
+			log.Printf("agent completion ignored session=%s reason=internal_metadata", s.ID)
+			return s, false, nil
+		}
 		pinned := codexResumeThreadID(rt.session.LastAgentResumeCommand)
 		if agentSessionID != "" && pinned != "" && agentSessionID != pinned {
 			s := rt.session
