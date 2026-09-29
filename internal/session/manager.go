@@ -102,6 +102,7 @@ type Manager struct {
 	onSessionEnded           func(string)
 	defaultAgent             AgentConfig
 	defaultWorkspaceDir      string
+	systemPrompt             string
 	agentOptions             []AgentOption
 	workspaceOptions         []WorkspaceOption
 	larkConversationProvider LarkConversationProvider
@@ -590,7 +591,7 @@ func (m *Manager) createSession(ctx context.Context, name string, seed Session, 
 		_, _ = rt.terminal.Write([]byte("cd " + workspaceShellPath + "\r"))
 		rt.ConfigureAgentForRecovery(agent)
 		rt.prepareAgentWorkspaceTrust(agent.Command)
-		command, err := rt.agentNotifyLaunchCommand(agent.Command)
+		command, err := rt.agentLaunchCommand(agent.Command)
 		if err != nil {
 			rt.Close()
 			return Session{}, err
@@ -1375,6 +1376,7 @@ type RuntimeSession struct {
 	startupComposerIdle               bool
 	startupNotifyTimer                *time.Timer
 	agentRestartPending               bool
+	pendingSystemPrompt               string
 	terminalMenuActive                bool
 	terminalMenuProbe                 *time.Timer
 	terminalMenuProbeTail             string
@@ -1840,7 +1842,7 @@ func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, laun
 		}
 		rt.prepareAgentWorkspaceTrust(launchCommand)
 		var prepareErr error
-		launchCommand, prepareErr = rt.agentNotifyLaunchCommand(launchCommand)
+		launchCommand, prepareErr = rt.agentLaunchCommand(launchCommand)
 		if prepareErr != nil {
 			rt.finishAgentRestartContextFailure("Agent 重启失败：无法配置会话通知。")
 			return
@@ -2292,7 +2294,7 @@ func (rt *RuntimeSession) runRecoveryCommand() {
 	}
 	command := strings.TrimSpace(sess.LastAgentResumeCommand)
 	rt.prepareAgentWorkspaceTrust(command)
-	command, err := rt.agentNotifyLaunchCommand(command)
+	command, err := rt.agentLaunchCommand(command)
 	if err != nil {
 		rt.failStartupNotification("Agent 恢复失败：无法配置会话通知。")
 		return

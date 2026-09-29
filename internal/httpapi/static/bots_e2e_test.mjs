@@ -11,7 +11,7 @@ const $ = id => {
   });
   return elements.get(id);
 };
-let bots = [{id:'default',name:'Primary'}, {id:'bot-two',name:'Second'}];
+let bots = [{id:'default',name:'Primary',system_prompt:'机器人 A\n多行指令'}, {id:'bot-two',name:'Second'}];
 let confirmed = false, confirmation = '', fail = false, deletes = 0, redirect = '';
 const context = vm.createContext({
   $, BOT_BASE:'', state:{config:{}}, document:{createElement:()=>({})}, console,
@@ -31,8 +31,18 @@ const context = vm.createContext({
 vm.runInContext(fs.readFileSync(new URL('./bots.js',import.meta.url),'utf8'),context);
 await vm.runInContext('loadBots();',context);
 await vm.runInContext('openBotEditor(false)',context);
+assert.equal($('bot-system-prompt').value,'');
 assert.equal($('bot-delete').hidden,true);
 await vm.runInContext('openBotEditor(true)',context);
+assert.equal($('bot-system-prompt').value,'机器人 A\n多行指令');
+$('bot-agent').value='codex';
+$('bot-system-prompt').value='保留新指令\n第二行';
+assert.equal(vm.runInContext('readBot()',context).system_prompt,'保留新指令\n第二行');
+vm.runInContext('setBotPending(true)',context);
+assert.equal($('bot-system-prompt').disabled,true);
+vm.runInContext('setBotPending(false)',context);
+$('bot-system-prompt').value='';
+assert.equal(vm.runInContext('readBot()',context).system_prompt,'');
 assert.equal($('bot-delete').hidden,false);
 await vm.runInContext('deleteBot()',context);
 assert.equal(deletes,0,'cancel must not delete');

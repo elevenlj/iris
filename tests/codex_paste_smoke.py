@@ -25,6 +25,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "--notify":
 agent = os.environ.get("IRIS_SMOKE_AGENT", "codex")
 requests = []
 notifications = []
+terminal_output = bytearray()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -64,8 +65,8 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 with tempfile.TemporaryDirectory(prefix="iris-paste-check-") as work:
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 36, 120, 0, 0))
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("IRIS_", "EASY_TERMINAL_", "OPENAI_", "CODEX_", "TRAE_"))}
-    env.update(CODEX_HOME=work, TRAE_HOME=work, TERM="xterm-256color")
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("IRIS_", "EASY_TERMINAL_", "OPENAI_", "CODEX_", "TRAE_", "CLAUDE_", "AIDEN_"))}
+    env.update(HOME=work, XDG_CONFIG_HOME=work, CODEX_HOME=work, TRAE_HOME=work, CLAUDE_CONFIG_DIR=work, TERM="xterm-256color")
     provider = 'model_providers.localtest={name="localtest",base_url="http://127.0.0.1:%d/v1",wire_api="responses",requires_openai_auth=false,request_max_retries=0}' % server.server_port
     notify = json.dumps([sys.executable, os.path.abspath(__file__), "--notify", f"http://127.0.0.1:{server.server_port}/notify"])
     if os.environ.get("IRIS_SMOKE_IRIS"):
@@ -77,6 +78,9 @@ with tempfile.TemporaryDirectory(prefix="iris-paste-check-") as work:
         # A shared daemon can inherit a different terminal's route.
         env.update(IRIS_API_URL="http://127.0.0.1:1", IRIS_SESSION_ID="wrong", IRIS_SESSION_TOKEN="wrong")
     flags = ["--yolo"] if agent == "traecli" else ["--no-alt-screen", "--sandbox", "read-only", "-a", "never"]
+    system_prompt = os.environ.get("IRIS_SMOKE_SYSTEM_PROMPT")
+    if system_prompt and agent != "traecli":
+        flags += ["-c", "developer_instructions=" + json.dumps(system_prompt)]
     proc = subprocess.Popen([agent, *flags,
                              "-c", 'model_provider="localtest"', "-c", provider,
                              "-c", "notify=" + notify, "-c", "check_for_update_on_startup=false"],
@@ -88,6 +92,7 @@ with tempfile.TemporaryDirectory(prefix="iris-paste-check-") as work:
         while time.monotonic() < end:
             if select.select([master], [], [], 0.03)[0]:
                 chunk = os.read(master, 65536)
+                terminal_output.extend(chunk)
                 if b"\x1b[6n" in chunk:
                     os.write(master, b"\x1b[1;1R")
 
@@ -96,6 +101,8 @@ with tempfile.TemporaryDirectory(prefix="iris-paste-check-") as work:
         os.write(master, b"\r")  # Trust only this empty temporary directory.
         drain(2)
         text = sys.argv[1] if len(sys.argv) > 1 else "IRIS paste boundary test 中文 multi-line\n" * 800 + "END-IRIS-PASTE"
+        if system_prompt and agent == "traecli":
+            text = "【机器人指令】\n" + system_prompt + "\n\n【当前请求】\n" + text
         payload = ("\x1b[200~" + text + "\x1b[201~").encode()
         pos = 0
         while pos < len(payload):
@@ -109,12 +116,52 @@ with tempfile.TemporaryDirectory(prefix="iris-paste-check-") as work:
             if isinstance(item, dict) and item.get("role") == "user"
             for c in item.get("content", []) if isinstance(c, dict))]
         assert len(submitted) == 1, f"expected one complete submission, got {len(submitted)}"
+        if system_prompt:
+            assert system_prompt in json.dumps(submitted[0], ensure_ascii=False), "missing bot instructions"
         # Some CLIs also run a separate conversation-title task.
         completed = [n for n in notifications if n.get("input-messages") == [text]]
         assert len(completed) == 1, f"expected one user-turn completion, got {completed}"
         assert completed[0]["type"] == "agent-turn-complete", completed
         assert completed[0]["last-assistant-message"] == "OK", completed
         print(f"PASS: {agent}, {len(text.encode())} UTF-8 bytes, one complete submission after Enter, one final-reply notification")
+        if system_prompt:
+            # Resume the exact thread and change the bot configuration, not its history.
+            thread_id = completed[0]["thread-id"]
+            proc.terminate()
+            proc.wait(timeout=5)
+            os.close(master)
+            master, slave = pty.openpty()
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 36, 120, 0, 0))
+            updated_prompt = system_prompt + "_UPDATED"
+            args = [agent, "resume", thread_id] + proc.args[1:]
+            if agent != "traecli":
+                args += ["-c", "developer_instructions=" + json.dumps(updated_prompt)]
+            requests.clear()
+            notifications.clear()
+            terminal_output.clear()
+            proc = subprocess.Popen(args, cwd=work, env=env, stdin=slave, stdout=slave, stderr=slave)
+            os.close(slave)
+            drain(4)
+            if b"Continue without trusting" in terminal_output:
+                # The mock-provider test does not need any lifecycle hooks.
+                os.write(master, b"3\r")
+                drain(2)
+            resume_text = "resume-check"
+            if agent == "traecli":
+                resume_text = "【机器人指令】\n" + updated_prompt + "\n\n【当前请求】\n" + resume_text
+            os.write(master, ("\x1b[200~" + resume_text + "\x1b[201~").encode())
+            drain(0.5)
+            os.write(master, b"\r")
+            drain(5)
+            assert requests, "resume did not submit: " + terminal_output[-3000:].decode(errors="replace")
+            resumed = [r for r in requests if any(
+                c.get("text") == resume_text for item in r.get("input", [])
+                if isinstance(item, dict) and item.get("role") == "user"
+                for c in item.get("content", []) if isinstance(c, dict))]
+            assert resumed, f"resume input missing from {len(requests)} requests"
+            assert updated_prompt in json.dumps(resumed[0], ensure_ascii=False), "resume retained stale developer instructions"
+            assert any(n.get("last-assistant-message") == "OK" for n in notifications), "resume completion missing"
+            print(f"PASS: {agent} resumed exact thread with updated bot instructions")
     finally:
         proc.terminate()
         proc.wait(timeout=5)

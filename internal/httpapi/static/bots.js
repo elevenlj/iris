@@ -33,7 +33,7 @@ function botError(error) { botStatus(error.message || String(error), 'error'); }
 
 function setBotPending(pending) {
   botSavePending = pending;
-  for (const id of ['bot-scan','bot-link','bot-connect','bot-select-app','bot-existing','bot-save','bot-delete','bot-cancel','bot-name','bot-agent','bot-directory']) $(id).disabled = pending;
+  for (const id of ['bot-scan','bot-link','bot-connect','bot-select-app','bot-existing','bot-save','bot-delete','bot-cancel','bot-name','bot-agent','bot-directory','bot-system-prompt']) $(id).disabled = pending;
   $('bot-scan').disabled = pending || botCreationBlocked;
   if (!pending) {
     $('bot-error').classList.remove('pending');
@@ -58,6 +58,7 @@ async function openBotEditor(edit) {
   $('bot-name').value = bot?.name || '';
   renderAgentSelect($('bot-agent'), bot?.default_agent_id || state.config.default_agent_id);
   $('bot-directory').value = bot?.default_workspace_dir || state.config.default_workspace_dir || '';
+  $('bot-system-prompt').value = bot?.system_prompt || '';
   $('bot-app-name').value = bot?.app_name || '';
   $('bot-app-id').value = bot?.app_id || '';
   $('bot-app-secret').value = bot?.app_secret || '';
@@ -85,6 +86,7 @@ function readBot() {
     id: editingBotID, name: $('bot-name').value.trim(),
     default_agent_id: $('bot-agent').value,
     default_workspace_dir: $('bot-directory').value.trim(),
+    system_prompt: $('bot-system-prompt').value,
     app_id: $('bot-app-id').value.trim(), app_secret: $('bot-app-secret').value.trim(),
     receive_id: $('bot-receive-id').value.trim(),
   };

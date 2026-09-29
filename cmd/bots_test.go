@@ -68,6 +68,38 @@ func TestAgentIdentityUsesCurrentBotApplication(t *testing.T) {
 	}
 }
 
+func TestBotSystemPromptIsolationAndValidation(t *testing.T) {
+	cfg := defaultConfig()
+	a := httpapi.BotConfig{ID: "default", SystemPrompt: "机器人 A\n独立指令"}
+	b := httpapi.BotConfig{ID: "bot-b", SystemPrompt: "机器人 B"}
+	if botEffectiveConfig(cfg, a).BotSystemPrompt != a.SystemPrompt || botEffectiveConfig(cfg, b).BotSystemPrompt != b.SystemPrompt || cfg.BotSystemPrompt != "" {
+		t.Fatal("bot prompts are not isolated")
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg.Bots = []httpapi.BotConfig{a, b}
+	if err := writeConfigFile(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved Config
+	if err := json.Unmarshal(data, &saved); err != nil || len(saved.Bots) != 2 || saved.Bots[0].SystemPrompt != a.SystemPrompt || saved.Bots[1].SystemPrompt != b.SystemPrompt {
+		t.Fatalf("prompt persistence failed: %v", err)
+	}
+	for _, prompt := range []string{"", "多行\n指令\t保留格式", strings.Repeat("字", 20000)} {
+		if err := validateBotSystemPrompt(prompt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, prompt := range []string{"\x1b[31m", "\x00", "\u009b31m", strings.Repeat("字", 20001)} {
+		if validateBotSystemPrompt(prompt) == nil {
+			t.Fatal("accepted invalid prompt")
+		}
+	}
+}
+
 func TestBotsIsolationPersistenceAndLegacyMigration(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

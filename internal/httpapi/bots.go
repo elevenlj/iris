@@ -17,6 +17,7 @@ type BotConfig struct {
 	ReceiveID           string `json:"receive_id,omitempty"`
 	DefaultAgentID      string `json:"default_agent_id"`
 	DefaultWorkspaceDir string `json:"default_workspace_dir"`
+	SystemPrompt        string `json:"system_prompt"`
 }
 
 type BotService interface {

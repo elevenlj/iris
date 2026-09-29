@@ -59,6 +59,7 @@ var defaultLarkNotifyDropLineRules = session.LarkNotifyDropLineRules{
 }
 
 type Config struct {
+	BotSystemPrompt                 string                                `json:"-"`
 	DashboardURL                    string                                `json:"dashboard_url,omitempty"`
 	Bots                            []httpapi.BotConfig                   `json:"bots"`
 	Port                            string                                `json:"port"`
@@ -1163,6 +1164,7 @@ func applyRuntimeConfig(cfg Config, manager *session.Manager, bridge *session.La
 	manager.SetHeadlessSnapshotTimeout(time.Duration(cfg.HeadlessSnapshotTimeoutMs) * time.Millisecond)
 	manager.SetPreStartCommand(cfg.SessionPreStartCommand)
 	manager.SetDefaultWorkspaceDir(cfg.DefaultWorkspaceDir)
+	manager.SetSystemPrompt(cfg.BotSystemPrompt)
 	manager.SetAgentConfig(defaultAgentConfig(cfg), cfg.WorkspaceOptions)
 	manager.SetAvailableAgentOptions(session.DetectAvailableAgentOptions(cfg.Agents...))
 	notifier := session.NewLarkAppNotifier(cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkNotifyReceiveID, cfg.LarkMentionEnabled)

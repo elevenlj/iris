@@ -30,7 +30,7 @@
 #bot-dialog h2 { font-size:21px; margin:0 0 8px; }
 #bot-dialog label { display:block; margin-top:20px; font-size:12px; }
 #bot-dialog #bot-app-fields label { margin-top:12px; }
-#bot-dialog label input, #bot-dialog label select { display:block; margin-top:8px; }
+#bot-dialog label input, #bot-dialog label select, #bot-dialog label textarea { display:block; margin-top:8px; }
 .bot-create-methods { display:flex; flex-wrap:wrap; gap:10px; margin-top:24px; }
 .bot-app-heading { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin-top:24px; border-top:1px solid var(--line); }
 .bot-app-heading a { font-size:12px; color:#42694c; }

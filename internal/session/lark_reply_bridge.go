@@ -3091,6 +3091,17 @@ func submitStructuredInputWithMode(rt *RuntimeSession, text string, mentionOpenI
 	text = strings.TrimRight(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n"), "\n")
 	sess := rt.Snapshot()
 	sessionID := sess.ID
+	fallbackPrompt := ""
+	if trackActivity && pressEnter && strings.TrimSpace(text) != "" && !larkAgentSlashCommandRE.MatchString(text) && !structuredInputNumericOnlyRE.MatchString(strings.TrimSpace(text)) {
+		rt.mu.Lock()
+		if rt.activeTerminalMenuLocked() == nil && !rt.terminalMenuActive {
+			fallbackPrompt = rt.pendingSystemPrompt
+		}
+		rt.mu.Unlock()
+		if fallbackPrompt != "" {
+			text = "【机器人指令】\n" + fallbackPrompt + "\n\n【当前请求】\n" + text
+		}
+	}
 	payload := text
 	// Explicit paste boundaries bypass Codex's timing-based paste detection.
 	// Keep native slash commands, menu input, other Agents and shells unchanged.
@@ -3149,8 +3160,17 @@ func submitStructuredInputWithMode(rt *RuntimeSession, text string, mentionOpenI
 	if enter == "" {
 		enter = "\r"
 	}
-	if _, err := rt.terminal.Write([]byte(enter)); err != nil {
+	if n, err := rt.terminal.Write([]byte(enter)); err != nil {
 		return err
+	} else if n != len(enter) {
+		return io.ErrShortWrite
+	}
+	if fallbackPrompt != "" {
+		rt.mu.Lock()
+		if rt.pendingSystemPrompt == fallbackPrompt {
+			rt.pendingSystemPrompt = ""
+		}
+		rt.mu.Unlock()
 	}
 	return nil
 }

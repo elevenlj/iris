@@ -41,6 +41,9 @@ type botService struct {
 }
 
 func (s *botService) CreateBot(ctx context.Context, bot httpapi.BotConfig) (httpapi.BotConfig, error) {
+	if err := validateBotSystemPrompt(bot.SystemPrompt); err != nil {
+		return bot, err
+	}
 	if !s.createMu.TryLock() {
 		return bot, errors.New("已有机器人正在创建，请等待完成")
 	}
@@ -135,6 +138,7 @@ func validBotID(id string) bool {
 }
 
 func botEffectiveConfig(global Config, bot httpapi.BotConfig) Config {
+	global.BotSystemPrompt = bot.SystemPrompt
 	global.LarkAppID, global.LarkAppSecret, global.LarkNotifyReceiveID = bot.AppID, bot.AppSecret, bot.ReceiveID
 	global.DefaultAgentID = bot.DefaultAgentID
 	if bot.DefaultWorkspaceDir != "" {
@@ -236,7 +240,19 @@ func (s *botService) BotHandler(id string) http.Handler {
 	return nil
 }
 
+func validateBotSystemPrompt(prompt string) error {
+	if len([]rune(prompt)) > 20000 || strings.IndexFunc(prompt, func(r rune) bool {
+		return (r < 32 && r != '\n' && r != '\r' && r != '\t') || (r >= 127 && r <= 159)
+	}) >= 0 {
+		return errors.New("SystemPrompt 不能超过 20000 字或包含终端控制字符")
+	}
+	return nil
+}
+
 func (s *botService) SaveBot(ctx context.Context, bot httpapi.BotConfig) (httpapi.BotConfig, error) {
+	if err := validateBotSystemPrompt(bot.SystemPrompt); err != nil {
+		return bot, err
+	}
 	bot.Name, bot.AppID, bot.AppSecret, bot.ReceiveID = strings.TrimSpace(bot.Name), strings.TrimSpace(bot.AppID), strings.TrimSpace(bot.AppSecret), strings.TrimSpace(bot.ReceiveID)
 	if bot.Name == "" || len([]rune(bot.Name)) > 40 {
 		return bot, errors.New("机器人名称须为 1–40 个字符")
