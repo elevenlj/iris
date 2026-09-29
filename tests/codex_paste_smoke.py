@@ -69,8 +69,13 @@ with tempfile.TemporaryDirectory(prefix="iris-paste-check-") as work:
     provider = 'model_providers.localtest={name="localtest",base_url="http://127.0.0.1:%d/v1",wire_api="responses",requires_openai_auth=false,request_max_retries=0}' % server.server_port
     notify = json.dumps([sys.executable, os.path.abspath(__file__), "--notify", f"http://127.0.0.1:{server.server_port}/notify"])
     if os.environ.get("IRIS_SMOKE_IRIS"):
-        notify = json.dumps([os.environ["IRIS_SMOKE_IRIS"], "--codex-notify"])
-        env.update(IRIS_API_URL=f"http://127.0.0.1:{server.server_port}", IRIS_SESSION_ID="smoke", IRIS_SESSION_TOKEN="smoke-token")
+        route_file = os.path.join(work, "notify-route.json")
+        with open(route_file, "w") as route:
+            json.dump(dict(url=f"http://127.0.0.1:{server.server_port}", session_id="smoke", token="smoke-token"), route)
+        os.chmod(route_file, 0o600)
+        notify = json.dumps([os.environ["IRIS_SMOKE_IRIS"], "--codex-notify", "--route-file", route_file])
+        # A shared daemon can inherit a different terminal's route.
+        env.update(IRIS_API_URL="http://127.0.0.1:1", IRIS_SESSION_ID="wrong", IRIS_SESSION_TOKEN="wrong")
     flags = ["--yolo"] if agent == "traecli" else ["--no-alt-screen", "--sandbox", "read-only", "-a", "never"]
     proc = subprocess.Popen([agent, *flags,
                              "-c", 'model_provider="localtest"', "-c", provider,

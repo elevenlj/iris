@@ -469,11 +469,19 @@ func RunCodexNotify(args []string) error {
 	}
 	payload := args[len(args)-1]
 	forward := []string(nil)
-	if len(args) > 1 {
-		if len(args) != 3 || args[0] != codexNotifyForwardFlag {
+	routeFile := ""
+	for i := 0; i < len(args)-1; i += 2 {
+		if i+1 >= len(args)-1 {
 			return errors.New("invalid Codex notify invocation")
 		}
-		data, err := base64.RawURLEncoding.DecodeString(args[1])
+		if args[i] == "--route-file" {
+			routeFile = args[i+1]
+			continue
+		}
+		if args[i] != codexNotifyForwardFlag {
+			return errors.New("invalid Codex notify option")
+		}
+		data, err := base64.RawURLEncoding.DecodeString(args[i+1])
 		if err != nil {
 			return err
 		}
@@ -503,6 +511,20 @@ func RunCodexNotify(args []string) error {
 	if isCodexInternalMetadataMessage(event.LastAssistantMessage) {
 		return nil
 	}
+	if routeFile != "" {
+		data, err := os.ReadFile(routeFile)
+		if err != nil {
+			return err
+		}
+		var route agentNotifyRoute
+		if err := json.Unmarshal(data, &route); err != nil {
+			return err
+		}
+		if route.URL == "" || route.SessionID == "" || route.Token == "" {
+			return errors.New("incomplete notify route")
+		}
+		return postAgentTurnCompletedTo([]byte(payload), route)
+	}
 	return postAgentTurnCompleted([]byte(payload))
 }
 
@@ -530,10 +552,18 @@ func isCodexInternalMetadataMessage(message string) bool {
 }
 
 func postAgentTurnCompleted(payload []byte) error {
-	hookURL := firstNonEmptyEnv("IRIS_API_URL", "EASY_TERMINAL_HOOK_URL")
+	return postAgentTurnCompletedTo(payload, agentNotifyRoute{
+		URL:       firstNonEmptyEnv("IRIS_API_URL", "EASY_TERMINAL_HOOK_URL"),
+		SessionID: firstNonEmptyEnv("IRIS_SESSION_ID", "EASY_TERMINAL_SESSION_ID"),
+		Token:     firstNonEmptyEnv("IRIS_SESSION_TOKEN", "EASY_TERMINAL_HOOK_TOKEN"),
+	})
+}
+
+func postAgentTurnCompletedTo(payload []byte, route agentNotifyRoute) error {
+	hookURL := route.URL
 	hookURL = strings.TrimRight(strings.TrimSpace(hookURL), "/")
-	sessionID := strings.TrimSpace(firstNonEmptyEnv("IRIS_SESSION_ID", "EASY_TERMINAL_SESSION_ID"))
-	token := strings.TrimSpace(firstNonEmptyEnv("IRIS_SESSION_TOKEN", "EASY_TERMINAL_HOOK_TOKEN"))
+	sessionID := strings.TrimSpace(route.SessionID)
+	token := strings.TrimSpace(route.Token)
 	if hookURL == "" || sessionID == "" || token == "" {
 		return nil
 	}

@@ -590,7 +590,12 @@ func (m *Manager) createSession(ctx context.Context, name string, seed Session, 
 		_, _ = rt.terminal.Write([]byte("cd " + workspaceShellPath + "\r"))
 		rt.ConfigureAgentForRecovery(agent)
 		rt.prepareAgentWorkspaceTrust(agent.Command)
-		_, _ = rt.terminal.Write([]byte(agent.Command + "\r"))
+		command, err := rt.agentNotifyLaunchCommand(agent.Command)
+		if err != nil {
+			rt.Close()
+			return Session{}, err
+		}
+		_, _ = rt.terminal.Write([]byte(command + "\r"))
 		sess = rt.Snapshot()
 	}
 	sess.NotificationsAvailable = m.notifier != nil && m.notifier.Available()
@@ -1834,6 +1839,12 @@ func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, laun
 			_ = rt.manager.persist(context.Background(), sess)
 		}
 		rt.prepareAgentWorkspaceTrust(launchCommand)
+		var prepareErr error
+		launchCommand, prepareErr = rt.agentNotifyLaunchCommand(launchCommand)
+		if prepareErr != nil {
+			rt.finishAgentRestartContextFailure("Agent 重启失败：无法配置会话通知。")
+			return
+		}
 		if !strings.HasSuffix(launchCommand, "\r") && !strings.HasSuffix(launchCommand, "\n") {
 			launchCommand += "\r"
 		}
@@ -2281,6 +2292,11 @@ func (rt *RuntimeSession) runRecoveryCommand() {
 	}
 	command := strings.TrimSpace(sess.LastAgentResumeCommand)
 	rt.prepareAgentWorkspaceTrust(command)
+	command, err := rt.agentNotifyLaunchCommand(command)
+	if err != nil {
+		rt.failStartupNotification("Agent 恢复失败：无法配置会话通知。")
+		return
+	}
 	if strings.TrimSpace(sess.LastAgentKind) == "codex" && codexHomeIsLegacy(sess.LastAgentHome) {
 		command = "CODEX_HOME=" + shellQuote(sess.LastAgentHome) + " " + command
 	}
