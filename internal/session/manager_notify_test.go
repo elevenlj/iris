@@ -2521,7 +2521,8 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 		strings.Index(content, `"content":"删除会话"`) < strings.Index(content, `"content":"Ctrl-C"`) &&
 		strings.Index(content, `"content":"Ctrl-C"`) < strings.Index(content, `"content":"Esc"`) &&
 		strings.Index(content, `"content":"Esc"`) < strings.Index(content, `"content":"Enter"`) &&
-		strings.Index(content, `"content":"Enter"`) < strings.Index(content, `"content":"打开终端"`) &&
+		strings.Index(content, `"content":"Enter"`) < strings.Index(content, `"content":"切换模型"`) &&
+		strings.Index(content, `"content":"切换模型"`) < strings.Index(content, `"content":"打开终端"`) &&
 		strings.Index(content, `"content":"打开终端"`) < strings.Index(content, `"iris_action":"custom_shortcut"`)) {
 		t.Fatalf("refresh button should be first and custom shortcuts below system shortcuts, got %s", content)
 	}
@@ -2553,8 +2554,8 @@ func TestLarkNotificationCardContentIncludesShortcutButtons(t *testing.T) {
 		t.Fatalf("terminal shortcuts should use their own row, got %#v", shortcutRows)
 	}
 	shortcutColumns, _ := shortcutRows[0]["columns"].([]any)
-	if shortcutRows[0]["flex_mode"] != "flow" || len(shortcutColumns) != 4 {
-		t.Fatalf("terminal shortcut row should contain Ctrl-C, Esc, Enter and open terminal, got %#v", shortcutRows[0])
+	if shortcutRows[0]["flex_mode"] != "flow" || len(shortcutColumns) != 5 {
+		t.Fatalf("terminal shortcut row should contain Ctrl-C, Esc, Enter, model and open terminal, got %#v", shortcutRows[0])
 	}
 	if strings.Count(content, `"type":"primary"`) != 1 || strings.Count(content, `"type":"default"`) < 7 {
 		t.Fatalf("only refresh should be primary while secondary actions stay neutral, got %s", content)

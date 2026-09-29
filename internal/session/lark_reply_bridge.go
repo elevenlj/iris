@@ -737,6 +737,9 @@ func (b *LarkReplyBridge) handleCardShortcut(ctx context.Context, value map[stri
 		return blocked, nil
 	}
 	key := strings.TrimSpace(fmt.Sprint(value["key"]))
+	if key == "model" {
+		return b.handleCardCustomShortcut(ctx, map[string]interface{}{"session_id": sessionID, "command": "/model"}, openMessageID)
+	}
 	seq, _, ok := larkShortcutInputSequence(key)
 	if !ok {
 		return larkCardToast("warning", "不支持的快捷键"), nil

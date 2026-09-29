@@ -930,6 +930,7 @@ func larkShortcutActionElements(sessionID string, updateNo int, mentionModeEnabl
 			larkShortcutButtonColumn("Ctrl-C", "default", sessionID, "ctrl_c"),
 			larkShortcutButtonColumn("Esc", "default", sessionID, "esc"),
 			larkShortcutButtonColumn("Enter", "default", sessionID, "enter"),
+			larkShortcutButtonColumn("切换模型", "default", sessionID, "model"),
 		}
 		if strings.TrimSpace(terminalURL) != "" {
 			shortcutColumns = append(shortcutColumns, larkOpenTerminalButtonColumn(terminalURL))

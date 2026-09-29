@@ -2497,6 +2497,40 @@ func TestLarkReplyBridgeOverlappingFollowupFreezesRunningCardEndToEnd(t *testing
 	}
 }
 
+func TestLarkReplyBridgeModelShortcutUsesNativeCommand(t *testing.T) {
+	for _, command := range []string{CodexAgentCommand, ClaudeAgentCommand, AidenAgentCommand, AidenCodexAgentCommand, AidenClaudeAgentCommand, "traecli --yolo", "custom-agent"} {
+		t.Run(command, func(t *testing.T) {
+			resetLarkRegistryForTest()
+			launcher := &recordingLauncher{}
+			manager := NewManager(nil, launcher)
+			bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+			sess, err := manager.CreateSession(context.Background(), "Model")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer manager.DeleteSession(context.Background(), sess.ID)
+			rt, _ := manager.GetRuntime(sess.ID)
+			rt.mu.Lock()
+			rt.session.LastMode = SessionModeAgent
+			rt.session.LastAgentStartCommand = command
+			rt.mu.Unlock()
+			resp, err := bridge.handleCardAction(context.Background(), &callback.CallBackAction{Value: map[string]interface{}{
+				"iris_action": "shortcut", "session_id": sess.ID, "key": "model",
+			}}, "", "", "")
+			if err != nil || resp != nil {
+				t.Fatalf("callback: %v, %v", resp, err)
+			}
+			parts := launcher.terminals[0].writeParts()
+			if len(parts) < 2 || parts[len(parts)-2] != "/model" || parts[len(parts)-1] != "\r" {
+				t.Fatalf("expected native /model + Enter, got %q", parts)
+			}
+			if rt.lastInputText != "/model" {
+				t.Fatalf("input = %q", rt.lastInputText)
+			}
+		})
+	}
+}
+
 func TestLarkReplyBridgeCardShortcutSendsCtrlC(t *testing.T) {
 	resetLarkRegistryForTest()
 	launcher := &recordingLauncher{}
