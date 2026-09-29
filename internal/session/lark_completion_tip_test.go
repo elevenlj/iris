@@ -11,7 +11,7 @@ import (
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 )
 
-func TestCompletionCardMentionsOnlyAfterCompletionAcrossRestart(t *testing.T) {
+func TestOnlyCompletionTipMentionsSenderAcrossRestart(t *testing.T) {
 	for _, senderType := range []string{"app", "user", ""} {
 		t.Run(senderType, func(t *testing.T) {
 			m := NewManager(nil, nil, WithIsolatedMessageRegistry())
@@ -43,7 +43,7 @@ func TestCompletionCardMentionsOnlyAfterCompletionAcrossRestart(t *testing.T) {
 			if _, err := n.NotifyWaiting(note); err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(transport.lastCard, "sender") != (senderType != "app") || !strings.Contains(transport.lastCard, "chosen") {
+			if strings.Contains(transport.lastCard, "sender") || !strings.Contains(transport.lastCard, "chosen") {
 				t.Fatalf("incorrect completion mentions: %s", transport.lastCard)
 			}
 			// A later input or a refresh by someone else must not replace the owner.
@@ -56,7 +56,7 @@ func TestCompletionCardMentionsOnlyAfterCompletionAcrossRestart(t *testing.T) {
 			if _, err := restarted.NotifyWaiting(note); err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(transport.lastCard, "sender") != (senderType != "app") || strings.Contains(transport.lastCard, "other-user") || !strings.Contains(transport.lastCard, "chosen") {
+			if strings.Contains(transport.lastCard, "sender") || strings.Contains(transport.lastCard, "other-user") || !strings.Contains(transport.lastCard, "chosen") {
 				t.Fatalf("refresh changed mentions: %s", transport.lastCard)
 			}
 			wantTips := 1

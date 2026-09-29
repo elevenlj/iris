@@ -2261,7 +2261,7 @@ func TestLarkNotificationCardContentKeepsSessionTitleWithoutStatusNoise(t *testi
 	}
 }
 
-func TestLarkNotificationCardContentMentionsRoundSender(t *testing.T) {
+func TestLarkNotificationCardContentDoesNotMentionRoundSender(t *testing.T) {
 	note := WaitingNotification{
 		SessionID:     "sess-1",
 		Name:          "A",
@@ -2274,8 +2274,8 @@ func TestLarkNotificationCardContentMentionsRoundSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(content, `\u003cat id=ou_asker\u003e\u003c/at\u003e`) {
-		t.Fatalf("card content should mention asker, got %s", content)
+	if strings.Contains(content, `ou_asker`) {
+		t.Fatalf("card content should not automatically mention asker, got %s", content)
 	}
 	if strings.Contains(content, `ou_owner`) {
 		t.Fatalf("card content should not mention fallback receiver when asker is known, got %s", content)

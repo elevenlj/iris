@@ -860,7 +860,7 @@ func TestLarkReplyBridgeGroupInputMentionsSender(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if strings.Contains(card, "ou-bob") != (wantMention != "" && phase == "complete") {
+				if strings.Contains(card, "ou-bob") {
 					t.Fatalf("%s card has incorrect automatic mention: %s", phase, card)
 				}
 				if !strings.Contains(card, "ou-chosen") {

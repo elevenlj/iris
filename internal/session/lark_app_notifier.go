@@ -299,10 +299,8 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 	if !note.Startup && !note.Running && strings.TrimSpace(note.AssistantName) != "" {
 		elements = append(elements, map[string]any{"tag": "div", "text": map[string]any{"tag": "plain_text", "content": "我是" + strings.TrimSpace(note.AssistantName) + "的助理。"}})
 	}
-	mentionID := larkNotificationMentionID(note, receiveID)
-	if mention && mentionID != "" {
-		elements = append(elements, map[string]any{"tag": "markdown", "content": "<at id=" + mentionID + "></at>"})
-	}
+	// Automatic mentions belong only in the separate completion notification.
+	// Preserve any intentional mentions within the agent's answer itself.
 	if note.Startup {
 		if note.Interaction == nil {
 			elements = append(elements, larkTerminalTextElements(note.Content, note.SnapshotSource)...)
