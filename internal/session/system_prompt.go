@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os/exec"
 	"strings"
 	"time"
@@ -15,6 +16,9 @@ func (m *Manager) SetSystemPrompt(prompt string) {
 }
 
 func (rt *RuntimeSession) agentLaunchCommand(command string) (string, error) {
+	if codexResumeUsesLast(command) {
+		return "", errors.New("不允许使用 --last 恢复 Agent，请指定会话 ID 或使用启动命令")
+	}
 	if rt.manager == nil {
 		return command, nil
 	}

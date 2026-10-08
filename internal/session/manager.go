@@ -1844,7 +1844,7 @@ func (rt *RuntimeSession) restartAgentAfterConfirmedExit(terminal Terminal, laun
 		var prepareErr error
 		launchCommand, prepareErr = rt.agentLaunchCommand(launchCommand)
 		if prepareErr != nil {
-			rt.finishAgentRestartContextFailure("Agent 重启失败：无法配置会话通知。")
+			rt.finishAgentRestartContextFailure("Agent 重启失败：" + prepareErr.Error())
 			return
 		}
 		if !strings.HasSuffix(launchCommand, "\r") && !strings.HasSuffix(launchCommand, "\n") {
@@ -2289,15 +2289,30 @@ func (rt *RuntimeSession) runRecoveryCommand() {
 			log.Printf("recovery cwd restore failed session=%s cwd=%q: %v", sess.ID, cwd, err)
 		}
 	}
-	if strings.TrimSpace(sess.LastMode) != SessionModeAgent || strings.TrimSpace(sess.LastAgentResumeCommand) == "" {
+	if strings.TrimSpace(sess.LastMode) != SessionModeAgent {
 		return
 	}
 	command := strings.TrimSpace(sess.LastAgentResumeCommand)
+	startingFresh := isCodexFamily(sess.LastAgentKind) && exactAgentResumeCommand(sess) == ""
+	if startingFresh {
+		command = strings.TrimSpace(sess.LastAgentStartCommand)
+		if command == "" {
+			rt.failStartupNotification("Agent 无法恢复：没有会话 ID，也没有可用的启动命令。")
+			return
+		}
+		log.Printf("agent recovery starting fresh session=%s reason=no_exact_thread", sess.ID)
+	}
+	if command == "" {
+		return
+	}
 	rt.prepareAgentWorkspaceTrust(command)
 	command, err := rt.agentLaunchCommand(command)
 	if err != nil {
-		rt.failStartupNotification("Agent 恢复失败：无法配置会话通知。")
+		rt.failStartupNotification("Agent 恢复失败：" + err.Error())
 		return
+	}
+	if startingFresh {
+		rt.RecordShellCommandForRecovery(sess.LastAgentStartCommand)
 	}
 	if strings.TrimSpace(sess.LastAgentKind) == "codex" && codexHomeIsLegacy(sess.LastAgentHome) {
 		command = "CODEX_HOME=" + shellQuote(sess.LastAgentHome) + " " + command

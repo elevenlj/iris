@@ -234,7 +234,7 @@ func TestEnsureCodexNotifyPreservesExistingNotifyAndRemovesManagedStopHook(t *te
 	}
 }
 
-func TestPrepareCodexRecoveryMigratesAndPinsLegacyRollout(t *testing.T) {
+func TestPrepareCodexRecoveryMigratesExactLegacyRollout(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	legacyHome := filepath.Join(t.TempDir(), "codex_home")
@@ -251,7 +251,7 @@ func TestPrepareCodexRecoveryMigratesAndPinsLegacyRollout(t *testing.T) {
 	sess, err := NewManager(nil, nil).prepareCodexRecovery(Session{
 		LastAgentKind:          "codex",
 		LastAgentHome:          legacyHome,
-		LastAgentResumeCommand: "codex resume --last --dangerously-bypass-approvals-and-sandbox",
+		LastAgentResumeCommand: "codex resume 019f5153-6e7f-7742-9f61-3ffe1530d61c --dangerously-bypass-approvals-and-sandbox",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -262,6 +262,43 @@ func TestPrepareCodexRecoveryMigratesAndPinsLegacyRollout(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".codex", "sessions", rel)); err != nil {
 		t.Fatalf("migrated rollout missing: %v", err)
+	}
+}
+
+func TestRecoveryNeverLaunchesUnboundCodexResume(t *testing.T) {
+	const id = "019f5153-6e7f-7742-9f61-3ffe1530d61c"
+	for _, start := range []string{"codex --no-alt-screen", "aiden x codex", "traecli --yolo"} {
+		for _, resume := range []string{"", start + " resume --last", start + " resume", start + " resume " + id} {
+			t.Run(resume, func(t *testing.T) {
+				t.Setenv("HOME", t.TempDir())
+				term := &recordingTerminal{}
+				rt := &RuntimeSession{terminal: term, session: Session{LastMode: SessionModeAgent, LastAgentKind: agentKindForCommand(start, ""), LastAgentStartCommand: start, LastAgentResumeCommand: resume}}
+				rt.runRecoveryCommand()
+				want := start + "\r"
+				if strings.Contains(resume, id) {
+					want = resume + "\r"
+				}
+				if got := term.writes(); got != want {
+					t.Fatalf("launch=%q want=%q", got, want)
+				}
+			})
+		}
+	}
+}
+
+func TestLaunchRejectsLastResume(t *testing.T) {
+	for _, command := range []string{"codex resume --last", "CODEX_HOME=/tmp/private codex resume --last", "aiden x codex resume --last", "traecli resume --last", "codex resume --last=true"} {
+		if launch, err := (&RuntimeSession{}).agentLaunchCommand(command); err == nil || launch != "" {
+			t.Fatalf("unsafe launch allowed: %q", command)
+		}
+	}
+}
+
+func TestPrepareCodexRecoveryDoesNotGuessLegacyThread(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	sess, err := NewManager(nil, nil).prepareCodexRecovery(Session{LastAgentKind: "codex", LastAgentHome: filepath.Join(t.TempDir(), "missing-legacy"), LastAgentResumeCommand: "codex resume --last"})
+	if err != nil || exactAgentResumeCommand(sess) != "" {
+		t.Fatalf("unbound recovery selected a thread: %#v err=%v", sess, err)
 	}
 }
 
@@ -377,6 +414,7 @@ func TestRecoveryDoesNotDuplicateCodexResume(t *testing.T) {
 }
 
 func TestRecoverRuntimeRestoresAgentCommand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	launcher := &recordingLauncher{}
 	st := newMemoryStore()
 	manager := NewManager(st, launcher)
@@ -391,7 +429,7 @@ func TestRecoverRuntimeRestoresAgentCommand(t *testing.T) {
 		LastMode:               SessionModeAgent,
 		LastCWD:                "/tmp/project",
 		LastAgentKind:          "codex",
-		LastAgentResumeCommand: "codex resume --last --dangerously-bypass-approvals-and-sandbox",
+		LastAgentResumeCommand: "codex resume 019f5153-6e7f-7742-9f61-3ffe1530d61c --dangerously-bypass-approvals-and-sandbox",
 	}
 	if err := st.CreateSession(context.Background(), sess); err != nil {
 		t.Fatal(err)
@@ -401,9 +439,10 @@ func TestRecoverRuntimeRestoresAgentCommand(t *testing.T) {
 	if err != nil || !ok || rt == nil {
 		t.Fatalf("RecoverRuntime ok=%v err=%v rt=%v", ok, err, rt)
 	}
+	defer rt.Close()
 
 	writes := launcher.terminals[0].writes()
-	if !strings.Contains(writes, "cd '/tmp/project'\r") || !strings.Contains(writes, "codex resume --last --dangerously-bypass-approvals-and-sandbox\r") {
+	if !strings.Contains(writes, "cd '/tmp/project'\r") || !strings.Contains(writes, "codex resume 019f5153-6e7f-7742-9f61-3ffe1530d61c --dangerously-bypass-approvals-and-sandbox\r") || strings.Contains(writes, "--last") {
 		t.Fatalf("recovery writes = %q", writes)
 	}
 	if !rt.discardingStartupNotifications() {

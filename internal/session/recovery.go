@@ -652,19 +652,17 @@ func (m *Manager) prepareCodexRecovery(sess Session) (Session, error) {
 	}
 
 	wantedID := codexResumeThreadID(sess.LastAgentResumeCommand)
-	rollout, threadID, err := findCodexRollout(legacyHome, wantedID)
+	if wantedID == "" || codexResumeUsesLast(sess.LastAgentResumeCommand) {
+		// An unbound shared-history resume must never select another session.
+		sess.LastAgentHome = defaultHome
+		return sess, nil
+	}
+	rollout, _, err := findCodexRollout(legacyHome, wantedID)
 	if err != nil {
 		return sess, err
 	}
 	if err := migrateCodexRollout(legacyHome, defaultHome, rollout); err != nil {
 		return sess, err
-	}
-	if wantedID == "" {
-		command, ok := pinCodexResumeCommand(sess.LastAgentResumeCommand, threadID)
-		if !ok {
-			return sess, fmt.Errorf("cannot pin Codex recovery command %q", sess.LastAgentResumeCommand)
-		}
-		sess.LastAgentResumeCommand = command
 	}
 	sess.LastAgentHome = defaultHome
 	return sess, nil
@@ -790,7 +788,7 @@ func exactAgentResumeCommand(sess Session) string {
 	command := strings.TrimSpace(sess.LastAgentResumeCommand)
 	switch strings.ToLower(strings.TrimSpace(sess.LastAgentKind)) {
 	case "codex", "traecli":
-		if codexResumeThreadID(command) != "" {
+		if !codexResumeUsesLast(command) && codexResumeThreadID(command) != "" {
 			return command
 		}
 	case "claude":
@@ -803,6 +801,18 @@ func exactAgentResumeCommand(sess Session) string {
 		}
 	}
 	return ""
+}
+
+func codexResumeUsesLast(command string) bool {
+	if !isCodexFamily(agentKindForCommand(command, "")) {
+		return false
+	}
+	for _, arg := range shellFields(command) {
+		if arg == "--last" || strings.HasPrefix(arg, "--last=") {
+			return true
+		}
+	}
+	return false
 }
 
 func claudeResumeSessionID(command string) string {
