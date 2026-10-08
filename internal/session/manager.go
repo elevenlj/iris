@@ -4328,8 +4328,9 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSes
 		if agentKind == "codex" && turnID != "" {
 			s := rt.session
 			generation, submitted := rt.snapshotRoundGeneration, rt.hookRoundSubmittedAt
+			input := rt.lastInputText
 			rt.mu.Unlock()
-			err := validateCodexCompletion(s, agentSessionID, turnID, submitted)
+			err := validateCodexCompletion(s, agentSessionID, turnID, submitted, input)
 			rt.mu.Lock()
 			if err != nil || rt.closed || !rt.session.Live || rt.snapshotRoundGeneration != generation || rt.session.LastAgentKind != agentKind || rt.session.LastAgentStartCommand != s.LastAgentStartCommand || rt.session.LastAgentResumeCommand != s.LastAgentResumeCommand || rt.session.RecoveryKey != token {
 				s = rt.session

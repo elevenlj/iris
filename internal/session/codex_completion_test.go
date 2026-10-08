@@ -80,3 +80,73 @@ func TestCodexRecapCannotCompleteOrOverwriteRound(t *testing.T) {
 		rt.Close()
 	}
 }
+
+func TestCodexCompletionAcceptsConsumedSteeringOnly(t *testing.T) {
+	const thread = "01a119aa-632b-79c1-8524-2245faf55ccc"
+	submitted := time.Now().UTC()
+	for _, tc := range []struct {
+		name             string
+		kind             string
+		role             string
+		turn             string
+		text             string
+		beforeSubmission bool
+		afterCompletion  bool
+		newTurn          bool
+		want             bool
+	}{
+		{name: "consumed response", kind: "response_item", role: "user", turn: "turn", text: "补充消息", want: true},
+		{name: "legacy response", kind: "response_item", role: "user", text: "补充消息", want: true},
+		{name: "consumed native item", kind: "event_msg", role: "UserMessage", turn: "turn", text: "补充消息", want: true},
+		{name: "unconsumed queued input"},
+		{name: "different input", kind: "response_item", role: "user", turn: "turn", text: "其他消息"},
+		{name: "assistant echo", kind: "response_item", role: "assistant", turn: "turn", text: "补充消息"},
+		{name: "foreign turn", kind: "response_item", role: "user", turn: "other", text: "补充消息"},
+		{name: "repeated old input", kind: "response_item", role: "user", turn: "turn", text: "补充消息", beforeSubmission: true},
+		{name: "input after completion", kind: "response_item", role: "user", turn: "turn", text: "补充消息", afterCompletion: true},
+		{name: "new task supersedes steering", kind: "event_msg", role: "UserMessage", turn: "turn", text: "补充消息", newTurn: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			dir := filepath.Join(home, "sessions", "2026", "10", "08")
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			f, err := os.Create(filepath.Join(dir, "rollout-test-"+thread+".jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			enc := json.NewEncoder(f)
+			write := func(at time.Time, kind string, payload any) {
+				t.Helper()
+				if err := enc.Encode(map[string]any{"timestamp": at, "type": kind, "payload": payload}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write(submitted.Add(-time.Minute), "session_meta", map[string]any{"id": thread, "source": "cli"})
+			write(submitted.Add(-time.Minute), "event_msg", map[string]any{"type": "task_started", "turn_id": "turn"})
+			if tc.afterCompletion {
+				write(submitted.Add(-time.Second), "event_msg", map[string]any{"type": "task_complete", "turn_id": "turn"})
+			}
+			at := submitted.Add(time.Second)
+			if tc.beforeSubmission {
+				at = submitted.Add(-time.Second)
+			}
+			content := []map[string]string{{"type": "text", "text": tc.text}}
+			if tc.kind == "response_item" {
+				write(at, tc.kind, map[string]any{"type": "message", "role": tc.role, "content": content, "internal_chat_message_metadata_passthrough": map[string]string{"turn_id": tc.turn}})
+			} else if tc.kind == "event_msg" {
+				write(at, tc.kind, map[string]any{"type": "item_completed", "turn_id": tc.turn, "item": map[string]any{"type": tc.role, "content": content}})
+			}
+			write(submitted.Add(2*time.Second), "event_msg", map[string]any{"type": "task_complete", "turn_id": "turn"})
+			if tc.newTurn {
+				write(submitted.Add(3*time.Second), "event_msg", map[string]any{"type": "task_started", "turn_id": "next"})
+			}
+			err = validateCodexCompletion(Session{LastAgentHome: home}, thread, "turn", submitted, "补充消息")
+			if (err == nil) != tc.want {
+				t.Fatalf("accepted=%v want=%v err=%v", err == nil, tc.want, err)
+			}
+		})
+	}
+}
