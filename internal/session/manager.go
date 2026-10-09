@@ -1290,6 +1290,7 @@ func (m *Manager) persist(ctx context.Context, sess Session) error {
 
 type RuntimeSession struct {
 	mu                                sync.Mutex
+	structuredInputMu                 sync.Mutex
 	notificationPatchMu               sync.Mutex
 	terminalCloseOnce                 sync.Once
 	sessionEndedOnce                  sync.Once

@@ -3,8 +3,11 @@ package session
 import (
 	"errors"
 	"io"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestStructuredCodexPasteBoundaries(t *testing.T) {
@@ -57,6 +60,76 @@ func TestStructuredCodexPasteBoundaries(t *testing.T) {
 				t.Fatal("paste framing polluted input anchor")
 			}
 		})
+	}
+}
+
+func TestStructuredSubmissionsDoNotInterleave(t *testing.T) {
+	oldDelay := structuredInputEnterDelay
+	structuredInputEnterDelay = 0
+	defer func() { structuredInputEnterDelay = oldDelay }()
+	term := &recordingTerminal{readCh: make(chan []byte)}
+	rt := &RuntimeSession{manager: NewManager(nil, nil), terminal: term,
+		session: Session{ID: "serial", Live: true, LastMode: SessionModeAgent, LastAgentStartCommand: CodexAgentCommand}}
+	defer rt.Close()
+	firstWritten, releaseFirst, secondWritten := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseFirst) }) }
+	defer release()
+	var enterInputs, enterMessages []string
+	term.onWrite = func(data string) {
+		switch data {
+		case "\x1b[200~first\x1b[201~":
+			close(firstWritten)
+			<-releaseFirst
+		case "\x1b[200~second\x1b[201~":
+			close(secondWritten)
+		case "\r":
+			rt.mu.Lock()
+			enterInputs = append(enterInputs, rt.lastInputText)
+			enterMessages = append(enterMessages, rt.notificationInputMessageID)
+			rt.mu.Unlock()
+		}
+	}
+	firstDone, secondDone := make(chan error, 1), make(chan error, 1)
+	go func() { firstDone <- SubmitStructuredInputWithMention(rt, "first", "", "message-1") }()
+	select {
+	case <-firstWritten:
+	case <-time.After(time.Second):
+		t.Fatal("first submission did not reach terminal")
+	}
+	go func() { secondDone <- SubmitQueuedStructuredInputWithMention(rt, "second", "", "message-2") }()
+	select {
+	case <-secondWritten:
+		t.Fatal("second paste interleaved before first Enter")
+	case <-time.After(100 * time.Millisecond):
+	}
+	// A blocked session must not block submissions to another session.
+	otherTerm := &recordingTerminal{readCh: make(chan []byte)}
+	other := &RuntimeSession{terminal: otherTerm}
+	otherDone := make(chan error, 1)
+	go func() { otherDone <- SubmitSilentStructuredInput(other, "independent") }()
+	select {
+	case err := <-otherDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("another session was blocked")
+	}
+	release()
+	for _, done := range []chan error{firstDone, secondDone} {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("submission did not finish")
+		}
+	}
+	want := []string{"\x1b[200~first\x1b[201~", "\r", "\x1b[200~second\x1b[201~", "\r"}
+	if !reflect.DeepEqual(term.writeParts(), want) || !reflect.DeepEqual(enterInputs, []string{"first", "second"}) || !reflect.DeepEqual(enterMessages, []string{"message-1", "message-2"}) {
+		t.Fatalf("interleaved submission: writes=%q inputs=%q messages=%q", term.writeParts(), enterInputs, enterMessages)
 	}
 }
 

@@ -3088,6 +3088,9 @@ func submitStructuredInputWithMode(rt *RuntimeSession, text string, mentionOpenI
 	if rt == nil {
 		return fmt.Errorf("runtime not found")
 	}
+	// Keep paste, baseline/round tracking and Enter together for this session.
+	rt.structuredInputMu.Lock()
+	defer rt.structuredInputMu.Unlock()
 	text = strings.TrimRight(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n"), "\n")
 	sess := rt.Snapshot()
 	sessionID := sess.ID
