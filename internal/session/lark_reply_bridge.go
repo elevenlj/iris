@@ -1597,13 +1597,16 @@ func (b *LarkReplyBridge) rebindContactConversation(ctx context.Context, binding
 	return binding, rt, nil
 }
 
-func (b *LarkReplyBridge) createContactConversation(ctx context.Context, senderOpenID, _ string) (LarkContactBinding, *RuntimeSession, error) {
+func (b *LarkReplyBridge) createContactConversation(ctx context.Context, senderOpenID, message string) (LarkContactBinding, *RuntimeSession, error) {
 	b.mu.Lock()
 	developerOpenID := b.developerOpenID
 	b.mu.Unlock()
 	displayName := b.larkUserDisplayNameOrOpenID(ctx, senderOpenID)
 	developerName := b.larkUserDisplayNameOrOpenID(ctx, developerOpenID)
 	conversationName := larkContactConversationName(displayName, developerName)
+	if displayName == fallbackLarkContactName(senderOpenID) && strings.TrimSpace(message) != "" {
+		conversationName = larkTopicTitle(message)
+	}
 	sess, err := b.createLarkSession(ctx, conversationName)
 	if err != nil {
 		return LarkContactBinding{}, nil, err

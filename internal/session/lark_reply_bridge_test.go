@@ -495,6 +495,67 @@ func TestLarkReplyBridgeDirectContactCreatesAndReusesAssistantGroup(t *testing.T
 	}
 }
 
+func TestLarkContactGroupNameFallsBackToMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name, message, displayName, want string
+		lookupError, noResolver          bool
+	}{
+		{name: "known user", message: "帮我看一下这个问题如何解决", displayName: "小林", want: "小林和Eleven的会话"},
+		{name: "short message", message: "帮我查个问题", want: "帮我查个问题"},
+		{name: "exactly ten", message: "一二三四五六七八九十", want: "一二三四五六七八九十"},
+		{name: "over ten", message: "一二三四五六七八九十十一", want: "一二三四五六七八九十..."},
+		{name: "unicode", message: "😀一二三四五六七八九十", want: "😀一二三四五六七八九..."},
+		{name: "whitespace", message: "  帮我\n查个问题  ", want: "帮我 查个问题"},
+		{name: "lookup failed", message: "帮我查个问题", lookupError: true, want: "帮我查个问题"},
+		{name: "blank name", message: "帮我查个问题", displayName: "  ", want: "帮我查个问题"},
+		{name: "no resolver", message: "帮我查个问题", noResolver: true, want: "帮我查个问题"},
+		{name: "attachment description", message: "发送了文件", want: "发送了文件"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			m := NewManager(newMemoryStore(), &recordingLauncher{}, WithIsolatedMessageRegistry())
+			b := NewLarkReplyBridge("app", "secret", m, t.TempDir())
+			b.SetDeveloperOpenID("ou-owner")
+			b.sendChatText = nil
+			b.fetchUserDisplayName = func(_ context.Context, id string) (string, error) {
+				if id == "ou-owner" {
+					return "Eleven", nil
+				}
+				if tc.lookupError {
+					return "", errors.New("lookup failed")
+				}
+				return tc.displayName, nil
+			}
+			if tc.noResolver {
+				b.fetchUserDisplayName = nil
+			}
+			created := false
+			b.createContactChat = func(_ context.Context, _, name string, members []string) (string, error) {
+				created = true
+				if name != tc.want || strings.Join(members, ",") != "ou-user,ou-owner" {
+					t.Fatalf("group name=%q members=%v", name, members)
+				}
+				return "oc-contact", nil
+			}
+			binding, rt, err := b.createContactConversation(ctx, "ou-user", tc.message)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rt.Close()
+			if !created || rt.Snapshot().Name != tc.want {
+				t.Fatalf("session name=%q want=%q", rt.Snapshot().Name, tc.want)
+			}
+			wantDisplayName := strings.TrimSpace(tc.displayName)
+			if wantDisplayName == "" || tc.lookupError || tc.noResolver {
+				wantDisplayName = "ou-user"
+			}
+			if binding.DisplayName != wantDisplayName {
+				t.Fatalf("message title replaced sender identity: %#v", binding)
+			}
+		})
+	}
+}
+
 func TestLarkContactConversationNameUsesFullOpenIDFallback(t *testing.T) {
 	if got := larkContactConversationName("小林", "Eleven"); got != "小林和Eleven的会话" {
 		t.Fatalf("contact conversation name = %q", got)
