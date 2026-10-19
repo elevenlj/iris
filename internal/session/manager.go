@@ -4335,7 +4335,7 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSes
 			return s, false, nil
 		}
 		pinned := codexResumeThreadID(rt.session.LastAgentResumeCommand)
-		if agentSessionID != "" && pinned != "" && agentSessionID != pinned {
+		if agentSessionID != "" && pinned != "" && agentSessionID != pinned && (agentKind != "codex" || turnID == "") {
 			s := rt.session
 			rt.mu.Unlock()
 			log.Printf("agent completion ignored session=%s reason=foreign_thread", s.ID)

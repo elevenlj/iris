@@ -848,8 +848,9 @@ func pinCodexResumeCommand(command, threadID string) (string, bool) {
 		return command, false
 	}
 	replaced := false
+	previousID := codexResumeThreadID(command)
 	for i := envEnd + 1; i < len(argv); i++ {
-		if argv[i] == "--last" {
+		if argv[i] == "--last" || (previousID != "" && previousID != threadID && argv[i] == previousID) {
 			argv[i] = threadID
 			replaced = true
 			break

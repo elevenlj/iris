@@ -395,6 +395,23 @@ func TestPinCodexResumeCommandSupportsAidenWrapper(t *testing.T) {
 	}
 }
 
+func TestPinCodexResumeCommandRebindsExactIDPreservingFlags(t *testing.T) {
+	const old = "01a15247-486f-7b93-a7c4-a0fde640c88c"
+	const next = "01a15249-e70f-7820-a1a9-38b6f7102655"
+	for _, prefix := range []string{"codex", "CODEX_HOME='/tmp/space dir' aiden x codex", "traecli"} {
+		command := prefix + " resume " + old + " --no-alt-screen -m 'model name'"
+		got, ok := pinCodexResumeCommand(command, next)
+		want := prefix + " resume " + next + " --no-alt-screen -m 'model name'"
+		if !ok || strings.Join(shellFields(got), "\x00") != strings.Join(shellFields(want), "\x00") {
+			t.Fatalf("incorrect rebind: %q", got)
+		}
+		unchanged, changed := pinCodexResumeCommand(got, next)
+		if changed || unchanged != got {
+			t.Fatalf("same ID changed the command: %q", unchanged)
+		}
+	}
+}
+
 func TestRecoveryDoesNotDuplicateCodexResume(t *testing.T) {
 	manager := NewManager(nil, nil)
 	rt := &RuntimeSession{

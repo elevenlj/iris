@@ -81,6 +81,136 @@ func TestCodexRecapCannotCompleteOrOverwriteRound(t *testing.T) {
 	}
 }
 
+func TestCodexForkCompletionRebindsOnlyVerifiedDescendants(t *testing.T) {
+	const root = "01a15247-486f-7b93-a7c4-a0fde640c88c"
+	const fork = "01a15249-e70f-7820-a1a9-38b6f7102655"
+	const next = "01a13540-53a1-7de0-8f03-1137b0c72f60"
+	for _, tc := range []struct {
+		name                                                           string
+		parent                                                         string
+		source                                                         string
+		input                                                          string
+		oldInput, copiedInput, missingTurn, wrongToken, chained, cycle bool
+		missingCreation, subagentAncestor                              bool
+		want                                                           bool
+	}{
+		{name: "direct fork", parent: root, source: "cli", input: "好了吗", want: true},
+		{name: "multiple forks", parent: next, source: "cli", input: "好了吗", chained: true, want: true},
+		{name: "subagent ancestor", parent: next, source: "cli", input: "好了吗", chained: true, subagentAncestor: true},
+		{name: "missing creation time", parent: root, source: "cli", input: "好了吗", missingCreation: true},
+		{name: "unrelated thread", source: "cli", input: "好了吗"},
+		{name: "unrelated branch", parent: next, source: "cli", input: "好了吗"},
+		{name: "subagent", parent: root, source: "subagent", input: "好了吗"},
+		{name: "different input", parent: root, source: "cli", input: "另一个问题"},
+		{name: "queued input not consumed", parent: root, source: "cli"},
+		{name: "same text from old submission", parent: root, source: "cli", input: "好了吗", oldInput: true},
+		{name: "copied parent history", parent: root, source: "cli", input: "好了吗", copiedInput: true},
+		{name: "legacy hook lacks turn", parent: root, source: "cli", input: "好了吗", missingTurn: true},
+		{name: "wrong token", parent: root, source: "cli", input: "好了吗", wrongToken: true},
+		{name: "cyclic lineage", parent: next, source: "cli", input: "好了吗", cycle: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			home := defaultCodexHome()
+			dir := filepath.Join(home, "sessions", "2026", "10", "19")
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			st := newMemoryStore()
+			m := NewManager(st, nil)
+			rt := &RuntimeSession{manager: m, session: Session{ID: "fork-test", Live: true, Status: StatusRunning, RecoveryKey: "token", LastMode: SessionModeAgent, LastAgentKind: "codex", LastAgentStartCommand: "codex --no-alt-screen", LastAgentResumeCommand: "codex resume " + root + " --no-alt-screen", LastAgentHome: home}}
+			m.sessions[rt.session.ID] = rt
+			defer rt.Close()
+			if err := st.CreateSession(context.Background(), rt.session); err != nil {
+				t.Fatal(err)
+			}
+			rt.MarkStructuredInputActivity("好了吗")
+			submitted := rt.hookRoundSubmittedAt
+			write := func(id, parent, source, input string, at, created time.Time) {
+				t.Helper()
+				f, err := os.Create(filepath.Join(dir, "rollout-test-"+id+".jsonl"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.Close()
+				enc := json.NewEncoder(f)
+				for _, event := range []any{
+					map[string]any{"type": "session_meta", "payload": map[string]any{"id": id, "source": source, "forked_from_id": parent, "timestamp": created}},
+					map[string]any{"type": "event_msg", "timestamp": at, "payload": map[string]string{"type": "task_started", "turn_id": "turn"}},
+					map[string]any{"type": "event_msg", "timestamp": at.Add(time.Millisecond), "payload": map[string]any{"type": "item_completed", "turn_id": "turn", "item": map[string]any{"type": "UserMessage", "content": []map[string]string{{"type": "text", "text": input}}}}},
+					map[string]any{"type": "event_msg", "timestamp": at.Add(time.Second), "payload": map[string]string{"type": "task_complete", "turn_id": "turn"}},
+				} {
+					if err := enc.Encode(event); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			at, created := submitted.Add(time.Second), submitted.Add(-time.Minute)
+			if tc.oldInput {
+				at = submitted.Add(-time.Second)
+			}
+			if tc.copiedInput {
+				created = at.Add(time.Second)
+			}
+			if tc.missingCreation {
+				created = time.Time{}
+			}
+			if tc.chained {
+				source := "cli"
+				if tc.subagentAncestor {
+					source = "subagent"
+				}
+				write(next, root, source, "", at, created)
+			}
+			if tc.cycle {
+				write(next, fork, "cli", "", at, created)
+			}
+			write(fork, tc.parent, tc.source, tc.input, at, created)
+			turn, token := "turn", "token"
+			if tc.missingTurn {
+				turn = ""
+			}
+			if tc.wrongToken {
+				token = "wrong"
+			}
+			_, accepted, err := m.CompleteAgentTurnForTurn(context.Background(), rt.session.ID, token, fork, turn, "好了，可以开始了。")
+			if accepted != tc.want || (!tc.wrongToken && err != nil) {
+				t.Fatalf("accepted=%v want=%v err=%v", accepted, tc.want, err)
+			}
+			wantID, wantStatus := root, StatusRunning
+			if tc.want {
+				wantID, wantStatus = fork, StatusWaiting
+			}
+			stored, _, err := st.GetSession(context.Background(), rt.session.ID)
+			if err != nil || codexResumeThreadID(stored.LastAgentResumeCommand) != wantID || rt.Snapshot().Status != wantStatus || strings.Contains(stored.LastAgentResumeCommand, "--last") {
+				t.Fatalf("incorrect state: %#v err=%v", stored, err)
+			}
+			if !tc.want && rt.hookLastAssistantMessage != "" {
+				t.Fatal("rejected event replaced the reply")
+			}
+			if tc.want {
+				// Once rebound, old parent/sibling events must not roll recovery back.
+				rt.MarkStructuredInputActivity("好了吗")
+				write(root, "", "cli", "好了吗", time.Now().Add(time.Second), created)
+				_, accepted, err = m.CompleteAgentTurnForTurn(context.Background(), rt.session.ID, "token", root, "turn", "old parent")
+				if err != nil || accepted || rt.Snapshot().Status != StatusRunning {
+					t.Fatal("old parent rolled binding back")
+				}
+				write(next, root, "cli", "好了吗", time.Now().Add(time.Second), created)
+				_, accepted, err = m.CompleteAgentTurnForTurn(context.Background(), rt.session.ID, "token", next, "turn", "sibling fork")
+				if err != nil || accepted || rt.Snapshot().Status != StatusRunning {
+					t.Fatal("sibling fork replaced the active branch")
+				}
+				write(next, fork, "cli", "好了吗", time.Now().Add(time.Second), created)
+				_, accepted, err = m.CompleteAgentTurnForTurn(context.Background(), rt.session.ID, "token", next, "turn", "next fork")
+				if err != nil || !accepted || codexResumeThreadID(rt.Snapshot().LastAgentResumeCommand) != next {
+					t.Fatalf("subsequent fork failed: accepted=%v err=%v", accepted, err)
+				}
+			}
+		})
+	}
+}
+
 func TestCodexCompletionAcceptsConsumedSteeringOnly(t *testing.T) {
 	const thread = "01a119aa-632b-79c1-8524-2245faf55ccc"
 	submitted := time.Now().UTC()
