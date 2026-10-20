@@ -900,7 +900,7 @@ func TestLarkReplyBridgeGroupInputMentionsSender(t *testing.T) {
 				t.Fatal("runtime not found")
 			}
 			if got := rt.NotificationMentionOpenID(); got != wantMention {
-				t.Fatalf("pipeline input should keep sender mention, got %q", got)
+				t.Fatalf("input should keep sender mention, got %q", got)
 			}
 			manager.mu.RLock()
 			current := manager.larkAgentContexts[sess.ID]
@@ -908,8 +908,8 @@ func TestLarkReplyBridgeGroupInputMentionsSender(t *testing.T) {
 			if current.LatestSenderID != "ou-bob" || current.LatestMessageID != "m-group-mention" {
 				t.Fatalf("sender identity or source lost: %#v", current)
 			}
-			if !strings.Contains(launcher.terminals[0].writes(), "pwd") || !strings.Contains(launcher.terminals[0].writes(), "whoami") {
-				t.Fatal("input or pipeline was not delivered")
+			if !lastSubmittedWrite(launcher.terminals[0].writeParts(), "pwd | whoami") {
+				t.Fatal("pipe-containing input was not delivered intact")
 			}
 			for _, phase := range []string{"running", "complete"} {
 				note := got
@@ -4337,69 +4337,44 @@ func TestLarkReplyBridgeStartPresetQuotesVariables(t *testing.T) {
 	}
 }
 
-func TestLarkReplyBridgePipelineRunsNextCommandAfterNotification(t *testing.T) {
-	resetLarkRegistryForTest()
-	launcher := &recordingLauncher{}
-	manager := NewManager(nil, launcher)
-	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
-
-	if err := bridge.HandleP2MessageReceive(context.Background(), p2Message("m-start-pipe", "", "", "text", `{"text":"开始 Pipe会话"}`)); err != nil {
-		t.Fatal(err)
-	}
-	if err := bridge.HandleP2MessageReceive(context.Background(), p2Message("m-pipeline", "m-start-pipe", "", "text", `{"text":"pwd | cd /tmp | pwd"}`)); err != nil {
-		t.Fatal(err)
-	}
-	parts := launcher.terminals[0].writeParts()
-	if !lastSubmittedWrite(parts, "pwd") {
-		t.Fatalf("first pipeline command should be submitted immediately, got %#v", parts)
-	}
-	if strings.Contains(launcher.terminals[0].writes(), "cd /tmp") {
-		t.Fatalf("later pipeline commands should wait for notification, writes: %q", launcher.terminals[0].writes())
-	}
-
-	bridge.OnNotificationSent("sess-1")
-	parts = launcher.terminals[0].writeParts()
-	if !lastSubmittedWrite(parts, "cd /tmp") {
-		t.Fatalf("second pipeline command should run after notification, got %#v", parts)
-	}
-	if strings.Contains(launcher.terminals[0].writes(), "pwdpwd") {
-		t.Fatalf("pipeline commands should be submitted as separate turns, writes: %q", launcher.terminals[0].writes())
-	}
-
-	bridge.OnNotificationSent("sess-1")
-	parts = launcher.terminals[0].writeParts()
-	if !lastSubmittedWrite(parts, "pwd") {
-		t.Fatalf("third pipeline command should run after next notification, got %#v", parts)
-	}
-}
-
-func TestSplitLarkPipelineSupportsEscapedPipe(t *testing.T) {
-	got := splitLarkPipeline(`echo a \| b | pwd`)
-	want := []string{"echo a | b", "pwd"}
-	if len(got) != len(want) {
-		t.Fatalf("split length = %d, want %d: %#v", len(got), len(want), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("part %d = %q, want %q", i, got[i], want[i])
-		}
+func TestLarkReplyBridgePipesRemainInSingleInput(t *testing.T) {
+	oldDelay := structuredInputEnterDelay
+	structuredInputEnterDelay = 0
+	defer func() { structuredInputEnterDelay = oldDelay }()
+	for _, input := range []string{
+		"pwd | cd /tmp | pwd", `echo a \| b | pwd`, "echo a || echo b",
+		"一｜二︱三￨四", "|", "| 项目 | 状态 |\n| --- | --- |\n| A | 完成 |",
+	} {
+		t.Run(input, func(t *testing.T) {
+			launcher := &recordingLauncher{}
+			manager := NewManager(nil, launcher, WithIsolatedMessageRegistry())
+			bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+			sess, err := manager.CreateSession(context.Background(), "Pipe会话")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer manager.DeleteSession(context.Background(), sess.ID)
+			if _, _, err := manager.BindLarkChat(context.Background(), sess.ID, "oc-pipe"); err != nil {
+				t.Fatal(err)
+			}
+			before := len(launcher.terminals[0].writeParts())
+			_, err = bridge.RouteIncomingWithContext(context.Background(), larkRouteContext{MessageID: "m-pipe", ChatID: "oc-pipe", ChatType: "group", SenderOpenID: "ou-user"}, larkIncomingMessage{Text: input})
+			if err != nil {
+				t.Fatal(err)
+			}
+			parts := launcher.terminals[0].writeParts()
+			if len(parts) != before+2 || parts[before] != input || parts[before+1] != "\r" {
+				t.Fatalf("input was changed or split: %#v", parts)
+			}
+			bridge.OnNotificationSent(sess.ID)
+			if len(launcher.terminals[0].writeParts()) != len(parts) {
+				t.Fatal("notification submitted an extra request")
+			}
+		})
 	}
 }
 
-func TestSplitLarkPipelineSupportsFullWidthPipe(t *testing.T) {
-	got := splitLarkPipeline("开始 测试 ｜ pwd")
-	want := []string{"开始 测试", "pwd"}
-	if len(got) != len(want) {
-		t.Fatalf("split length = %d, want %d: %#v", len(got), len(want), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("part %d = %q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
-func TestLarkReplyBridgeStartPipelineWithFullWidthPipe(t *testing.T) {
+func TestLarkReplyBridgeStartNamePreservesFullWidthPipe(t *testing.T) {
 	resetLarkRegistryForTest()
 	launcher := &recordingLauncher{}
 	manager := NewManager(nil, launcher)
@@ -4412,17 +4387,14 @@ func TestLarkReplyBridgeStartPipelineWithFullWidthPipe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sessions) != 1 || sessions[0].Name != "测试" {
-		t.Fatalf("start pipeline should use only first segment as session name, got %#v", sessions)
+	if len(sessions) != 1 || sessions[0].Name != "测试 ｜ pwd" {
+		t.Fatalf("session name should preserve the entire input, got %#v", sessions)
 	}
-	if got := launcher.terminals[0].writes(); strings.Contains(got, "pwd") {
-		t.Fatalf("queued command should wait for first notification, writes: %q", got)
-	}
-
+	before := len(launcher.terminals[0].writeParts())
 	bridge.OnNotificationSent("sess-1")
 	parts := launcher.terminals[0].writeParts()
-	if !lastSubmittedWrite(parts, "pwd") {
-		t.Fatalf("queued start pipeline command should run after notification, got %#v", parts)
+	if len(parts) != before {
+		t.Fatalf("pipe in session name queued an extra request: %#v", parts)
 	}
 }
 

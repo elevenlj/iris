@@ -1177,10 +1177,6 @@ func routeContextMentionsOpenID(routeCtx larkRouteContext, openID string) bool {
 
 func (b *LarkReplyBridge) mentionModeSessionID(ctx context.Context, routeCtx larkRouteContext, incoming larkIncomingMessage) string {
 	text := cleanLarkText(incoming.Text)
-	parts := splitLarkPipeline(text)
-	if len(parts) > 0 {
-		text = parts[0]
-	}
 	return b.resolveSessionID(ctx, text, routeCtx.ParentID, routeCtx.RootID, routeCtx.ChatID, routeCtx.ChatType, routeCtx.ThreadID)
 }
 
@@ -1312,7 +1308,10 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 			return "", b.replyLarkText(ctx, messageID, "这个话题尚未绑定 Iris 会话，请回到群里使用 /t 问题 创建话题。")
 		}
 	}
-	parts := splitLarkPipeline(text)
+	var parts []string
+	if text != "" {
+		parts = []string{text}
+	}
 	inputParts := append([]string(nil), parts...)
 	if incoming.Referenced != nil {
 		if len(parts) == 0 {
@@ -1346,7 +1345,6 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 			return sessionID, nil
 		}
 		b.manager.EnsureBrowser(sessionID)
-		b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.notificationMentionOpenID(), routeCtx)
 		if err := SubmitStructuredInputWithMention(rt, inputParts[0], routeCtx.notificationMentionOpenID(), routeCtx.MessageID); err != nil {
 			return sessionID, err
 		}
@@ -1387,7 +1385,6 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 					log.Printf("lark start presets failed session=%s codes=%q: %v", s.ID, presetCodes, presetErr)
 				}
 			}
-			b.enqueuePipeline(s.ID, parts[1:], routeCtx.notificationMentionOpenID(), routeCtx)
 			if rt, found := b.manager.GetRuntime(s.ID); found && !rt.discardingStartupNotifications() {
 				rt.NotifyInputRunning()
 			}
@@ -1468,7 +1465,6 @@ func (b *LarkReplyBridge) RouteIncomingWithContext(ctx context.Context, routeCtx
 		b.manager.messageRegistry().remember(sessionID, messageID, parentID, rootID)
 		return sessionID, nil
 	}
-	b.enqueuePipeline(sessionID, inputParts[1:], routeCtx.notificationMentionOpenID(), routeCtx)
 	if err := SubmitStructuredInputWithMention(rt, inputParts[0], routeCtx.notificationMentionOpenID(), routeCtx.MessageID); err != nil {
 		return sessionID, err
 	}
@@ -2997,47 +2993,6 @@ func cleanLarkMentionKeys(text string, mentions []*larkim.MentionEvent) string {
 		}
 	}
 	return strings.TrimSpace(text)
-}
-
-func splitLarkPipeline(text string) []string {
-	var parts []string
-	var b strings.Builder
-	escaped := false
-	for _, r := range text {
-		switch {
-		case escaped:
-			if r != '|' {
-				b.WriteRune('\\')
-			}
-			b.WriteRune(r)
-			escaped = false
-		case r == '\\':
-			escaped = true
-		case isLarkPipelineSeparator(r):
-			if part := strings.TrimSpace(b.String()); part != "" {
-				parts = append(parts, part)
-			}
-			b.Reset()
-		default:
-			b.WriteRune(r)
-		}
-	}
-	if escaped {
-		b.WriteRune('\\')
-	}
-	if part := strings.TrimSpace(b.String()); part != "" {
-		parts = append(parts, part)
-	}
-	return parts
-}
-
-func isLarkPipelineSeparator(r rune) bool {
-	switch r {
-	case '|', '｜', '︱', '￨':
-		return true
-	default:
-		return false
-	}
 }
 
 func PrepareStructuredInput(text string) string {
