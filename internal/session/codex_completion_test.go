@@ -81,6 +81,133 @@ func TestCodexRecapCannotCompleteOrOverwriteRound(t *testing.T) {
 	}
 }
 
+func TestQueuedInputPreservesCodexRoundAndContinuesAfterCompletion(t *testing.T) {
+	const thread = "01a13f83-fbc7-7921-b4aa-d77e8e667ae9"
+	t.Setenv("HOME", t.TempDir())
+	oldDelay := structuredInputEnterDelay
+	structuredInputEnterDelay = 0
+	defer func() { structuredInputEnterDelay = oldDelay }()
+	n := &recordingNotifier{createMessageIDs: []string{"card-1", "card-2", "card-3"}}
+	m := NewManager(nil, &recordingLauncher{}, WithNotifier(n), WithNotificationUpdateCoalesce(0), WithIsolatedMessageRegistry())
+	b := NewLarkReplyBridge("app", "secret", m, t.TempDir())
+	dispatched := make(chan struct{}, 3)
+	m.SetNotificationSentHook(func(id string) {
+		b.OnNotificationSent(id)
+		dispatched <- struct{}{}
+	})
+	sess, err := m.CreateSession(context.Background(), "queue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := m.GetRuntime(sess.ID)
+	defer rt.Close()
+	rt.mu.Lock()
+	rt.session.LastMode, rt.session.LastAgentKind = SessionModeAgent, "codex"
+	rt.session.LastAgentStartCommand, rt.session.LastAgentResumeCommand = "codex", "codex resume "+thread
+	rt.session.LastAgentHome, rt.session.NotifyOnWaiting = defaultCodexHome(), true
+	rt.inputQueueUntil = time.Now().Add(time.Minute)
+	rt.mu.Unlock()
+	term := rt.terminal.(*recordingTerminal)
+	submitted := make(chan string, 3)
+	term.onWrite = func(data string) {
+		if data == "\r" {
+			rt.mu.Lock()
+			input := rt.lastInputText
+			rt.mu.Unlock()
+			submitted <- input
+		}
+	}
+	rt.SetNotificationAssistantName("first assistant")
+	if err := SubmitStructuredInputWithMention(rt, "first", "ou-first", "input-first"); err != nil {
+		t.Fatal(err)
+	}
+	<-submitted
+	rt.NotifyInputRunning()
+	rt.mu.Lock()
+	at, generation, version := rt.hookRoundSubmittedAt, rt.snapshotRoundGeneration, rt.notifyVersion
+	card := rt.lastNotifiedMessageID
+	rt.mu.Unlock()
+	started := time.Now().UTC()
+	for _, text := range []string{"second", "third"} {
+		if !b.enqueueInputIfRuntimeBusy(rt, sess.ID, []string{text}, "ou-"+text, larkRouteContext{MessageID: "input-" + text, AssistantName: text + " assistant"}) {
+			t.Fatal("input was not queued")
+		}
+	}
+	rt.mu.Lock()
+	unchanged := rt.lastInputText == "first" && rt.hookRoundSubmittedAt.Equal(at) && rt.snapshotRoundGeneration == generation && rt.notifyVersion == version && rt.notificationInputMessageID == "input-first" && rt.notificationMentionOpenID == "ou-first" && rt.notificationAssistantName == "first assistant" && rt.lastNotifiedMessageID == card
+	rt.mu.Unlock()
+	if !unchanged || len(n.notes()) != 1 {
+		t.Fatal("queued input overwrote the active round or its notification")
+	}
+	dir := filepath.Join(defaultCodexHome(), "sessions", "2026", "10", "21")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(dir, "rollout-queue-"+thread+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	if err := enc.Encode(map[string]any{"type": "session_meta", "payload": map[string]string{"id": thread, "source": "cli"}}); err != nil {
+		t.Fatal(err)
+	}
+	for i, input := range []string{"first", "second", "third"} {
+		turn := input + "-turn"
+		for _, event := range []any{
+			map[string]any{"type": "event_msg", "timestamp": started, "payload": map[string]string{"type": "task_started", "turn_id": turn}},
+			map[string]any{"type": "event_msg", "timestamp": started.Add(time.Millisecond), "payload": map[string]any{"type": "item_completed", "turn_id": turn, "item": map[string]any{"type": "UserMessage", "content": []map[string]string{{"type": "text", "text": input}}}}},
+			map[string]any{"type": "event_msg", "timestamp": started.Add(2 * time.Millisecond), "payload": map[string]string{"type": "task_complete", "turn_id": turn}},
+		} {
+			if err := enc.Encode(event); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, accepted, err := m.CompleteAgentTurnForTurn(context.Background(), sess.ID, rt.Snapshot().RecoveryKey, thread, turn, input+" reply")
+		if err != nil || !accepted {
+			t.Fatalf("completion rejected for %s: %v", input, err)
+		}
+		select {
+		case <-dispatched:
+		case <-time.After(3 * time.Second):
+			t.Fatal("completion did not automatically advance the input queue")
+		}
+		if i < 2 {
+			select {
+			case next := <-submitted:
+				want := []string{"second", "third"}[i]
+				if next != want {
+					t.Fatalf("submitted=%q want=%q", next, want)
+				}
+				rt.mu.Lock()
+				correctOrigin := rt.notificationInputMessageID == "input-"+next && rt.notificationMentionOpenID == "ou-"+next && rt.notificationAssistantName == next+" assistant"
+				rt.mu.Unlock()
+				if !correctOrigin {
+					t.Fatal("queued input lost its origin")
+				}
+				started = time.Now().UTC()
+			case <-time.After(3 * time.Second):
+				t.Fatal("completion did not automatically release the next queued input")
+			}
+		}
+	}
+	if rt.Snapshot().Status != StatusWaiting {
+		t.Fatal("completed queue remained running")
+	}
+	firstReplyFound := false
+	for _, note := range n.notes() {
+		if strings.Contains(note.Content, "first reply") {
+			firstReplyFound = true
+			if note.MentionOpenID != "ou-first" || note.InputMessageID != "input-first" {
+				t.Fatal("first completion was attributed to queued input")
+			}
+		}
+	}
+	if !firstReplyFound {
+		t.Fatal("active task result was not pushed")
+	}
+}
+
 func TestCodexForkCompletionRebindsOnlyVerifiedDescendants(t *testing.T) {
 	const root = "01a15247-486f-7b93-a7c4-a0fde640c88c"
 	const fork = "01a15249-e70f-7820-a1a9-38b6f7102655"

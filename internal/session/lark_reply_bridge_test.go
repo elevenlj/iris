@@ -2201,22 +2201,9 @@ func TestLarkReplyBridgeQueuesFollowupWhileRuntimeRunningDuringStartupWindow(t *
 	if err := bridge.HandleP2MessageReceive(context.Background(), p2Message("m-follow-queue", "bot-card", "", "text", `{"text":"queued question"}`)); err != nil {
 		t.Fatal(err)
 	}
-	notes = waitForNotifierNotes(t, notifier, 3)
-	if len(notes) < 3 {
-		t.Fatalf("queued followup should disable old card and create new running card, got %#v", notes)
-	}
-	disabledOldCard := false
-	newRunningCard := false
-	for _, note := range notes {
-		if note.MessageID == "old-card" && note.Disabled && !note.Running {
-			disabledOldCard = true
-		}
-		if note.MessageID == "" && note.Running && note.Content == RunningNotificationPlaceholder {
-			newRunningCard = true
-		}
-	}
-	if !disabledOldCard || !newRunningCard {
-		t.Fatalf("queued followup should disable previous running card and create latest running card, got %#v", notes)
+	notes = notifier.notes()
+	if len(notes) != 1 {
+		t.Fatalf("queued input must not retire the active card or create a new one, got %#v", notes)
 	}
 
 	parts := launcher.terminals[0].writeParts()

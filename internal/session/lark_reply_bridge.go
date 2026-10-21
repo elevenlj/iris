@@ -1714,15 +1714,14 @@ func (b *LarkReplyBridge) enqueueInputIfRuntimeBusy(rt *RuntimeSession, sessionI
 		b.enqueuePipeline(sessionID, parts, mentionOpenID, origin...)
 		return true
 	}
-	rt.SetNotificationMentionOpenID(mentionOpenID)
-	rt.SetNotificationAssistantName(pipelineOrigin(origin).AssistantName)
 	if starting {
+		rt.SetNotificationMentionOpenID(mentionOpenID)
+		rt.SetNotificationAssistantName(pipelineOrigin(origin).AssistantName)
 		rt.beginStartupNotification(mentionOpenID)
 		b.enqueuePipelineWithFirstMode(sessionID, parts, mentionOpenID, true, origin...)
 	} else {
-		rt.MarkStructuredInputActivity(parts[0])
+		// Queued input is not a submitted turn; keep the active round until dispatch.
 		b.enqueuePipeline(sessionID, parts, mentionOpenID, origin...)
-		rt.NotifyInputRunning()
 	}
 	log.Printf("lark reply bridge queued input session=%s parts=%d reason=runtime_running", sessionID, len(parts))
 	return true
