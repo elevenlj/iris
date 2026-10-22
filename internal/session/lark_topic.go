@@ -106,7 +106,11 @@ func (b *LarkReplyBridge) createTopicSession(ctx context.Context, route larkRout
 		}
 	}
 	name := "[话题] " + groupName + " · " + larkTopicTitle(question)
-	content, _ := json.Marshal(map[string]string{"text": larkTopicTitle(question)})
+	text := question
+	if strings.TrimSpace(text) == "" {
+		text = "新话题"
+	}
+	content, _ := json.Marshal(map[string]string{"text": text})
 	// Keep retries stable and below Feishu's 50-character message UUID limit.
 	uuid := fmt.Sprintf("%x", sha256.Sum256([]byte("topic:"+b.appID+":"+route.MessageID)))[:32]
 	req := larkim.NewReplyMessageReqBuilder().MessageId(route.MessageID).Body(

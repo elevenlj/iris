@@ -14,8 +14,9 @@ import (
 )
 
 type topicHTTPClient struct {
-	mu       sync.Mutex
-	requests []string
+	mu         sync.Mutex
+	requests   []string
+	replyTexts []string
 }
 
 func (c *topicHTTPClient) Do(req *http.Request) (*http.Response, error) {
@@ -30,6 +31,13 @@ func (c *topicHTTPClient) Do(req *http.Request) (*http.Response, error) {
 		if body["reply_in_thread"] != true {
 			panic("topic reply escaped to group")
 		}
+		var content struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal([]byte(body["content"].(string)), &content); err != nil {
+			return nil, err
+		}
+		c.replyTexts = append(c.replyTexts, content.Text)
 		root := strings.TrimSuffix(strings.TrimPrefix(req.URL.Path, "/open-apis/im/v1/messages/"), "/reply")
 		data = `{"code":0,"data":{"message_id":"reply-` + root + `","root_id":"` + root + `","thread_id":"omt-` + root + `"}}`
 		if uuid, _ := body["uuid"].(string); uuid == "" || len(uuid) > 50 {
@@ -47,7 +55,8 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 	notifier := &recordingNotifier{messageIDs: []string{"startup-one", "startup-two", "running-one", "running-two"}}
 	m := NewManager(st, launcher, WithIsolatedMessageRegistry(), WithNotifier(notifier))
 	b := NewLarkReplyBridge("topic-app", "secret", m, t.TempDir())
-	b.apiClient = newLarkReplyAPIClient("topic-app", "secret", lark.WithHttpClient(&topicHTTPClient{}))
+	client := &topicHTTPClient{}
+	b.apiClient = newLarkReplyAPIClient("topic-app", "secret", lark.WithHttpClient(client))
 	b.fetchChatMetadata = func(context.Context, string) (LarkChatMetadata, error) {
 		return LarkChatMetadata{ChatName: "研发群"}, nil
 	}
@@ -109,6 +118,16 @@ func TestTopicCommandsCreateIsolatedInheritedSessions(t *testing.T) {
 		}
 		if i == 1 && !strings.Contains(queued.Text, "等待用户") {
 			t.Fatal("bare topic must await input")
+		}
+		wantText := question
+		if i == 1 {
+			wantText = "新话题"
+		}
+		client.mu.Lock()
+		gotText := client.replyTexts[i]
+		client.mu.Unlock()
+		if gotText != wantText {
+			t.Fatalf("topic message = %q, want full question %q", gotText, wantText)
 		}
 	}
 	if topics[0].ID == topics[1].ID || topics[0].RecoveryKey == topics[1].RecoveryKey {
