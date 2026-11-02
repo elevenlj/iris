@@ -712,6 +712,11 @@ func TestLarkReplyBridgeStartCreatesDedicatedChat(t *testing.T) {
 	launcher := &recordingLauncher{}
 	manager := NewManager(nil, launcher)
 	bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+	bridge.SetDeveloperOpenID("ou-user")
+	bridge.createContactChat = func(context.Context, string, string, []string) (string, error) {
+		t.Fatal("start command must use dedicated group creation")
+		return "", nil
+	}
 	bridge.createChat = func(_ context.Context, sessionID, name, ownerOpenID string) (string, error) {
 		if sessionID != "sess-1" || name != "手机会话" || ownerOpenID != "ou-user" {
 			t.Fatalf("unexpected create chat args: session=%q name=%q owner=%q", sessionID, name, ownerOpenID)
@@ -1248,7 +1253,7 @@ func TestLarkReplyBridgeDirectBotChatDoesNotRouteToLatestSession(t *testing.T) {
 }
 
 func TestLarkReplyBridgeDeveloperDirectChatStaysPrivate(t *testing.T) {
-	for _, first := range []string{"pwd", "开始 私聊任务"} {
+	for _, first := range []string{"pwd", "你好"} {
 		t.Run(first, func(t *testing.T) {
 			ctx := context.Background()
 			launcher := &recordingLauncher{}
@@ -1285,6 +1290,24 @@ func TestLarkReplyBridgeDeveloperDirectChatStaysPrivate(t *testing.T) {
 			defer manager.DeleteSession(ctx, sess.ID)
 			if got := launcher.terminals[0].writes(); !strings.Contains(got, PrepareStructuredInput("whoami")) {
 				t.Fatalf("follow-up not delivered: %q", got)
+			}
+			bridge.createChat = func(_ context.Context, _ string, name, owner string) (string, error) {
+				if name != "新任务" || owner != "ou-owner" {
+					t.Fatalf("unexpected group creation: name=%q owner=%q", name, owner)
+				}
+				return "oc-new-task", nil
+			}
+			bridge.sendChatText = func(context.Context, string, string) error { return nil }
+			if err := bridge.HandleP2MessageReceive(ctx, p2MessageWithChat("m-owner-start", "", "", "text", `{"text":"开始 新任务"}`, "p2p", "oc-owner-private", "ou-owner")); err != nil {
+				t.Fatal(err)
+			}
+			group, found, err := manager.FindSessionByLarkChatID(ctx, "oc-new-task")
+			if err != nil || !found || group.ID == sess.ID {
+				t.Fatalf("start must create a separate group session: found=%v err=%v", found, err)
+			}
+			defer manager.DeleteSession(ctx, group.ID)
+			if id, ok := manager.messageRegistry().lookupChat("oc-owner-private"); !ok || id != sess.ID {
+				t.Fatal("start command replaced the ordinary private chat binding")
 			}
 		})
 	}
