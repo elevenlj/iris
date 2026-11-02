@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1243,6 +1244,49 @@ func TestLarkReplyBridgeDirectBotChatDoesNotRouteToLatestSession(t *testing.T) {
 	}
 	if got, ok := defaultLarkMessageRegistry.lookupChat("oc-direct-bot"); !ok || got == "" || got == latest.ID {
 		t.Fatalf("direct bot chat should bind to its own session, got %q,%v latest=%s", got, ok, latest.ID)
+	}
+}
+
+func TestLarkReplyBridgeDeveloperDirectChatStaysPrivate(t *testing.T) {
+	for _, first := range []string{"pwd", "开始 私聊任务"} {
+		t.Run(first, func(t *testing.T) {
+			ctx := context.Background()
+			launcher := &recordingLauncher{}
+			st := newMemoryStore()
+			manager := NewManager(st, launcher, WithIsolatedMessageRegistry())
+			bridge := NewLarkReplyBridge("app", "secret", manager, t.TempDir())
+			bridge.SetDeveloperOpenID("ou-owner")
+			bridge.addReaction = func(context.Context, string, string) error { return nil }
+			bridge.createChat = func(context.Context, string, string, string) (string, error) {
+				t.Fatal("developer private chat must not create a group")
+				return "", nil
+			}
+			bridge.createContactChat = func(context.Context, string, string, []string) (string, error) {
+				t.Fatal("developer private chat must not create a contact group")
+				return "", nil
+			}
+			// An existing developer contact group must not capture private input.
+			if err := manager.UpsertLarkContactBinding(ctx, LarkContactBinding{SenderOpenID: "ou-owner", ChatID: "oc-old-group", SessionID: "old-session", Active: true}); err != nil {
+				t.Fatal(err)
+			}
+			for i, text := range []string{first, "whoami"} {
+				content, _ := json.Marshal(map[string]string{"text": text})
+				if err := bridge.HandleP2MessageReceive(ctx, p2MessageWithChat(fmt.Sprintf("m-owner-%d", i), "", "", "text", string(content), "p2p", "oc-owner-private", "ou-owner")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(launcher.terminals) != 1 {
+				t.Fatalf("private session not reused: %d terminals", len(launcher.terminals))
+			}
+			sess, found, err := manager.FindSessionByLarkChatID(ctx, "oc-owner-private")
+			if err != nil || !found || !sess.NotifyOnWaiting {
+				t.Fatalf("private notifications not bound: found=%v err=%v session=%+v", found, err, sess)
+			}
+			defer manager.DeleteSession(ctx, sess.ID)
+			if got := launcher.terminals[0].writes(); !strings.Contains(got, PrepareStructuredInput("whoami")) {
+				t.Fatalf("follow-up not delivered: %q", got)
+			}
+		})
 	}
 }
 

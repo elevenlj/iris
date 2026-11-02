@@ -1480,7 +1480,16 @@ func (b *LarkReplyBridge) contactAssistantEnabled(routeCtx larkRouteContext) boo
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.developerOpenID != "" && b.createContactChat != nil
+	return b.developerOpenID != "" && strings.TrimSpace(routeCtx.SenderOpenID) != b.developerOpenID && b.createContactChat != nil
+}
+
+func (b *LarkReplyBridge) isDeveloperDirectChat(routeCtx larkRouteContext) bool {
+	if !isLarkDirectChatType(routeCtx.ChatType) || routeCtx.ChatID == "" {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.developerOpenID != "" && strings.TrimSpace(routeCtx.SenderOpenID) == b.developerOpenID
 }
 
 func (b *LarkReplyBridge) routeDirectContactMessage(ctx context.Context, routeCtx larkRouteContext, incoming larkIncomingMessage, parts []string) (string, error) {
@@ -1873,7 +1882,7 @@ func (b *LarkReplyBridge) createLarkSessionForMessage(ctx context.Context, name 
 	if err != nil {
 		return s, err
 	}
-	if routeCtx.ChatID != "" && routeCtx.ChatType == "group" {
+	if routeCtx.ChatID != "" && (routeCtx.ChatType == "group" || b.isDeveloperDirectChat(routeCtx)) {
 		if rt, ok := b.manager.GetRuntime(s.ID); ok {
 			rt.RequireLarkChatForNotifications()
 			rt.SetNotificationMentionOpenID(routeCtx.notificationMentionOpenID())
