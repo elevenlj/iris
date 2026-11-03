@@ -2240,7 +2240,7 @@ func TestRunningTitleUpdateSkipsStaleMessageAfterReplacement(t *testing.T) {
 	}
 }
 
-func TestLarkNotificationCardContentKeepsSessionTitleWithoutStatusNoise(t *testing.T) {
+func TestLarkNotificationCardContentOmitsTitleWithoutStatusNoise(t *testing.T) {
 	content, err := larkNotificationCardContent(WaitingNotification{
 		SessionID: "sess-1",
 		Name:      "A",
@@ -2256,8 +2256,8 @@ func TestLarkNotificationCardContentKeepsSessionTitleWithoutStatusNoise(t *testi
 	if !strings.Contains(content, `"update_no":2`) {
 		t.Fatalf("refresh action should still carry its internal update number, got %s", content)
 	}
-	if !strings.Contains(content, `"content":"A"`) {
-		t.Fatalf("card header should keep the session title, got %s", content)
+	if strings.Contains(content, `"header"`) {
+		t.Fatalf("ordinary reply card must not include a title, got %s", content)
 	}
 }
 
@@ -2438,7 +2438,7 @@ func TestLarkNotificationCardContentDoesNotWarnOnBufferFallback(t *testing.T) {
 	}
 }
 
-func TestLarkNotificationCardContentUsesTaskStateInTitleOnly(t *testing.T) {
+func TestLarkNotificationCardContentOmitsOrdinaryReplyTitle(t *testing.T) {
 	content, err := larkNotificationCardContent(WaitingNotification{
 		SessionID: "sess-1",
 		Name:      "A",
@@ -2448,14 +2448,14 @@ func TestLarkNotificationCardContentUsesTaskStateInTitleOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(content, `"content":"A（Running）"`) {
-		t.Fatalf("card content should include running title suffix, got %s", content)
+	if strings.Contains(content, `"header"`) || strings.Contains(content, `"content":"A（Running）"`) {
+		t.Fatalf("running reply card must not include a title, got %s", content)
 	}
 	if strings.Contains(content, "状态：") {
 		t.Fatalf("running card should not duplicate status in the body, got %s", content)
 	}
-	if !strings.Contains(content, `"template":"blue"`) || !strings.Contains(content, `"tag":"column_set"`) {
-		t.Fatalf("running card should use default header and native action rows, got %s", content)
+	if !strings.Contains(content, `"content":"still working"`) || !strings.Contains(content, `"tag":"column_set"`) {
+		t.Fatalf("running card must retain content and native action rows, got %s", content)
 	}
 	stopped, err := larkNotificationCardContent(WaitingNotification{
 		SessionID: "sess-1",
@@ -2466,8 +2466,27 @@ func TestLarkNotificationCardContentUsesTaskStateInTitleOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stopped, `"content":"A"`) || strings.Contains(stopped, "状态：") || !strings.Contains(stopped, `"template":"blue"`) || !strings.Contains(stopped, `"tag":"column_set"`) {
-		t.Fatalf("completed card should restore the session title without duplicate body status, got %s", stopped)
+	if strings.Contains(stopped, `"header"`) || strings.Contains(stopped, "状态：") || !strings.Contains(stopped, `"content":"done"`) || !strings.Contains(stopped, `"tag":"column_set"`) {
+		t.Fatalf("completed card must omit title and retain content and actions, got %s", stopped)
+	}
+}
+
+func TestLarkNotificationSpecialCardsRetainTitle(t *testing.T) {
+	for _, note := range []WaitingNotification{
+		{Name: "启动会话", Startup: true},
+		{Name: "选择会话", Interaction: &TerminalInteraction{}},
+	} {
+		content, err := larkNotificationCardContent(note, "ou_1", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var card map[string]any
+		if err := json.Unmarshal([]byte(content), &card); err != nil {
+			t.Fatal(err)
+		}
+		if card["header"] == nil {
+			t.Fatalf("startup and selector cards must retain title: %s", content)
+		}
 	}
 }
 

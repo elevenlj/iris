@@ -360,11 +360,13 @@ func larkNotificationCardContent(note WaitingNotification, receiveID string, men
 	card := map[string]any{
 		"schema": "2.0",
 		"config": map[string]any{"wide_screen_mode": true, "update_multi": true},
-		"header": map[string]any{
+		"body":   map[string]any{"elements": elements},
+	}
+	if note.Startup || note.Interaction != nil {
+		card["header"] = map[string]any{
 			"template": "blue",
 			"title":    map[string]any{"tag": "plain_text", "content": larkNotificationTitle(note)},
-		},
-		"body": map[string]any{"elements": elements},
+		}
 	}
 	b, err := json.Marshal(card)
 	return string(b), err

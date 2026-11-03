@@ -423,8 +423,8 @@ func TestLarkNotificationCardRendersStartupFallbackAsOrdinaryCard(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(content, `"content":"Codex"`) || !strings.Contains(content, "Update available!") {
-		t.Fatalf("startup fallback should use an ordinary card title and preserve the blocker: %s", content)
+	if strings.Contains(content, `"header"`) || !strings.Contains(content, "Update available!") {
+		t.Fatalf("ordinary fallback should omit the title and preserve the blocker: %s", content)
 	}
 	if strings.Contains(content, "启动等待") || strings.Contains(content, `"iris_action":"startup_shortcut"`) || strings.Contains(content, "上一项") || strings.Contains(content, "下一项") {
 		t.Fatalf("startup fallback must not add dedicated status or controls: %s", content)
