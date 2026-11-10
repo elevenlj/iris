@@ -5151,6 +5151,7 @@ func (rt *RuntimeSession) decorateWaitingNotification(note WaitingNotification) 
 	}
 	sess := rt.Snapshot()
 	note.DeveloperModeEnabled = sess.DeveloperModeEnabled
+	note.MentionModeEnabled = sess.LarkMentionModeEnabled
 	note.TopicRootID = sess.LarkTopicRootID
 	// Origin belongs to the input, not the latest sender in this session.
 	if rt.manager.messageRegistry().isBotInput(note.InputMessageID) {
