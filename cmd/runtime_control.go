@@ -220,22 +220,33 @@ func runtimeProcessCommand(record runtimeRecord) *exec.Cmd {
 	return cmd
 }
 
-var launchRuntimeProcess = func(record runtimeRecord) error {
+var launchRuntimeProcess = func(record runtimeRecord) (<-chan error, error) {
 	cmd := runtimeProcessCommand(record)
 	if err := cmd.Start(); err != nil {
-		return err
+		return nil, err
 	}
-	return cmd.Process.Release()
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	return done, nil
 }
 
 func restartRuntime(dataDir string, record runtimeRecord) error {
-	if err := launchRuntimeProcess(record); err != nil {
+	done, err := launchRuntimeProcess(record)
+	if err != nil {
 		return err
 	}
-	deadline := time.Now().Add(30 * time.Second)
 	client := &http.Client{Timeout: 250 * time.Millisecond}
-	for time.Now().Before(deadline) {
-		time.Sleep(100 * time.Millisecond)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				return fmt.Errorf("端口 %s 的 Iris 启动失败：%w", record.Port, err)
+			}
+			return fmt.Errorf("端口 %s 的 Iris 在就绪前已退出", record.Port)
+		case <-ticker.C:
+		}
 		b, err := os.ReadFile(runtimeRecordPath(dataDir, record.Port))
 		if err != nil {
 			continue
@@ -245,7 +256,6 @@ func restartRuntime(dataDir string, record runtimeRecord) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("端口 %s 的 Iris 未在 30 秒内重新启动", record.Port)
 }
 
 func handleServiceCommand(args []string, _ io.Reader, out io.Writer, dataDir string, _ bool) (bool, error) {

@@ -302,12 +302,12 @@ func TestHandleServiceCommandRestartsExactInstance(t *testing.T) {
 	originalLaunch := launchRuntimeProcess
 	t.Cleanup(func() { launchRuntimeProcess = originalLaunch })
 	var launched runtimeRecord
-	launchRuntimeProcess = func(record runtimeRecord) error {
+	launchRuntimeProcess = func(record runtimeRecord) (<-chan error, error) {
 		launched = record
 		instanceID = "instance-2"
 		token = "new-secret"
 		stopping = false
-		return registerRuntimeRecord(dataDir, runtimeRecord{InstanceID: instanceID, Token: token, Port: port})
+		return nil, registerRuntimeRecord(dataDir, runtimeRecord{InstanceID: instanceID, Token: token, Port: port})
 	}
 	var output bytes.Buffer
 	handled, err := handleServiceCommand([]string{"restart"}, strings.NewReader(""), &output, dataDir, false)

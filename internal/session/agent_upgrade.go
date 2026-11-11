@@ -9,10 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 )
-
-const defaultAgentUpgradeTimeout = 3 * time.Minute
 
 type AgentUpgradeResult struct {
 	Kind          string
@@ -119,11 +116,9 @@ func upgradeAgentCLIs(ctx context.Context, sessions []Session, configured AgentC
 			results = append(results, AgentUpgradeResult{Kind: kind, Err: err})
 			continue
 		}
-		upgradeCtx, cancel := context.WithTimeout(ctx, defaultAgentUpgradeTimeout)
-		before, beforeErr := runner.Run(upgradeCtx, resolved, "--version")
-		output, updateErr := runner.Run(upgradeCtx, resolved, "update")
-		after, afterErr := runner.Run(upgradeCtx, resolved, "--version")
-		cancel()
+		before, beforeErr := runner.Run(ctx, resolved, "--version")
+		output, updateErr := runner.Run(ctx, resolved, "update")
+		after, afterErr := runner.Run(ctx, resolved, "--version")
 		result := AgentUpgradeResult{Kind: kind, BeforeVersion: before, AfterVersion: after, Output: output}
 		result.Err = errors.Join(beforeErr, updateErr, afterErr)
 		results = append(results, result)

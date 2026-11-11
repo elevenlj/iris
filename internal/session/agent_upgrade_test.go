@@ -22,7 +22,10 @@ func (r *recordingAgentUpgradeRunner) LookPath(name string) (string, error) {
 	return "/bin/" + name, nil
 }
 
-func (r *recordingAgentUpgradeRunner) Run(_ context.Context, name string, args ...string) (string, error) {
+func (r *recordingAgentUpgradeRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return "", errors.New("startup upgrade must not add a deadline")
+	}
 	r.calls = append(r.calls, name+" "+args[0])
 	if args[0] == "--version" {
 		return name + " 1.0", nil
