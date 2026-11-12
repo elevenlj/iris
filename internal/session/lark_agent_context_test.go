@@ -151,6 +151,15 @@ func TestMentionSkillInstallAndPrivateClaudeHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	for _, dir := range []string{".agents", ".claude"} {
+		path := filepath.Join(home, dir, "skills", "iris-feishu-mention", "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("old mention-only skill"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := EnsureAgentContextSkills(); err != nil {
 		t.Fatal(err)
 	}
