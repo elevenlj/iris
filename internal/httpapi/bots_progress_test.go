@@ -11,8 +11,9 @@ import (
 )
 
 type progressTestBots struct {
-	fail  bool
-	calls int
+	fail     bool
+	fallback bool
+	calls    int
 }
 
 func (b *progressTestBots) DeleteBot(context.Context, string) (BotDeletion, error) {
@@ -26,6 +27,9 @@ func (b *progressTestBots) PreviewBotDeletion(context.Context, string) (BotDelet
 
 func (b *progressTestBots) CreateBot(ctx context.Context, _ BotConfig) (BotConfig, error) {
 	b.calls++
+	if b.fallback {
+		return BotConfig{}, &BotRegistrationFallbackError{Err: errors.New("no browser")}
+	}
 	ReportBotCreationProgress(ctx, "login", "等待登录", "")
 	ReportBotCreationProgress(ctx, "configuring", "配置中", "cli_created")
 	if b.fail {
@@ -44,9 +48,9 @@ func (*progressTestBots) SaveBot(context.Context, BotConfig) (BotConfig, error) 
 func (*progressTestBots) BotHandler(string) http.Handler { return nil }
 
 func TestBotSetupProgressStreamsAndRequiresAuth(t *testing.T) {
-	for _, mode := range []string{"create", "error", "list"} {
+	for _, mode := range []string{"create", "error", "list", "fallback"} {
 		t.Run(mode, func(t *testing.T) {
-			bots := &progressTestBots{fail: mode == "error"}
+			bots := &progressTestBots{fail: mode == "error", fallback: mode == "fallback"}
 			server := NewServer(nil, "")
 			server.SetBotService(bots)
 			body := "{}"
@@ -82,7 +86,11 @@ func TestBotSetupProgressStreamsAndRequiresAuth(t *testing.T) {
 					t.Fatal(events)
 				}
 			case "error":
-				if events[1].AppID != "cli_created" || last.Stage != "error" || last.Error == "" {
+				if events[1].AppID != "cli_created" || last.Stage != "error" || last.Error == "" || last.RegistrationFallback {
+					t.Fatal(events)
+				}
+			case "fallback":
+				if last.Stage != "error" || !last.RegistrationFallback {
 					t.Fatal(events)
 				}
 			}

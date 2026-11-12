@@ -2,6 +2,7 @@ let irisBots = [];
 let editingBotID = "";
 let botSavePending = false;
 let botCreationBlocked = false;
+let botRegistrationAbort = null;
 
 async function loadBots() {
   irisBots = await api('/api/bots');
@@ -69,6 +70,7 @@ async function openBotEditor(edit) {
   $('bot-create-methods').hidden = edit;
   botStatus('');
   $('bot-created-app').hidden = true;
+  $('bot-registration').hidden = true;
   $('bot-link-fields').hidden = true;
   botCreationBlocked = false;
   setBotPending(false);
@@ -174,6 +176,7 @@ async function createBot(connect = false) {
   if (connect && !bot.app_id) throw new Error('请选择已有应用');
   setBotPending(true);
   botStatus('正在检查登录状态…', 'pending');
+  let registrationFallback = false;
   try {
     let resultID = '';
     const receive = event => {
@@ -186,7 +189,10 @@ async function createBot(connect = false) {
         $('bot-app-id').value = event.app_id;
         updateBotConsole();
       }
-      if (event.stage === 'error') throw new Error(event.error);
+      if (event.stage === 'error') {
+        registrationFallback = event.registration_fallback === true;
+        throw new Error(event.error);
+      }
       if (event.stage === 'done') resultID = event.bot_id;
       if (event.message) botStatus(event.message, 'pending');
     };
@@ -194,8 +200,65 @@ async function createBot(connect = false) {
     if (!resultID) throw new Error('连接已中断，创建结果尚未确认，请先查看应用后台，勿重复创建。');
     botStatus(connect ? '关联完成' : '创建完成');
     location.assign(resultID === 'default' ? '/' : `/bots/${encodeURIComponent(resultID)}/`);
+  } catch (error) {
+    if (!connect && !botCreationBlocked && registrationFallback) {
+      await registerBotWithoutBrowser(bot);
+    } else {
+      throw error;
+    }
   } finally {
     setBotPending(false);
+  }
+}
+
+async function registerBotWithoutBrowser(bot) {
+  const controller = new AbortController();
+  botRegistrationAbort = controller;
+  botCreationBlocked = true;
+  $('bot-cancel').disabled = false;
+  botStatus('自动创建不可用，正在生成飞书确认二维码…', 'pending');
+  try {
+    const reg = await api('/api/lark-app-registration', {method:'POST',body:JSON.stringify({brand:'feishu'}),signal:controller.signal});
+    $('bot-registration-link').href = reg.verification_uri_complete;
+    $('bot-registration-qr').src = `/api/lark-app-registration/qr?text=${encodeURIComponent(reg.verification_uri_complete)}`;
+    $('bot-registration').hidden = false;
+    botStatus('请扫码或打开链接，在飞书确认创建；确认后自动检查必要权限。', 'pending');
+    const expiresAt = Date.now() + Number(reg.expires_in || 3600) * 1000;
+    while (!controller.signal.aborted) {
+      if (Date.now() >= expiresAt) throw new Error('飞书确认已过期，请关闭后重新开始。');
+      await new Promise((resolve,reject) => {
+        const abort = () => {clearTimeout(timer);reject(new Error('已取消飞书确认'));};
+        const timer = setTimeout(() => {controller.signal.removeEventListener('abort',abort);resolve();},Math.max(Number(reg.interval || 5),2)*1000);
+        controller.signal.addEventListener('abort',abort,{once:true});
+        if (controller.signal.aborted) abort();
+      });
+      const result = await api('/api/lark-app-registration/poll', {method:'POST',body:JSON.stringify({brand:reg.brand,device_code:reg.device_code}),signal:controller.signal});
+      if (result.pending) continue;
+      if (!/^cli_[a-zA-Z0-9]+$/.test(result.app_id || '') || !result.app_secret || !result.lark_notify_receive_id) throw new Error('飞书返回的应用信息不完整，请先检查应用后台，勿重复创建。');
+      bot.app_id = result.app_id;
+      bot.app_secret = result.app_secret;
+      bot.receive_id = result.lark_notify_receive_id;
+      $('bot-app-id').value = bot.app_id;
+      $('bot-app-secret').value = bot.app_secret;
+      $('bot-receive-id').value = bot.receive_id;
+      $('bot-created-app').href = larkAppConsoleURL(bot.app_id);
+      $('bot-created-app').textContent = '查看已创建的应用 ↗';
+      $('bot-created-app').hidden = false;
+      $('bot-registration').hidden = true;
+      showManualBotFields(true);
+      updateBotConsole();
+      botStatus('应用已创建，正在核验全部必要权限和连接…', 'pending');
+      const saved = await api('/api/bots', {method:'POST',body:JSON.stringify(bot),signal:controller.signal});
+      location.assign(saved.id === 'default' ? '/' : `/bots/${encodeURIComponent(saved.id)}/`);
+      return;
+    }
+    if (controller.signal.aborted) botStatus('已取消飞书确认');
+  } catch (error) {
+    if (!controller.signal.aborted) throw error;
+    botStatus('已取消飞书确认');
+  } finally {
+    botRegistrationAbort = null;
+    $('bot-registration').hidden = true;
   }
 }
 
@@ -222,8 +285,8 @@ $('bot-connect').onclick = () => {
   createBot(true).catch(botError);
 };
 $('bot-existing').onclick = () => {if (!botSavePending) showManualBotFields(true)};
-$('bot-cancel').onclick = () => {if (!botSavePending) $('bot-dialog').close()};
-$('bot-dialog').addEventListener('cancel', event => {if (botSavePending) event.preventDefault()});
+$('bot-cancel').onclick = () => {if (botRegistrationAbort) botRegistrationAbort.abort();else if (!botSavePending) $('bot-dialog').close()};
+$('bot-dialog').addEventListener('cancel', event => {if (botSavePending) {event.preventDefault();botRegistrationAbort?.abort()}});
 $('bot-app-id').oninput = () => {$('bot-app-name').value='';updateBotConsole()};
 $('bot-show-secret').onclick = () => {const show=$('bot-app-secret').type==='password';$('bot-app-secret').type=show?'text':'password';$('bot-show-secret').textContent=show?'隐藏 Secret':'显示 Secret'};
 loadBots().catch(console.error);

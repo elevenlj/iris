@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -48,9 +49,20 @@ func TestFeishuBrowserLoginFallback(t *testing.T) {
 	if _, err := runFeishuSetup(ctx, "", dir, "list", ""); err == nil {
 		t.Fatal("network failure reported as success")
 	}
+	_, err = runFeishuSetup(ctx, "bot", dir, "create", "")
+	var fallback *httpapi.BotRegistrationFallbackError
+	if !errors.As(err, &fallback) {
+		t.Fatalf("pre-creation browser failure must offer registration fallback: %v", err)
+	}
 	launches, _ = os.ReadFile(filepath.Join(dir, "launches"))
-	if string(launches) != "headless\nheaded\nheadless\nheadless\n" {
+	if string(launches) != "headless\nheaded\nheadless\nheadless\nheadless\n" {
 		t.Fatalf("network error must not trigger another login window: %q", launches)
+	}
+	t.Setenv("IRIS_BROWSER_FLOW_NAV_ERROR", "0")
+	t.Setenv("IRIS_BROWSER_FLOW_SCRIPT_ERROR", "1")
+	_, err = runFeishuSetup(ctx, "bot", dir, "create", "")
+	if err == nil || errors.As(err, &fallback) {
+		t.Fatalf("uncertain creation result must not register a second app: %v", err)
 	}
 }
 
@@ -128,6 +140,9 @@ func TestFeishuFlowHelper(t *testing.T) {
 					value = map[string]any{"apps": []map[string]string{{"app_id": "cli_test", "name": "test"}}}
 				}
 				result = map[string]any{"result": map[string]any{"value": value}}
+				if strings.Contains(request.Params.Expression, "irisCreateFeishuApp") && os.Getenv("IRIS_BROWSER_FLOW_SCRIPT_ERROR") == "1" {
+					result = map[string]any{"exceptionDetails": map[string]any{"exception": map[string]any{"description": "Error: creation outcome unknown"}}}
+				}
 			}
 			mu.Unlock()
 			if conn.WriteJSON(map[string]any{"id": request.ID, "result": result}) != nil {

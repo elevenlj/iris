@@ -22,11 +22,12 @@ import (
 var feishuSetupScript string
 
 type createdFeishuApp struct {
-	AppID      string              `json:"app_id"`
-	AppSecret  string              `json:"app_secret"`
-	AppName    string              `json:"app_name"`
-	OwnerEmail string              `json:"owner_email"`
-	Apps       []httpapi.FeishuApp `json:"apps,omitempty"`
+	AppID           string              `json:"app_id"`
+	AppSecret       string              `json:"app_secret"`
+	AppName         string              `json:"app_name"`
+	OwnerEmail      string              `json:"owner_email"`
+	Apps            []httpapi.FeishuApp `json:"apps,omitempty"`
+	mutationStarted bool
 }
 
 // Reuse only Iris's own login profile, isolated per service data directory.
@@ -38,7 +39,10 @@ func createFeishuApp(ctx context.Context, name, dataDir string) (createdFeishuAp
 func runFeishuSetup(ctx context.Context, name, dataDir, mode, appID string) (createdFeishuApp, error) {
 	result, err := runFeishuBrowser(ctx, name, dataDir, mode, appID, true)
 	if errors.Is(err, errFeishuLoginRequired) {
-		return runFeishuBrowser(ctx, name, dataDir, mode, appID, false)
+		result, err = runFeishuBrowser(ctx, name, dataDir, mode, appID, false)
+	}
+	if err != nil && mode == "create" && !result.mutationStarted && ctx.Err() == nil {
+		err = &httpapi.BotRegistrationFallbackError{Err: err}
 	}
 	return result, err
 }
@@ -243,7 +247,9 @@ func runFeishuBrowser(ctx context.Context, name, dataDir, mode, appID string, he
 	encodedName, _ := json.Marshal(name)
 	encodedMode, _ := json.Marshal(mode)
 	encodedID, _ := json.Marshal(appID)
-	err = evaluate(feishuSetupScript+"\nirisCreateFeishuApp("+string(encodedName)+","+string(encodedMode)+","+string(encodedID)+")", &result)
+	// The script can create an app before returning its ID; never create another on an uncertain result.
+	result.mutationStarted = mode == "create"
+	err = evaluate("window.irisAppCapabilities="+httpapi.LarkCapabilitiesJSON()+";\n"+feishuSetupScript+"\nirisCreateFeishuApp("+string(encodedName)+","+string(encodedMode)+","+string(encodedID)+")", &result)
 	return result, err
 }
 

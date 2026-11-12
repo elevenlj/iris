@@ -1,0 +1,5 @@
+{
+  "scopes": ["im:message", "im:message:send_as_bot", "im:message.group_msg", "im:resource", "im:chat:create", "im:chat:read", "im:chat:update", "im:chat.members:read", "im:chat.members:write_only", "im:chat.members:bot_access", "cardkit:card:read", "cardkit:card:write", "contact:user.base:readonly", "contact:user.id:readonly"],
+  "events": ["im.message.receive_v1", "im.chat.member.bot.added_v1", "im.message.message_read_v1", "im.message.reaction.created_v1", "im.message.reaction.deleted_v1"],
+  "callbacks": ["card.action.trigger"]
+}

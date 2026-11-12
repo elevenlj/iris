@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -47,14 +48,6 @@ var (
 		"cardkit:card:write",
 		"contact:user.base:readonly",
 	}
-	larkRegistrationEvents = []string{
-		"im.chat.member.bot.added_v1",
-		"im.message.receive_v1",
-		"im.message.message_read_v1",
-		"im.message.reaction.created_v1",
-		"im.message.reaction.deleted_v1",
-	}
-	larkRegistrationCallbacks = []string{"card.action.trigger"}
 )
 
 type LarkAppRegistrationBegin struct {
@@ -130,9 +123,15 @@ func larkRegistrationBeginForm() url.Values {
 	form.Set("archetype", "PersonalAgent")
 	form.Set("auth_method", "client_secret")
 	form.Set("request_user_info", "open_id tenant_brand")
-	form.Set("scope", strings.Join(larkRegistrationScopes, " "))
-	form.Set("events", strings.Join(larkRegistrationEvents, " "))
-	form.Set("callbacks", strings.Join(larkRegistrationCallbacks, " "))
+	scopes := append([]string(nil), larkRegistrationScopes...)
+	for _, scope := range larkCapabilities.Scopes {
+		if !slices.Contains(scopes, scope) {
+			scopes = append(scopes, scope)
+		}
+	}
+	form.Set("scope", strings.Join(scopes, " "))
+	form.Set("events", strings.Join(larkCapabilities.Events, " "))
+	form.Set("callbacks", strings.Join(larkCapabilities.Callbacks, " "))
 	return form
 }
 

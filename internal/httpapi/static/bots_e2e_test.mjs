@@ -15,7 +15,8 @@ let bots = [{id:'default',name:'Primary',system_prompt:'机器人 A\n多行指�
 let confirmed = false, confirmation = '', fail = false, deletes = 0, redirect = '';
 const context = vm.createContext({
   $, BOT_BASE:'', state:{config:{}}, document:{createElement:()=>({})}, console,
-  location:{replace:url=>{redirect=url}}, ensureSettingsAccess:async()=>true,
+  AbortController, Date, setTimeout:fn=>{queueMicrotask(fn);return 0},clearTimeout(){},
+  location:{replace:url=>{redirect=url},assign:url=>{redirect=url}}, ensureSettingsAccess:async()=>true,
   renderAgentSelect(){}, larkAppConsoleURL:()=>'',
   confirm:text=>{confirmation=text;return confirmed}, alert(){},
   api:async(path,options={})=>{
@@ -64,3 +65,53 @@ assert.equal($('bot-select').hidden,true);
 assert.equal($('bot-settings').hidden,true);
 assert.equal($('bot-add').disabled,false);
 console.log('bot deletion UI checks ok');
+
+for (const mode of ['success','permissions','created','unknown','cancel','registration-error']) {
+  vm.runInContext('editingBotID="";botSavePending=false;botCreationBlocked=false',context);
+  $('bot-name').value='Fallback bot';$('bot-agent').value='codex';$('bot-directory').value='/workspace';
+  let begins=0,polls=0,saves=0;
+  redirect='';
+  context.api=async(path,options)=>{
+    if(path==='/api/lark-app-registration') {
+      begins++;
+      if(mode==='registration-error')throw new Error('registration unavailable');
+      return {verification_uri_complete:'https://open.feishu.cn/page/cli?user_code=test',device_code:'private-code',brand:'feishu',expires_in:3600,interval:5};
+    }
+    if(path==='/api/lark-app-registration/poll') {
+      polls++;
+      if(mode==='cancel') { $('bot-cancel').onclick();return {pending:true}; }
+      if(polls===1)return {pending:true};
+      return {app_id:'cli_registered',app_secret:'test-secret',lark_notify_receive_id:'ou_owner'};
+    }
+    if(path==='/api/bots') {
+      saves++;
+      const bot=JSON.parse(options.body);
+      assert.equal(bot.app_id,'cli_registered');assert.equal(bot.default_agent_id,'codex');assert.equal(bot.default_workspace_dir,'/workspace');
+      if(mode==='permissions')throw new Error('缺少必要应用权限：im:message.group_msg');
+      return {id:'bot-registered'};
+    }
+    throw new Error('unexpected API '+path);
+  };
+  context.failureMode=mode;
+  vm.runInContext(`streamBotSetup=async(bot,receive)=>{
+    if(failureMode==='created')receive({stage:'configuring',app_id:'cli_existing'});
+    receive({stage:'error',error:'browser failed',registration_fallback:failureMode!=='unknown'});
+  }`,context);
+  if(mode==='success')await vm.runInContext('createBot()',context);
+  else if(mode==='cancel')await vm.runInContext('createBot()',context);
+  else await assert.rejects(vm.runInContext('createBot()',context),mode==='permissions'?/im:message.group_msg/:mode==='registration-error'?/registration unavailable/:/browser failed/);
+  assert.equal(begins,['created','unknown'].includes(mode)?0:1,mode);
+  assert.equal(saves,['success','permissions'].includes(mode)?1:0,mode);
+  assert.equal($('bot-scan').disabled,!['unknown'].includes(mode),mode);
+  assert.equal($('bot-save').disabled,false);
+  assert.equal($('bot-registration').hidden,true);
+  if(mode==='success')assert.equal(redirect,'/bots/bot-registered/');
+  else assert.equal(redirect,'');
+  if(mode==='permissions') {
+    assert.equal($('bot-app-id').value,'cli_registered');
+    assert.equal($('bot-app-secret').value,'test-secret');
+    assert.equal($('bot-app-fields').hidden,false);
+    assert.equal($('bot-save').hidden,false);
+  }
+}
+console.log('bot QR fallback, cancellation and permission failure checks ok');

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/elevenlj/iris/internal/session"
+	lark "github.com/larksuite/oapi-sdk-go/v3"
 )
 
 type RuntimeConfig struct {
@@ -155,6 +157,11 @@ func (t realLarkConfigTester) Test(cfg RuntimeConfig) LarkConfigTestResult {
 		return result
 	}
 	result.Steps = append(result.Steps, LarkConfigTestStep{Name: "配置完整性", OK: true, Message: "必填项已填写"})
+	if err := checkLarkCapabilities(context.Background(), lark.NewClient(appID, appSecret, lark.WithReqTimeout(10*time.Second))); err != nil {
+		result.Steps = append(result.Steps, LarkConfigTestStep{Name: "必要应用权限", Message: err.Error()})
+		return result
+	}
+	result.Steps = append(result.Steps, LarkConfigTestStep{Name: "必要应用权限", OK: true, Message: "必要权限已全部授予"})
 
 	notifier := session.NewLarkAppNotifier(appID, appSecret, receiveID, cfg.LarkMentionEnabled)
 	_, err := notifier.NotifyWaiting(session.WaitingNotification{

@@ -46,7 +46,7 @@ async function irisCreateFeishuApp(name,mode='create',existingID='') {
   const progress=(stage,message)=>window.irisSetupProgress?.(JSON.stringify({stage,message,app_id:id}));
   try {
     progress('configuring','应用已创建，正在配置权限与消息事件…');
-    const required=['im:message','im:message:send_as_bot','im:message.group_msg','im:resource','im:chat:create','im:chat:read','im:chat:update','im:chat.members:read','im:chat.members:write_only','im:chat.members:bot_access','cardkit:card:read','cardkit:card:write','contact:user.base:readonly','contact:user.id:readonly'];
+    const required=window.irisAppCapabilities.scopes;
     const catalog=await request(`/developers/v1/scope/all/${id}`);
     const scopes=new Map();
     const visit=(value,bucket='')=>{
@@ -76,15 +76,16 @@ async function irisCreateFeishuApp(name,mode='create',existingID='') {
     if(narrowed.length) await request(`/developers/v1/privilege/update/${id}`,{clientId:id,privileges:narrowed});
     await request(`/developers/v1/robot/switch/${id}`,{clientId:id,enable:true});
     await request(`/developers/v1/event/switch/${id}`,{clientId:id,eventMode:4});
-    const events=['im.message.receive_v1','im.chat.member.bot.added_v1','im.message.reaction.created_v1','im.message.reaction.deleted_v1'];
+    const events=window.irisAppCapabilities.events;
     await request(`/developers/v1/event/update/${id}`,{clientId:id,eventMode:4,operation:'add',events:[],appEvents:events,userEvents:[]});
     await request(`/developers/v1/callback/switch/${id}`,{clientId:id,callbackMode:4});
-    await request(`/developers/v1/callback/update/${id}`,{clientId:id,callbackMode:4,operation:'add',callbacks:['card.action.trigger']});
+    const callbacks=window.irisAppCapabilities.callbacks;
+    await request(`/developers/v1/callback/update/${id}`,{clientId:id,callbackMode:4,operation:'add',callbacks});
     const eventState=await request(`/developers/v1/event/${id}`,{needEventDetail:true});
     const callbackState=await request(`/developers/v1/callback/${id}`);
     const eventIDs=[...(eventState.events||[]),...(eventState.appEvents||[]),...(eventState.appEventDetails||[]).flatMap(group=>group.items||[])].map(item=>typeof item==='string'?item:item.id);
     if(eventState.eventMode!==4||events.some(event=>!eventIDs.includes(event))) throw new Error('消息事件配置回读失败');
-    if(callbackState.callbackMode!==4||!(callbackState.callbacks||[]).some(item=>(item.id||item)==='card.action.trigger')) throw new Error('卡片回调配置回读失败');
+    if(callbackState.callbackMode!==4||callbacks.some(callback=>!(callbackState.callbacks||[]).some(item=>(item.id||item)===callback))) throw new Error('卡片回调配置回读失败');
     const visibility={departments:[],members:[String(window.user.id)],groups:[],isAll:0};
     progress('publishing','权限配置完成，正在发布应用…');
     const version=await request(`/developers/v1/app_version/create/${id}`,{appVersion:'1.0.0',mobileDefaultAbility:'bot',pcDefaultAbility:'bot',changeLog:'Iris initial release',visibleSuggest:visibility,blackVisibleSuggest:{departments:[],members:[],groups:[],isAll:0}});

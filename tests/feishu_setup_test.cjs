@@ -3,12 +3,13 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const path=require('node:path');
 const source=fs.readFileSync(path.join(__dirname,'../cmd/feishu_setup.js'),'utf8');
-const required=['im:message','im:message:send_as_bot','im:message.group_msg','im:resource','im:chat:create','im:chat:read','im:chat:update','im:chat.members:read','im:chat.members:write_only','im:chat.members:bot_access','cardkit:card:read','cardkit:card:write','contact:user.base:readonly','contact:user.id:readonly'];
+const capabilities=JSON.parse(fs.readFileSync(path.join(__dirname,'../internal/httpapi/lark_capabilities.json'),'utf8'));
+const required=capabilities.scopes;
 
 async function scenario(failure='',mode='create',existingID='cli_new'){
  const calls=[];
  const progress=[];let versionReads=0;
- const context=vm.createContext({setTimeout:resolve=>resolve(),location:{hostname:'open.feishu.cn'},window:{irisSetupProgress:event=>progress.push(JSON.parse(event)),csrfToken:'csrf',user:{id:'creator',email:'creator@example.com'}},crypto:{randomUUID:()=> 'request-id'},FormData,Blob,Map,document:{createElement:()=>({getContext:()=>({fillRect(){},fillText(){}}),toBlob:resolve=>resolve(new Blob(['png']))})},fetch:async(url,options)=>{
+ const context=vm.createContext({setTimeout:resolve=>resolve(),location:{hostname:'open.feishu.cn'},window:{irisAppCapabilities:capabilities,irisSetupProgress:event=>progress.push(JSON.parse(event)),csrfToken:'csrf',user:{id:'creator',email:'creator@example.com'}},crypto:{randomUUID:()=> 'request-id'},FormData,Blob,Map,document:{createElement:()=>({getContext:()=>({fillRect(){},fillText(){}}),toBlob:resolve=>resolve(new Blob(['png']))})},fetch:async(url,options)=>{
   const body=options.body instanceof FormData?options.body:JSON.parse(options.body);
   calls.push({url,body});
   let data={};
@@ -17,7 +18,7 @@ async function scenario(failure='',mode='create',existingID='cli_new'){
   else if(url.endsWith('/upsert_by_template'))data={ClientID:'cli_new'};
   else if(url.includes('/scope/all/'))data={appScopes:required.filter(s=>failure!=='scope'||s!=='im:message.group_msg').map((name,i)=>({name,id:'app-'+i})),userScopes:[{name:'im:message.group_msg',id:'wrong-user-id'}]};
   else if(url.includes('/privilege/all/'))data={privileges:[{isRequired:true,schemaType:1,organizationType:1,bizId:'contacts',schemaContent:{selectionExpressionSchemaContent:{fields:[{id:'users',data_source:{type:'select_staff'},operators:['in']}]}},content:'{"mode":"all"}'}]};
-  else if(url.endsWith('/event/cli_new'))data={eventMode:failure==='event'?1:4,appEvents:['im.message.receive_v1','im.chat.member.bot.added_v1','im.message.reaction.created_v1','im.message.reaction.deleted_v1']};
+  else if(url.endsWith('/event/cli_new'))data={eventMode:failure==='event'?1:4,appEvents:capabilities.events};
   else if(url.endsWith('/callback/cli_new'))data={callbackMode:4,callbacks:failure==='callback'?[]:['card.action.trigger']};
   else if(url.includes('/app_version/create/'))data={versionId:'version-1'};
   else if(url.includes('/app_version/list/')) {

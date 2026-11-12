@@ -46,13 +46,19 @@ type FeishuApp struct {
 }
 
 type BotCreationProgress struct {
-	Stage   string      `json:"stage"`
-	Message string      `json:"message,omitempty"`
-	AppID   string      `json:"app_id,omitempty"`
-	BotID   string      `json:"bot_id,omitempty"`
-	Error   string      `json:"error,omitempty"`
-	Apps    []FeishuApp `json:"apps,omitempty"`
+	Stage                string      `json:"stage"`
+	Message              string      `json:"message,omitempty"`
+	AppID                string      `json:"app_id,omitempty"`
+	BotID                string      `json:"bot_id,omitempty"`
+	Error                string      `json:"error,omitempty"`
+	Apps                 []FeishuApp `json:"apps,omitempty"`
+	RegistrationFallback bool        `json:"registration_fallback,omitempty"`
 }
+
+type BotRegistrationFallbackError struct{ Err error }
+
+func (e *BotRegistrationFallbackError) Error() string { return e.Err.Error() }
+func (e *BotRegistrationFallbackError) Unwrap() error { return e.Err }
 
 type botProgressKey struct{}
 
@@ -103,7 +109,8 @@ func (s *Server) handleBotCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		result, err := s.bots.CreateBot(ctx, request.BotConfig)
 		if err != nil {
-			report(BotCreationProgress{Stage: "error", Error: err.Error()})
+			var fallback *BotRegistrationFallbackError
+			report(BotCreationProgress{Stage: "error", Error: err.Error(), RegistrationFallback: errors.As(err, &fallback)})
 		} else {
 			report(BotCreationProgress{Stage: "done", BotID: result.ID})
 		}
