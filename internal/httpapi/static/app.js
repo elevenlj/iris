@@ -1386,7 +1386,7 @@ function renderLarkTestResult(result) {
   box.innerHTML = "";
   for (const step of result.steps || []) {
     const row = document.createElement("div");
-    row.className = `lark-test-step ${step.ok ? "ok" : "fail"}`;
+    row.className = `lark-test-step ${step.warning ? "warning" : step.ok ? "ok" : "fail"}`;
     row.innerHTML = `<div><strong></strong><span></span></div>`;
     row.querySelector("strong").textContent = step.name || "";
     row.querySelector("span").textContent = step.message || "";

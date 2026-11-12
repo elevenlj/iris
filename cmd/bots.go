@@ -250,6 +250,8 @@ func validateBotSystemPrompt(prompt string) error {
 }
 
 func (s *botService) SaveBot(ctx context.Context, bot httpapi.BotConfig) (httpapi.BotConfig, error) {
+	bot.Warning = ""
+	var warnings []string
 	if err := validateBotSystemPrompt(bot.SystemPrompt); err != nil {
 		return bot, err
 	}
@@ -292,6 +294,11 @@ func (s *botService) SaveBot(ctx context.Context, bot httpapi.BotConfig) (httpap
 			return bot, err
 		}
 		result := s.test(runtimeConfigFromConfig(botEffectiveConfig(cfg, bot)))
+		for _, step := range result.Steps {
+			if step.Warning {
+				warnings = append(warnings, step.Message)
+			}
+		}
 		if !result.OK {
 			for _, step := range result.Steps {
 				if !step.OK {
@@ -377,6 +384,7 @@ func (s *botService) SaveBot(ctx context.Context, bot httpapi.BotConfig) (httpap
 		return bot, err
 	}
 	*s.root.cfg = cfg
+	bot.Warning = strings.Join(warnings, "\n")
 	return bot, nil
 }
 

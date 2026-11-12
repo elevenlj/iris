@@ -18,6 +18,7 @@ type BotConfig struct {
 	DefaultAgentID      string `json:"default_agent_id"`
 	DefaultWorkspaceDir string `json:"default_workspace_dir"`
 	SystemPrompt        string `json:"system_prompt"`
+	Warning             string `json:"warning,omitempty"`
 }
 
 type BotService interface {
@@ -53,6 +54,7 @@ type BotCreationProgress struct {
 	Error                string      `json:"error,omitempty"`
 	Apps                 []FeishuApp `json:"apps,omitempty"`
 	RegistrationFallback bool        `json:"registration_fallback,omitempty"`
+	Warning              string      `json:"warning,omitempty"`
 }
 
 type BotRegistrationFallbackError struct{ Err error }
@@ -112,7 +114,7 @@ func (s *Server) handleBotCreate(w http.ResponseWriter, r *http.Request) {
 			var fallback *BotRegistrationFallbackError
 			report(BotCreationProgress{Stage: "error", Error: err.Error(), RegistrationFallback: errors.As(err, &fallback)})
 		} else {
-			report(BotCreationProgress{Stage: "done", BotID: result.ID})
+			report(BotCreationProgress{Stage: "done", BotID: result.ID, AppID: result.AppID, Warning: result.Warning})
 		}
 		return
 	}

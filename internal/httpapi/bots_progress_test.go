@@ -13,6 +13,7 @@ import (
 type progressTestBots struct {
 	fail     bool
 	fallback bool
+	warning  string
 	calls    int
 }
 
@@ -35,7 +36,7 @@ func (b *progressTestBots) CreateBot(ctx context.Context, _ BotConfig) (BotConfi
 	if b.fail {
 		return BotConfig{}, errors.New("发布已提交，等待企业审批")
 	}
-	return BotConfig{ID: "bot-created", AppSecret: "must-not-stream-secret"}, nil
+	return BotConfig{ID: "bot-created", AppSecret: "must-not-stream-secret", Warning: b.warning}, nil
 }
 func (b *progressTestBots) ListFeishuApps(ctx context.Context) ([]FeishuApp, error) {
 	ReportBotCreationProgress(ctx, "listing", "读取已有应用", "")
@@ -48,9 +49,12 @@ func (*progressTestBots) SaveBot(context.Context, BotConfig) (BotConfig, error) 
 func (*progressTestBots) BotHandler(string) http.Handler { return nil }
 
 func TestBotSetupProgressStreamsAndRequiresAuth(t *testing.T) {
-	for _, mode := range []string{"create", "error", "list", "fallback"} {
+	for _, mode := range []string{"create", "error", "list", "fallback", "warning"} {
 		t.Run(mode, func(t *testing.T) {
 			bots := &progressTestBots{fail: mode == "error", fallback: mode == "fallback"}
+			if mode == "warning" {
+				bots.warning = "群消息功能权限未开通"
+			}
 			server := NewServer(nil, "")
 			server.SetBotService(bots)
 			body := "{}"
@@ -91,6 +95,10 @@ func TestBotSetupProgressStreamsAndRequiresAuth(t *testing.T) {
 				}
 			case "fallback":
 				if last.Stage != "error" || !last.RegistrationFallback {
+					t.Fatal(events)
+				}
+			case "warning":
+				if last.Stage != "done" || last.BotID != "bot-created" || last.Warning != bots.warning {
 					t.Fatal(events)
 				}
 			}

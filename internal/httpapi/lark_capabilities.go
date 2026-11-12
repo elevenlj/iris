@@ -50,7 +50,7 @@ func checkLarkCapabilities(ctx context.Context, client *lark.Client) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("缺少必要应用权限：%s。请在应用后台开通并发布后重试保存，勿重复创建", strings.Join(missing, "、"))
+		return fmt.Errorf("尚未开通功能权限：%s。对应功能可能受限，不影响保存；可前往应用后台申请并发布", strings.Join(missing, "、"))
 	}
 	return nil
 }

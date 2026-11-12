@@ -70,6 +70,7 @@ async function openBotEditor(edit) {
   $('bot-create-methods').hidden = edit;
   botStatus('');
   $('bot-created-app').hidden = true;
+  $('bot-open').hidden = true;
   $('bot-registration').hidden = true;
   $('bot-link-fields').hidden = true;
   botCreationBlocked = false;
@@ -101,11 +102,41 @@ async function saveBot() {
   botStatus(editingBotID ? '正在保存…' : '正在验证连接和权限…', 'pending');
   try {
     const result = await api('/api/bots', { method: editingBotID ? 'PATCH' : 'POST', body: JSON.stringify(bot) });
-    $('bot-dialog').close();
-    // Reloading closes the old WebSocket and prevents late responses from the
-    // previous bot from replacing the newly selected bot's terminal.
-    location.assign(result.id === 'default' ? '/' : `/bots/${result.id}/`);
+    await finishBotSave(result);
   } finally { setBotPending(false); }
+}
+
+async function finishBotSave(result) {
+  const target = result.id === 'default' ? '/' : `/bots/${encodeURIComponent(result.id)}/`;
+  if (!result.warning) {
+    $('bot-dialog').close();
+    location.assign(target);
+    return;
+  }
+  editingBotID = result.id;
+  if (!$('bot-app-secret').value) {
+    try {
+      const saved = (await api('/api/bots')).find(bot => bot.id === result.id);
+      if (saved) {
+        $('bot-app-id').value = saved.app_id || '';
+        $('bot-app-secret').value = saved.app_secret || '';
+        $('bot-receive-id').value = saved.receive_id || '';
+        $('bot-app-name').value = saved.app_name || '';
+      }
+    } catch (error) { console.error(error); }
+  }
+  if (result.app_name) $('bot-app-name').value = result.app_name;
+  $('bot-dialog-title').textContent = '机器人已保存';
+  $('bot-create-methods').hidden = true;
+  $('bot-app-fields').hidden = false;
+  $('bot-save').hidden = false;
+  $('bot-save').textContent = '保存';
+  $('bot-created-app').href = larkAppConsoleURL(result.app_id);
+  $('bot-created-app').textContent = '前往申请权限 ↗';
+  $('bot-created-app').hidden = false;
+  $('bot-open').href = target;
+  $('bot-open').hidden = false;
+  botStatus('已保存，可继续使用。\n'+result.warning,'warning');
 }
 
 async function deleteBot() {
@@ -179,6 +210,7 @@ async function createBot(connect = false) {
   let registrationFallback = false;
   try {
     let resultID = '';
+    let warning = '';
     const receive = event => {
       if (event.app_id && /^cli_[a-zA-Z0-9]+$/.test(event.app_id)) {
         // Preserve this guard across creation-method switches after a failure.
@@ -193,13 +225,13 @@ async function createBot(connect = false) {
         registrationFallback = event.registration_fallback === true;
         throw new Error(event.error);
       }
-      if (event.stage === 'done') resultID = event.bot_id;
+      if (event.stage === 'done') { resultID = event.bot_id; warning = event.warning || ''; }
       if (event.message) botStatus(event.message, 'pending');
     };
     await streamBotSetup(bot, receive);
     if (!resultID) throw new Error('连接已中断，创建结果尚未确认，请先查看应用后台，勿重复创建。');
     botStatus(connect ? '关联完成' : '创建完成');
-    location.assign(resultID === 'default' ? '/' : `/bots/${encodeURIComponent(resultID)}/`);
+    await finishBotSave({id:resultID,app_id:$('bot-app-id').value,warning});
   } catch (error) {
     if (!connect && !botCreationBlocked && registrationFallback) {
       await registerBotWithoutBrowser(bot);
@@ -222,7 +254,7 @@ async function registerBotWithoutBrowser(bot) {
     $('bot-registration-link').href = reg.verification_uri_complete;
     $('bot-registration-qr').src = `/api/lark-app-registration/qr?text=${encodeURIComponent(reg.verification_uri_complete)}`;
     $('bot-registration').hidden = false;
-    botStatus('请扫码或打开链接，在飞书确认创建；确认后自动检查必要权限。', 'pending');
+    botStatus('请扫码或打开链接，在飞书确认创建；确认后自动检查功能权限。', 'pending');
     const expiresAt = Date.now() + Number(reg.expires_in || 3600) * 1000;
     while (!controller.signal.aborted) {
       if (Date.now() >= expiresAt) throw new Error('飞书确认已过期，请关闭后重新开始。');
@@ -247,9 +279,9 @@ async function registerBotWithoutBrowser(bot) {
       $('bot-registration').hidden = true;
       showManualBotFields(true);
       updateBotConsole();
-      botStatus('应用已创建，正在核验全部必要权限和连接…', 'pending');
+      botStatus('应用已创建，正在验证凭证和功能权限…', 'pending');
       const saved = await api('/api/bots', {method:'POST',body:JSON.stringify(bot),signal:controller.signal});
-      location.assign(saved.id === 'default' ? '/' : `/bots/${encodeURIComponent(saved.id)}/`);
+      await finishBotSave(saved);
       return;
     }
     if (controller.signal.aborted) botStatus('已取消飞书确认');

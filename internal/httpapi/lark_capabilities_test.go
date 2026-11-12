@@ -69,7 +69,7 @@ func TestRegistrationIncludesEveryRequiredCapability(t *testing.T) {
 	}
 }
 
-func TestLarkConfigRejectsMissingCapabilitiesBeforeSending(t *testing.T) {
+func TestLarkConfigAllowsMissingCapabilitiesWithoutSending(t *testing.T) {
 	previous := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = previous })
 	http.DefaultTransport = identityTransport(func(r *http.Request) (*http.Response, error) {
@@ -84,7 +84,22 @@ func TestLarkConfigRejectsMissingCapabilitiesBeforeSending(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
 	result := TestLarkConfig(RuntimeConfig{LarkAppID: "cli_capability_check", LarkAppSecret: "secret", LarkNotifyReceiveID: "ou_owner"})
-	if result.OK || len(result.Steps) != 2 || result.Steps[1].OK || !strings.Contains(result.Steps[1].Message, "contact:user.id:readonly") {
-		t.Fatalf("incomplete app accepted: %+v", result)
+	if !result.OK || len(result.Steps) != 3 || !result.Steps[2].Warning || !strings.Contains(result.Steps[2].Message, "contact:user.id:readonly") {
+		t.Fatalf("missing capabilities must warn without blocking: %+v", result)
+	}
+}
+
+func TestLarkConfigInvalidCredentialsStillBlock(t *testing.T) {
+	previous := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	http.DefaultTransport = identityTransport(func(r *http.Request) (*http.Response, error) {
+		if !strings.Contains(r.URL.Path, "tenant_access_token") {
+			t.Fatalf("invalid credentials must stop testing: %s", r.URL.Path)
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"code":10014,"msg":"invalid app secret"}`))}, nil
+	})
+	result := TestLarkConfig(RuntimeConfig{LarkAppID: "cli_bad_secret", LarkAppSecret: "invalid", LarkNotifyReceiveID: "ou_owner"})
+	if result.OK || len(result.Steps) != 2 || result.Steps[1].Warning {
+		t.Fatalf("invalid credentials accepted: %+v", result)
 	}
 }

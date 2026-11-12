@@ -238,13 +238,24 @@ func TestBotValidationAndAutomaticTest(t *testing.T) {
 	}
 	saved.AppID = "cli_replacement"
 	bots.test = func(httpapi.RuntimeConfig) httpapi.LarkConfigTestResult {
-		return httpapi.LarkConfigTestResult{Steps: []httpapi.LarkConfigTestStep{{Name: "permission", Message: "missing"}}}
+		return httpapi.LarkConfigTestResult{Steps: []httpapi.LarkConfigTestStep{{Name: "credentials", Message: "invalid"}}}
 	}
 	if _, err := bots.SaveBot(context.Background(), saved); err == nil {
-		t.Fatal("failed permission test was accepted")
+		t.Fatal("invalid credentials were accepted")
 	}
 	if cfg.Bots[0].AppID != "cli_new" {
 		t.Fatal("failed update replaced live credentials")
+	}
+	bots.test = func(httpapi.RuntimeConfig) httpapi.LarkConfigTestResult {
+		return httpapi.LarkConfigTestResult{OK: true, Steps: []httpapi.LarkConfigTestStep{{Name: "功能权限", Warning: true, Message: "尚未开通 im:message.group_msg"}}}
+	}
+	warned, err := bots.SaveBot(context.Background(), saved)
+	if err != nil || warned.Warning == "" || cfg.Bots[0].AppID != "cli_replacement" {
+		t.Fatalf("permission warning blocked save: %+v %v", warned, err)
+	}
+	reloaded := loadConfig(svc.path)
+	if reloaded.Bots[0].AppID != "cli_replacement" || reloaded.Bots[0].Warning != "" {
+		t.Fatal("credentials not saved or transient warning persisted")
 	}
 	for _, id := range []string{"../a", "a/b", "", "A", "a.b"} {
 		if validBotID(id) {

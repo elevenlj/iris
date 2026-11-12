@@ -70,6 +70,7 @@ type LarkConfigTestStep struct {
 	Name    string `json:"name"`
 	OK      bool   `json:"ok"`
 	Message string `json:"message"`
+	Warning bool   `json:"warning,omitempty"`
 }
 
 type LarkConfigTestResult struct {
@@ -157,11 +158,17 @@ func (t realLarkConfigTester) Test(cfg RuntimeConfig) LarkConfigTestResult {
 		return result
 	}
 	result.Steps = append(result.Steps, LarkConfigTestStep{Name: "配置完整性", OK: true, Message: "必填项已填写"})
-	if err := checkLarkCapabilities(context.Background(), lark.NewClient(appID, appSecret, lark.WithReqTimeout(10*time.Second))); err != nil {
-		result.Steps = append(result.Steps, LarkConfigTestStep{Name: "必要应用权限", Message: err.Error()})
+	if _, err := larkIdentityToken(context.Background(), appID, appSecret); err != nil {
+		result.Steps = append(result.Steps, LarkConfigTestStep{Name: "应用凭证", Message: err.Error()})
 		return result
 	}
-	result.Steps = append(result.Steps, LarkConfigTestStep{Name: "必要应用权限", OK: true, Message: "必要权限已全部授予"})
+	result.Steps = append(result.Steps, LarkConfigTestStep{Name: "应用凭证", OK: true, Message: "凭证有效"})
+	if err := checkLarkCapabilities(context.Background(), lark.NewClient(appID, appSecret, lark.WithReqTimeout(10*time.Second))); err != nil {
+		result.Steps = append(result.Steps, LarkConfigTestStep{Name: "功能权限", Warning: true, Message: err.Error()})
+		result.OK = true
+		return result
+	}
+	result.Steps = append(result.Steps, LarkConfigTestStep{Name: "功能权限", OK: true, Message: "功能权限已全部授予"})
 
 	notifier := session.NewLarkAppNotifier(appID, appSecret, receiveID, cfg.LarkMentionEnabled)
 	_, err := notifier.NotifyWaiting(session.WaitingNotification{
@@ -173,8 +180,10 @@ func (t realLarkConfigTester) Test(cfg RuntimeConfig) LarkConfigTestResult {
 		result.Steps = append(result.Steps, LarkConfigTestStep{
 			Name:    "发送测试通知",
 			OK:      false,
+			Warning: true,
 			Message: err.Error(),
 		})
+		result.OK = true
 		return result
 	}
 	result.Steps = append(result.Steps, LarkConfigTestStep{Name: "发送测试通知", OK: true, Message: "已向通知接收 ID 发送测试卡片"})
@@ -186,8 +195,10 @@ func (t realLarkConfigTester) Test(cfg RuntimeConfig) LarkConfigTestResult {
 		result.Steps = append(result.Steps, LarkConfigTestStep{
 			Name:    "群所有消息权限",
 			OK:      false,
+			Warning: true,
 			Message: err.Error(),
 		})
+		result.OK = true
 		return result
 	}
 	result.Steps = append(result.Steps, LarkConfigTestStep{Name: "群所有消息权限", OK: true, Message: "im:message.group_msg 已生效"})

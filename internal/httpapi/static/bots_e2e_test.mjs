@@ -66,12 +66,13 @@ assert.equal($('bot-settings').hidden,true);
 assert.equal($('bot-add').disabled,false);
 console.log('bot deletion UI checks ok');
 
-for (const mode of ['success','permissions','created','unknown','cancel','registration-error']) {
+for (const mode of ['success','permissions','created','unknown','cancel','registration-error','browser-warning']) {
   vm.runInContext('editingBotID="";botSavePending=false;botCreationBlocked=false',context);
   $('bot-name').value='Fallback bot';$('bot-agent').value='codex';$('bot-directory').value='/workspace';
+  $('bot-app-secret').value='';
   let begins=0,polls=0,saves=0;
   redirect='';
-  context.api=async(path,options)=>{
+  context.api=async(path,options={})=>{
     if(path==='/api/lark-app-registration') {
       begins++;
       if(mode==='registration-error')throw new Error('registration unavailable');
@@ -84,30 +85,36 @@ for (const mode of ['success','permissions','created','unknown','cancel','regist
       return {app_id:'cli_registered',app_secret:'test-secret',lark_notify_receive_id:'ou_owner'};
     }
     if(path==='/api/bots') {
+      if (!options.method) return [{id:'bot-registered',app_id:'cli_registered',app_secret:'test-secret',receive_id:'ou_owner'}];
       saves++;
       const bot=JSON.parse(options.body);
       assert.equal(bot.app_id,'cli_registered');assert.equal(bot.default_agent_id,'codex');assert.equal(bot.default_workspace_dir,'/workspace');
-      if(mode==='permissions')throw new Error('缺少必要应用权限：im:message.group_msg');
-      return {id:'bot-registered'};
+      return {id:'bot-registered',app_id:'cli_registered',warning:mode==='permissions'?'尚未开通功能权限：im:message.group_msg':''};
     }
     throw new Error('unexpected API '+path);
   };
   context.failureMode=mode;
   vm.runInContext(`streamBotSetup=async(bot,receive)=>{
+    if(failureMode==='browser-warning'){receive({stage:'done',bot_id:'bot-registered',app_id:'cli_registered',warning:'尚未开通功能权限：im:message.group_msg'});return;}
     if(failureMode==='created')receive({stage:'configuring',app_id:'cli_existing'});
     receive({stage:'error',error:'browser failed',registration_fallback:failureMode!=='unknown'});
   }`,context);
-  if(mode==='success')await vm.runInContext('createBot()',context);
+  if(mode==='success'||mode==='permissions'||mode==='browser-warning')await vm.runInContext('createBot()',context);
   else if(mode==='cancel')await vm.runInContext('createBot()',context);
-  else await assert.rejects(vm.runInContext('createBot()',context),mode==='permissions'?/im:message.group_msg/:mode==='registration-error'?/registration unavailable/:/browser failed/);
-  assert.equal(begins,['created','unknown'].includes(mode)?0:1,mode);
+  else await assert.rejects(vm.runInContext('createBot()',context),mode==='registration-error'?/registration unavailable/:/browser failed/);
+  assert.equal(begins,['created','unknown','browser-warning'].includes(mode)?0:1,mode);
   assert.equal(saves,['success','permissions'].includes(mode)?1:0,mode);
   assert.equal($('bot-scan').disabled,!['unknown'].includes(mode),mode);
   assert.equal($('bot-save').disabled,false);
   assert.equal($('bot-registration').hidden,true);
   if(mode==='success')assert.equal(redirect,'/bots/bot-registered/');
   else assert.equal(redirect,'');
-  if(mode==='permissions') {
+  if(mode==='permissions'||mode==='browser-warning') {
+    assert.match($('bot-error').textContent,/已保存/);
+    assert.match($('bot-error').textContent,/im:message.group_msg/);
+    assert.equal($('bot-created-app').hidden,false);
+    assert.equal($('bot-open').href,'/bots/bot-registered/');
+    assert.equal(vm.runInContext('editingBotID',context),'bot-registered');
     assert.equal($('bot-app-id').value,'cli_registered');
     assert.equal($('bot-app-secret').value,'test-secret');
     assert.equal($('bot-app-fields').hidden,false);
