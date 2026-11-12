@@ -66,11 +66,12 @@ const base=process.env.IRIS_TEST_URL;
   await page.locator('#bot-add').click();
   await page.locator('#bot-dialog').waitFor({state:'visible'});
   assert(await page.locator('#bot-scan').isVisible());
-  assert.equal(await page.locator('#bot-scan').innerText(),'创建');
+  assert.match(await page.locator('#bot-scan').innerText(),/一键创建\s*需要浏览器环境/);
+  assert.equal(await page.locator('#bot-register').innerText(),'扫描创建');
   await page.locator('#bot-name').fill('Progress test');
   const creationDefaults=await page.evaluate(()=>['bot-name','bot-agent','bot-directory'].map(id=>document.getElementById(id).value));
   await page.locator('#bot-existing').click();
-  for(const id of ['bot-scan','bot-link','bot-existing','bot-save','bot-app-id']) assert(await page.locator('#'+id).isVisible(),id+' missing in manual mode');
+  for(const id of ['bot-scan','bot-register','bot-link','bot-existing','bot-save','bot-app-id']) assert(await page.locator('#'+id).isVisible(),id+' missing in manual mode');
   await page.evaluate(()=>{
    window.originalBotFetch=window.fetch;
    window.fetch=(url,options)=>url==='/api/bots/create'?Promise.resolve(new Response(new ReadableStream({start(controller){window.botTestStream=controller}}),{headers:{'Content-Type':'application/x-ndjson'}})):window.originalBotFetch(url,options);
@@ -80,6 +81,7 @@ const base=process.env.IRIS_TEST_URL;
   assert.equal(await page.locator('#bot-save').isVisible(),false);
   assert(await page.locator('#bot-error').evaluate(e=>e.classList.contains('pending')&&!e.classList.contains('error')));
   assert(await page.locator('#bot-scan').isDisabled());
+  assert(await page.locator('#bot-register').isDisabled());
   await page.screenshot({path:'/tmp/iris-bot-creation-progress.png'});
   const emit=async event=>page.evaluate(e=>window.botTestStream.enqueue(new TextEncoder().encode(JSON.stringify(e)+'\n')),event);
   for(const [stage,message]of [['checking_login','正在检查登录状态…'],['login','等待登录…'],['creating','登录完成，正在创建…'],['configuring','正在配置权限…'],['publishing','正在确认上线状态…']]){

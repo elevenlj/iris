@@ -34,8 +34,9 @@ function botError(error) { botStatus(error.message || String(error), 'error'); }
 
 function setBotPending(pending) {
   botSavePending = pending;
-  for (const id of ['bot-scan','bot-link','bot-connect','bot-select-app','bot-existing','bot-save','bot-delete','bot-cancel','bot-name','bot-agent','bot-directory','bot-system-prompt']) $(id).disabled = pending;
+  for (const id of ['bot-scan','bot-register','bot-link','bot-connect','bot-select-app','bot-existing','bot-save','bot-delete','bot-cancel','bot-name','bot-agent','bot-directory','bot-system-prompt']) $(id).disabled = pending;
   $('bot-scan').disabled = pending || botCreationBlocked;
+  $('bot-register').disabled = pending || botCreationBlocked;
   if (!pending) {
     $('bot-error').classList.remove('pending');
     $('bot-error').setAttribute('aria-busy','false');
@@ -199,7 +200,7 @@ async function listExistingBots() {
   } finally { setBotPending(false); }
 }
 
-async function createBot(connect = false) {
+async function createBot(connect = false, scan = false) {
   if (botSavePending || (!connect && botCreationBlocked)) return;
   if (!connect) showManualBotFields(false);
   const bot = readBot();
@@ -209,6 +210,10 @@ async function createBot(connect = false) {
   botStatus('正在检查登录状态…', 'pending');
   let registrationFallback = false;
   try {
+    if (scan) {
+      await registerBotWithoutBrowser(bot);
+      return;
+    }
     let resultID = '';
     let warning = '';
     const receive = event => {
@@ -248,7 +253,7 @@ async function registerBotWithoutBrowser(bot) {
   botRegistrationAbort = controller;
   botCreationBlocked = true;
   $('bot-cancel').disabled = false;
-  botStatus('自动创建不可用，正在生成飞书确认二维码…', 'pending');
+  botStatus('正在生成飞书确认二维码…', 'pending');
   try {
     const reg = await api('/api/lark-app-registration', {method:'POST',body:JSON.stringify({brand:'feishu'}),signal:controller.signal});
     $('bot-registration-link').href = reg.verification_uri_complete;
@@ -311,6 +316,7 @@ $('bot-form').onsubmit = event => {
   else if (!$('bot-scan').disabled) createBot().catch(botError);
 };
 $('bot-scan').onclick = () => createBot().catch(botError);
+$('bot-register').onclick = () => createBot(false, true).catch(botError);
 $('bot-link').onclick = () => listExistingBots().catch(botError);
 $('bot-connect').onclick = () => {
   if (!$('bot-name').value.trim()) $('bot-name').value = $('bot-select-app').selectedOptions[0]?.dataset.name || '';

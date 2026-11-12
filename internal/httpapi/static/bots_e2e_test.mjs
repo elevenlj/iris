@@ -66,7 +66,9 @@ assert.equal($('bot-settings').hidden,true);
 assert.equal($('bot-add').disabled,false);
 console.log('bot deletion UI checks ok');
 
-for (const mode of ['success','permissions','created','unknown','cancel','registration-error','browser-warning']) {
+for (const scenario of ['success','permissions','created','unknown','cancel','registration-error','browser-warning','scan-success','scan-permissions','scan-cancel','scan-registration-error']) {
+  const scan = scenario.startsWith('scan-');
+  const mode = scan ? scenario.slice(5) : scenario;
   vm.runInContext('editingBotID="";botSavePending=false;botCreationBlocked=false',context);
   $('bot-name').value='Fallback bot';$('bot-agent').value='codex';$('bot-directory').value='/workspace';
   $('bot-app-secret').value='';
@@ -94,19 +96,27 @@ for (const mode of ['success','permissions','created','unknown','cancel','regist
     throw new Error('unexpected API '+path);
   };
   context.failureMode=mode;
+  context.scanOnly=scan;
   vm.runInContext(`streamBotSetup=async(bot,receive)=>{
+    if(scanOnly)throw new Error('scan creation must not launch browser');
     if(failureMode==='browser-warning'){receive({stage:'done',bot_id:'bot-registered',app_id:'cli_registered',warning:'尚未开通功能权限：im:message.group_msg'});return;}
     if(failureMode==='created')receive({stage:'configuring',app_id:'cli_existing'});
     receive({stage:'error',error:'browser failed',registration_fallback:failureMode!=='unknown'});
   }`,context);
-  if(mode==='success'||mode==='permissions'||mode==='browser-warning')await vm.runInContext('createBot()',context);
-  else if(mode==='cancel')await vm.runInContext('createBot()',context);
-  else await assert.rejects(vm.runInContext('createBot()',context),mode==='registration-error'?/registration unavailable/:/browser failed/);
+  const create = scan ? 'createBot(false,true)' : 'createBot()';
+  if(mode==='success'||mode==='permissions'||mode==='browser-warning'||mode==='cancel')await vm.runInContext(create,context);
+  else await assert.rejects(vm.runInContext(create,context),mode==='registration-error'?/registration unavailable/:/browser failed/);
   assert.equal(begins,['created','unknown','browser-warning'].includes(mode)?0:1,mode);
   assert.equal(saves,['success','permissions'].includes(mode)?1:0,mode);
   assert.equal($('bot-scan').disabled,!['unknown'].includes(mode),mode);
+  assert.equal($('bot-register').disabled,$('bot-scan').disabled,scenario);
   assert.equal($('bot-save').disabled,false);
   assert.equal($('bot-registration').hidden,true);
+  if(scan) {
+    const priorBegins=begins;
+    await vm.runInContext('createBot(false,true)',context);
+    assert.equal(begins,priorBegins,'must not create twice after registration has started');
+  }
   if(mode==='success')assert.equal(redirect,'/bots/bot-registered/');
   else assert.equal(redirect,'');
   if(mode==='permissions'||mode==='browser-warning') {
