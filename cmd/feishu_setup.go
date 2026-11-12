@@ -49,6 +49,10 @@ func runFeishuSetup(ctx context.Context, name, dataDir, mode, appID string) (cre
 
 var errFeishuLoginRequired = errors.New("需要飞书登录")
 
+const feishuLoginProbeTimeout = 15 * time.Second
+
+var errFeishuPageNavigating = errors.New("飞书页面正在跳转")
+
 func runFeishuBrowser(ctx context.Context, name, dataDir, mode, appID string, headless bool) (createdFeishuApp, error) {
 	var result createdFeishuApp
 	chrome := findChrome()
@@ -61,7 +65,10 @@ func runFeishuBrowser(ctx context.Context, name, dataDir, mode, appID string, he
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	httpapi.ReportBotCreationProgress(ctx, "checking_login", "正在检查登录状态…", "")
+	// Bound detection only; stop this probe once the visible browser is waiting for user authorization.
+	loginCtx, cancelProbe := context.WithTimeout(ctx, feishuLoginProbeTimeout)
+	defer func() { cancelProbe() }()
+	httpapi.ReportBotCreationProgress(ctx, "starting_browser", "正在启动飞书浏览器…", "")
 	command := exec.Command(chrome, feishuChromeArgs(profile, headless)...)
 	if err := command.Start(); err != nil {
 		return result, err
@@ -75,12 +82,15 @@ func runFeishuBrowser(ctx context.Context, name, dataDir, mode, appID string, he
 			return errors.New("飞书登录窗口已关闭或启动失败，请重新创建；已保存的登录状态会保留")
 		case <-ctx.Done():
 			return fmt.Errorf("飞书登录或创建超时/取消；如页面提示设备授权，请先在飞书客户端完成授权：%w", ctx.Err())
+		case <-loginCtx.Done():
+			return fmt.Errorf("浏览器登录状态探测未完成：%w", loginCtx.Err())
 		case <-time.After(time.Second):
 			return nil
 		}
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	var connection *websocket.Conn
+	stopProbe := func() bool { return true }
 	lastStage := "checking_login"
 	reportLogin := func(pageURL string) error {
 		stage, message := "checking_login", "正在检查登录状态…"
@@ -91,6 +101,17 @@ func runFeishuBrowser(ctx context.Context, name, dataDir, mode, appID string, he
 		}
 		if headless && stage != "checking_login" {
 			return errFeishuLoginRequired
+		}
+		if stage != "checking_login" && loginCtx != ctx {
+			if !stopProbe() || loginCtx.Err() != nil {
+				return fmt.Errorf("浏览器登录状态探测未完成：%w", loginCtx.Err())
+			}
+			cancelProbe()
+			loginCtx = ctx
+			stopProbe = func() bool { return true }
+		} else if stage == "checking_login" && loginCtx == ctx {
+			loginCtx, cancelProbe = context.WithTimeout(ctx, feishuLoginProbeTimeout)
+			stopProbe = context.AfterFunc(loginCtx, func() { connection.Close() })
 		}
 		if stage != lastStage {
 			lastStage = stage
@@ -110,7 +131,11 @@ func runFeishuBrowser(ctx context.Context, name, dataDir, mode, appID string, he
 		if _, err := strconv.ParseUint(port, 10, 16); err != nil {
 			continue
 		}
-		response, err := client.Get("http://127.0.0.1:" + port + "/json/list")
+		req, err := http.NewRequestWithContext(loginCtx, http.MethodGet, "http://127.0.0.1:"+port+"/json/list", nil)
+		if err != nil {
+			return result, err
+		}
+		response, err := client.Do(req)
 		if err != nil {
 			continue
 		}
@@ -127,7 +152,7 @@ func runFeishuBrowser(ctx context.Context, name, dataDir, mode, appID string, he
 		}
 		for _, page := range pages {
 			if page.Type == "page" {
-				connection, _, err = websocket.DefaultDialer.DialContext(ctx, page.Socket, nil)
+				connection, _, err = websocket.DefaultDialer.DialContext(loginCtx, page.Socket, nil)
 				if err == nil {
 					// Session restore may bring back stale login tabs. Keep one Iris
 					// tab and navigate afresh before judging the saved login state.
@@ -142,11 +167,14 @@ func runFeishuBrowser(ctx context.Context, name, dataDir, mode, appID string, he
 		}
 	}
 	defer connection.Close()
+	stopProbe = context.AfterFunc(loginCtx, func() { connection.Close() })
+	defer func() { stopProbe() }()
+	stop := context.AfterFunc(ctx, func() { connection.Close() })
+	defer stop()
+	httpapi.ReportBotCreationProgress(ctx, "loading_console", "正在加载飞书开放平台…", "")
 	if err := connection.WriteJSON(map[string]any{"id": -3, "method": "Page.navigate", "params": map[string]string{"url": "https://open.feishu.cn/app"}}); err != nil {
 		return result, err
 	}
-	stop := context.AfterFunc(ctx, func() { connection.Close() })
-	defer stop()
 	// Wait for the new navigation to commit; the restored page can still show
 	// a stale login URL while Page.navigate is in flight.
 	for {
@@ -208,6 +236,13 @@ func runFeishuBrowser(ctx context.Context, name, dataDir, mode, appID string, he
 				continue
 			}
 			if response.Error != nil {
+				var detail struct {
+					Message string `json:"message"`
+				}
+				_ = json.Unmarshal(response.Error, &detail)
+				if strings.Contains(detail.Message, "Execution context was destroyed") || strings.Contains(detail.Message, "Cannot find context") {
+					return errFeishuPageNavigating
+				}
 				return errors.New("浏览器执行失败")
 			}
 			if response.Result.Exception != nil {
@@ -216,12 +251,17 @@ func runFeishuBrowser(ctx context.Context, name, dataDir, mode, appID string, he
 			return json.Unmarshal(response.Result.Result.Value, out)
 		}
 	}
+	httpapi.ReportBotCreationProgress(ctx, "checking_login", "正在检查登录状态…", "")
 	for {
 		var state struct {
 			Ready bool   `json:"ready"`
 			URL   string `json:"url"`
 		}
-		if err := evaluate("({ready:['https://open.feishu.cn','https://open.larkoffice.com'].includes(location.origin) && Boolean(window.csrfToken && window.user && window.user.id),url:location.origin+location.pathname})", &state); err == nil {
+		if err := evaluate("({ready:['https://open.feishu.cn','https://open.larkoffice.com'].includes(location.origin) && Boolean(window.csrfToken && window.user && window.user.id),url:location.origin+location.pathname})", &state); err != nil {
+			if !errors.Is(err, errFeishuPageNavigating) {
+				return result, fmt.Errorf("检查飞书登录状态失败：%w", err)
+			}
+		} else {
 			if state.Ready {
 				break
 			}
@@ -233,6 +273,10 @@ func runFeishuBrowser(ctx context.Context, name, dataDir, mode, appID string, he
 			return result, err
 		}
 	}
+	if !stopProbe() || loginCtx.Err() != nil {
+		return result, fmt.Errorf("浏览器登录状态探测未完成：%w", loginCtx.Err())
+	}
+	cancelProbe()
 	stage, message := "creating", "登录完成，正在创建应用…"
 	if mode == "list" {
 		stage, message = "listing", "登录完成，正在读取已有应用…"

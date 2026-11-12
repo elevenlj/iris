@@ -33,7 +33,7 @@ func TestFeishuBrowserLoginFallback(t *testing.T) {
 	t.Setenv("CHROME_BIN", launcher)
 	t.Setenv("IRIS_BROWSER_TEST_BINARY", os.Args[0])
 	t.Setenv("IRIS_BROWSER_FLOW_DIR", dir)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	for i := 0; i < 2; i++ {
 		app, err := runFeishuSetup(ctx, "", dir, "list", "")
@@ -63,6 +63,35 @@ func TestFeishuBrowserLoginFallback(t *testing.T) {
 	_, err = runFeishuSetup(ctx, "bot", dir, "create", "")
 	if err == nil || errors.As(err, &fallback) {
 		t.Fatalf("uncertain creation result must not register a second app: %v", err)
+	}
+	t.Setenv("IRIS_BROWSER_FLOW_SCRIPT_ERROR", "0")
+	t.Setenv("IRIS_BROWSER_FLOW_PROBE_ERROR", "1")
+	_, err = runFeishuSetup(ctx, "bot", dir, "create", "")
+	if !errors.As(err, &fallback) {
+		t.Fatalf("broken login evaluation must fall back instead of looping: %v", err)
+	}
+	t.Setenv("IRIS_BROWSER_FLOW_PROBE_ERROR", "0")
+	t.Setenv("IRIS_BROWSER_FLOW_PROBE_NAVIGATING", "1")
+	if _, err := runFeishuSetup(ctx, "", dir, "list", ""); err != nil {
+		t.Fatalf("transient page navigation must remain retryable: %v", err)
+	}
+	t.Setenv("IRIS_BROWSER_FLOW_PROBE_NAVIGATING", "0")
+	t.Setenv("IRIS_BROWSER_FLOW_PROBE_STALL", "1")
+	probeCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+	defer stop()
+	_, err = runFeishuSetup(probeCtx, "bot", dir, "create", "")
+	if !errors.As(err, &fallback) || probeCtx.Err() != nil {
+		t.Fatalf("stalled headless probe must fall back before the full login deadline: %v", err)
+	}
+	t.Setenv("IRIS_BROWSER_FLOW_PROBE_STALL", "0")
+	t.Setenv("IRIS_BROWSER_FLOW_AUTH_WAIT", "1")
+	if err := os.Remove(filepath.Join(dir, "logged-in")); err != nil {
+		t.Fatal(err)
+	}
+	authCtx, stopAuth := context.WithTimeout(context.Background(), 40*time.Second)
+	defer stopAuth()
+	if _, err := runFeishuSetup(authCtx, "", dir, "list", ""); err != nil {
+		t.Fatalf("waiting for user login must not inherit the detection deadline: %v", err)
 	}
 }
 
@@ -103,6 +132,8 @@ func TestFeishuFlowHelper(t *testing.T) {
 			return
 		}
 		defer conn.Close()
+		transientSent := false
+		authStarted := time.Now()
 		for {
 			var request struct {
 				ID     int    `json:"id"`
@@ -113,6 +144,15 @@ func TestFeishuFlowHelper(t *testing.T) {
 			}
 			if conn.ReadJSON(&request) != nil {
 				return
+			}
+			isProbe := request.Method == "Runtime.evaluate" && !strings.Contains(request.Params.Expression, "irisCreateFeishuApp")
+			if isProbe && os.Getenv("IRIS_BROWSER_FLOW_PROBE_NAVIGATING") == "1" && !transientSent {
+				transientSent = true
+				_ = conn.WriteJSON(map[string]any{"id": request.ID, "error": map[string]any{"code": -32000, "message": "Execution context was destroyed."}})
+				continue
+			}
+			if isProbe && os.Getenv("IRIS_BROWSER_FLOW_PROBE_STALL") == "1" {
+				continue
 			}
 			mu.Lock()
 			result := any(map[string]any{})
@@ -132,7 +172,14 @@ func TestFeishuFlowHelper(t *testing.T) {
 				}
 				_, err := os.Stat(filepath.Join(dir, "logged-in"))
 				ready := err == nil || !headless
-				value := any(map[string]any{"ready": ready, "url": "https://accounts.feishu.cn/accounts/page/login"})
+				pageURL := "https://accounts.feishu.cn/accounts/page/login"
+				if !headless && os.Getenv("IRIS_BROWSER_FLOW_AUTH_WAIT") == "1" {
+					ready = time.Since(authStarted) > feishuLoginProbeTimeout+4*time.Second
+					if time.Since(authStarted) > feishuLoginProbeTimeout+time.Second {
+						pageURL = "https://open.feishu.cn/app"
+					}
+				}
+				value := any(map[string]any{"ready": ready, "url": pageURL})
 				if !headless {
 					_ = os.WriteFile(filepath.Join(dir, "logged-in"), []byte("test"), 0600)
 				}
@@ -140,6 +187,9 @@ func TestFeishuFlowHelper(t *testing.T) {
 					value = map[string]any{"apps": []map[string]string{{"app_id": "cli_test", "name": "test"}}}
 				}
 				result = map[string]any{"result": map[string]any{"value": value}}
+				if isProbe && os.Getenv("IRIS_BROWSER_FLOW_PROBE_ERROR") == "1" {
+					result = map[string]any{"exceptionDetails": map[string]any{"exception": map[string]any{"description": "Error: browser evaluation failed"}}}
+				}
 				if strings.Contains(request.Params.Expression, "irisCreateFeishuApp") && os.Getenv("IRIS_BROWSER_FLOW_SCRIPT_ERROR") == "1" {
 					result = map[string]any{"exceptionDetails": map[string]any{"exception": map[string]any{"description": "Error: creation outcome unknown"}}}
 				}
