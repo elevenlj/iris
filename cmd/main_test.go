@@ -442,6 +442,7 @@ func TestValidateAgentDefinitionsRecognizesAidenBuiltins(t *testing.T) {
 		{id: "aiden-codex", name: "Aiden X Codex", kind: "aiden-codex", command: session.AidenCodexAgentCommand},
 		{id: "aiden-claude", name: "Aiden X Claude Code", kind: "aiden-claude", command: session.AidenClaudeAgentCommand},
 		{id: "traecli", name: "TRAE CLI", kind: "traecli", command: session.TraeAgentCommand},
+		{id: "antigravity", name: "Antigravity CLI", kind: "antigravity", command: session.AntigravityAgentCommand},
 	} {
 		agents, err := validateAgentList([]session.AgentConfig{{ID: test.id, Name: "Changed", Kind: "custom", Command: "other"}})
 		if err != nil {

@@ -11,6 +11,7 @@ const (
 	AidenCodexAgentCommand  = "aiden x codex --dangerously-bypass-approvals-and-sandbox --no-alt-screen"
 	AidenClaudeAgentCommand = "aiden x claude --dangerously-skip-permissions"
 	TraeAgentCommand        = "traecli --yolo"
+	AntigravityAgentCommand = "agy --dangerously-skip-permissions"
 )
 
 type AgentOption struct {
@@ -56,6 +57,9 @@ func detectAvailableAgentOptions(configured []AgentConfig, finder agentExecutabl
 	if _, err := finder.LookPath("traecli"); err == nil {
 		options = append(options, AgentOption{ID: "traecli", Label: "TRAE CLI", Kind: "traecli", Command: TraeAgentCommand})
 	}
+	if _, err := finder.LookPath("agy"); err == nil {
+		options = append(options, AgentOption{ID: "antigravity", Label: "Antigravity CLI", Kind: "antigravity", Command: AntigravityAgentCommand})
+	}
 	for _, agent := range configured {
 		agent.ID = strings.ToLower(strings.TrimSpace(agent.ID))
 		agent.Name = strings.TrimSpace(agent.Name)
@@ -79,7 +83,7 @@ func normalizeAgentOptions(options []AgentOption) []AgentOption {
 		if option.ID == "" || option.Label == "" || option.Command == "" || seen[option.ID] {
 			continue
 		}
-		if option.Kind != "codex" && option.Kind != "claude" && option.Kind != "aiden" && option.Kind != "aiden-codex" && option.Kind != "aiden-claude" && option.Kind != "traecli" && option.Kind != "custom" {
+		if option.Kind != "codex" && option.Kind != "claude" && option.Kind != "aiden" && option.Kind != "aiden-codex" && option.Kind != "aiden-claude" && option.Kind != "traecli" && option.Kind != "antigravity" && option.Kind != "custom" {
 			continue
 		}
 		seen[option.ID] = true

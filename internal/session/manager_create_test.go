@@ -97,6 +97,7 @@ func TestSwitchWorkspaceSubmitsAgentSpecificInput(t *testing.T) {
 		wantPrefix  string
 	}{
 		{name: "Codex", configKind: "codex", runtimeKind: "codex", command: CodexAgentCommand, wantPrefix: "/cd "},
+		{name: "Antigravity CLI", configKind: "antigravity", runtimeKind: "antigravity", command: AntigravityAgentCommand, wantPrefix: "后续任务切换到工作目录："},
 		{name: "Claude Code", configKind: "claude", runtimeKind: "claude", command: ClaudeAgentCommand, wantPrefix: "后续任务切换到工作目录："},
 		{name: "Aiden", configKind: "aiden", runtimeKind: "aiden", command: AidenAgentCommand, wantPrefix: "/cd "},
 		{name: "Aiden X Codex", configKind: "aiden-codex", runtimeKind: "codex", command: AidenCodexAgentCommand, wantPrefix: "/cd "},
@@ -138,6 +139,7 @@ func TestCreateSessionStartsAidenBuiltins(t *testing.T) {
 		runtimeKind string
 	}{
 		{kind: "aiden", command: AidenAgentCommand, runtimeKind: "aiden"},
+		{kind: "antigravity", command: AntigravityAgentCommand, runtimeKind: "antigravity"},
 		{kind: "aiden-codex", command: AidenCodexAgentCommand, runtimeKind: "codex"},
 		{kind: "aiden-claude", command: AidenClaudeAgentCommand, runtimeKind: "claude"},
 	} {

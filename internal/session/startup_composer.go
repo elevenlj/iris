@@ -13,7 +13,7 @@ func (rt *RuntimeSession) scheduleStartupComposerProbeLocked() {
 		return
 	}
 	kind := agentKindForCommand(rt.session.LastAgentStartCommand, rt.session.LastAgentKind)
-	if !isCodexFamily(kind) && kind != "claude" && kind != "aiden" {
+	if !isCodexFamily(kind) && kind != "claude" && kind != "aiden" && kind != "antigravity" {
 		return // Unknown custom CLIs have no reliable composer detector.
 	}
 	rt.startupNotifyTimer = time.AfterFunc(time.Second, rt.probeStartupComposer)

@@ -189,7 +189,10 @@ func normalizeAgentConfig(agent AgentConfig) AgentConfig {
 	if agent.Kind == "traecli" {
 		agent.ID, agent.Name, agent.Command = "traecli", "TRAE CLI", TraeAgentCommand
 	}
-	if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "aiden" && agent.Kind != "aiden-codex" && agent.Kind != "aiden-claude" && agent.Kind != "traecli" && agent.Kind != "custom" {
+	if agent.Kind == "antigravity" {
+		agent.ID, agent.Name, agent.Command = "antigravity", "Antigravity CLI", AntigravityAgentCommand
+	}
+	if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "aiden" && agent.Kind != "aiden-codex" && agent.Kind != "aiden-claude" && agent.Kind != "traecli" && agent.Kind != "antigravity" && agent.Kind != "custom" {
 		return AgentConfig{}
 	}
 	return agent
@@ -696,7 +699,7 @@ func (m *Manager) WorkspaceOptionsForSession(_ Session) []WorkspaceOption {
 // sessionSupportsWorkspaceSwitch reports whether the active Agent supports Iris's workspace control input.
 func sessionSupportsWorkspaceSwitch(sess Session) bool {
 	switch strings.ToLower(strings.TrimSpace(sess.LastAgentKind)) {
-	case "codex", "claude", "aiden", "traecli":
+	case "codex", "claude", "aiden", "traecli", "antigravity":
 		return true
 	}
 	argv := shellFields(sess.LastAgentStartCommand)
@@ -704,7 +707,7 @@ func sessionSupportsWorkspaceSwitch(sess Session) bool {
 		argv = argv[1:]
 	}
 	info, ok := agentLaunchInfo(argv)
-	return ok && (isCodexFamily(info.Kind) || info.Kind == "claude" || info.Kind == "aiden")
+	return ok && (isCodexFamily(info.Kind) || info.Kind == "claude" || info.Kind == "aiden" || info.Kind == "antigravity")
 }
 
 func agentKindForCommand(command, fallback string) string {
@@ -1070,6 +1073,9 @@ func (m *Manager) SwitchWorkspace(ctx context.Context, id, path string) (Session
 		return Session{}, true, errors.New("目录不存在或不可访问")
 	}
 	input := "/cd " + path
+	if agentKindForCommand(sess.LastAgentStartCommand, sess.LastAgentKind) == "antigravity" {
+		input = "后续任务切换到工作目录：" + path
+	}
 	if agentKindForCommand(sess.LastAgentStartCommand, sess.LastAgentKind) == "claude" {
 		input = "后续任务切换到工作目录：" + path
 		if home := m.sessionClaudeHome(sess); home != "" {
@@ -2294,7 +2300,7 @@ func (rt *RuntimeSession) runRecoveryCommand() {
 		return
 	}
 	command := strings.TrimSpace(sess.LastAgentResumeCommand)
-	startingFresh := isCodexFamily(sess.LastAgentKind) && exactAgentResumeCommand(sess) == ""
+	startingFresh := (isCodexFamily(sess.LastAgentKind) || sess.LastAgentKind == "antigravity") && exactAgentResumeCommand(sess) == ""
 	if startingFresh {
 		command = strings.TrimSpace(sess.LastAgentStartCommand)
 		if command == "" {
@@ -2850,13 +2856,22 @@ func startupAgentComposerReady(snapshot, source, agentKind string) bool {
 		return false
 	}
 	switch agentKind {
-	case "codex", "claude", "aiden", "traecli":
+	case "codex", "claude", "aiden", "traecli", "antigravity":
 	default:
 		return true
 	}
 	metadata := parseSnapshotSourceContinuity(source)
 	cursorLine := metadata.cursorLine
 	lines := splitVisibleLines(snapshot)
+	if agentKind == "antigravity" {
+		if !metadata.valid || !isBufferSnapshotContinuityBase(metadata.base) || cursorLine < 1 || cursorLine+1 >= len(lines) {
+			return false
+		}
+		_, prompt := submittedInputPromptText(lines[cursorLine])
+		footer := strings.ToLower(strings.TrimSpace(strings.Join(lines[cursorLine+2:], "\n")))
+		return prompt && isPureHorizontalRuleLine(lines[cursorLine-1]) && isPureHorizontalRuleLine(lines[cursorLine+1]) &&
+			strings.HasPrefix(footer, "? for shortcuts") && !strings.Contains(footer, "\n")
+	}
 	if cursorLine >= 0 && cursorLine < len(lines) {
 		if prompt, ready := submittedInputPromptText(lines[cursorLine]); ready {
 			// Claude's trust menu uses the same cursor marker as its composer.
@@ -4322,7 +4337,7 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSes
 		return s, false, nil
 	}
 	agentKind := strings.TrimSpace(rt.session.LastAgentKind)
-	if strings.TrimSpace(rt.session.LastMode) != SessionModeAgent || (!isCodexFamily(agentKind) && agentKind != "claude" && agentKind != "aiden") {
+	if strings.TrimSpace(rt.session.LastMode) != SessionModeAgent || (!isCodexFamily(agentKind) && agentKind != "claude" && agentKind != "aiden" && agentKind != "antigravity") {
 		s := rt.session
 		rt.mu.Unlock()
 		return s, false, nil
@@ -4358,6 +4373,16 @@ func (rt *RuntimeSession) completeAgentTurn(ctx context.Context, token, agentSes
 	}
 	pinnedRecovery := false
 	switch agentKind {
+	case "antigravity":
+		if pinned := antigravityConversationID(rt.session.LastAgentResumeCommand); pinned != "" && pinned != agentSessionID {
+			s := rt.session
+			rt.mu.Unlock()
+			return s, false, nil
+		}
+		if command, ok := pinAntigravityResumeCommand(rt.session.LastAgentStartCommand, agentSessionID); ok {
+			rt.session.LastAgentResumeCommand = command
+			pinnedRecovery = true
+		}
 	case "codex", "traecli":
 		resume := rt.session.LastAgentResumeCommand
 		if agentKind == "traecli" && exactAgentResumeCommand(rt.session) == "" {

@@ -125,7 +125,7 @@ func TestNormalizeLarkHistoryMessagePreservesTextAttachmentsAndTime(t *testing.T
 	}
 }
 
-func TestEnsureAgentContextSkillsWritesCodexAndClaudeSkills(t *testing.T) {
+func TestEnsureAgentContextSkillsWritesSupportedAgentSkills(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	if err := EnsureAgentContextSkills(); err != nil {
@@ -134,6 +134,7 @@ func TestEnsureAgentContextSkillsWritesCodexAndClaudeSkills(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join(home, ".agents", "skills", "iris-feishu-context", "SKILL.md"),
 		filepath.Join(home, ".claude", "skills", "iris-feishu-context", "SKILL.md"),
+		filepath.Join(home, ".gemini", "config", "skills", "iris-feishu-context", "SKILL.md"),
 	} {
 		content, err := os.ReadFile(path)
 		if err != nil {
@@ -151,7 +152,7 @@ func TestMentionSkillInstallAndPrivateClaudeHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
-	for _, dir := range []string{".agents", ".claude"} {
+	for _, dir := range []string{".agents", ".claude", filepath.Join(".gemini", "config")} {
 		path := filepath.Join(home, dir, "skills", "iris-feishu-mention", "SKILL.md")
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			t.Fatal(err)
@@ -163,7 +164,7 @@ func TestMentionSkillInstallAndPrivateClaudeHome(t *testing.T) {
 	if err := EnsureAgentContextSkills(); err != nil {
 		t.Fatal(err)
 	}
-	for _, dir := range []string{".agents", ".claude"} {
+	for _, dir := range []string{".agents", ".claude", filepath.Join(".gemini", "config")} {
 		path := filepath.Join(home, dir, "skills", "iris-feishu-mention", "SKILL.md")
 		content, err := os.ReadFile(path)
 		if err != nil || string(content) != strings.TrimSpace(irisFeishuMentionSkill)+"\n" {

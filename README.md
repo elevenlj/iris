@@ -7,6 +7,7 @@ Iris 是一个运行在本机的飞书个人 AI 助理。它把飞书机器人�
 - 多机器人：一个服务接入多个飞书应用，分别设置机器人名称、默认 Agent 和目录；按机器人隔离会话，控制面板不再提供创建会话入口。
 - Agent 自动选择：首次使用优先选择本机 Codex，其次选择 Claude Code；扫描到的内置 Agent 直接使用固定配置，也可以维护多个自定义 Agent。
 - TRAE CLI：支持新版（2.x）`traecli --yolo`，自动检测启动就绪，并通过原生 `notify` 事件推送最终回复；配置独立写入 `$TRAE_HOME/traecli.toml`（默认 `~/.trae/traecli.toml`），不使用终端输出作为自动回复兜底。
+- Antigravity CLI：检测本机 `agy`，默认使用 `agy --dangerously-skip-permissions`；通过原生 Stop Hook 的 `fullyIdle` 确认结束，并读取该 conversation 的 transcript 推送最终回复。取得明确的 conversation ID 后使用 `--conversation ID` 恢复，否则新启动；目录切换使用自然语言指令。
 - 联系人接待：他人私聊机器人后，自动创建“与某某的对话”群聊，并加入联系人、开发者和机器人。
 - 会话复用：同一联系人后续私聊会继续进入已有群聊和 Agent 会话。
 - 当前群上下文：Agent 可自动识别当前会话绑定的飞书群；回答问题缺少上下文时，会先读取最近 1～100 条群消息，无需用户提供群 ID。

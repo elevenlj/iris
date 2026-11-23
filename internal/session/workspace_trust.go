@@ -113,6 +113,18 @@ func workspaceTrustMenu(snapshot, source, kind string) (string, bool) {
 	}
 	lines := splitVisibleLines(snapshot)
 	cursor := metadata.cursorLine
+	if kind == "antigravity" {
+		cursor = -1
+		for i, line := range lines {
+			text, marked := submittedInputPromptText(line)
+			if marked && (strings.EqualFold(text, "yes, i trust this folder") || strings.EqualFold(text, "no, exit")) {
+				if cursor >= 0 {
+					return "", false
+				}
+				cursor = i
+			}
+		}
+	}
 	if isCodexFamily(kind) {
 		// Codex hides the hardware cursor at the footer, not on the highlighted
 		// option. Require exactly one selected option in the final active menu.
@@ -147,7 +159,7 @@ func workspaceTrustMenu(snapshot, source, kind string) (string, bool) {
 	if isCodexFamily(kind) {
 		yes = "yes, continue"
 		header = "do you trust the contents of this directory?"
-	} else if kind != "claude" {
+	} else if kind != "claude" && kind != "antigravity" {
 		return "", false
 	}
 	selected = option(selected)
@@ -166,7 +178,17 @@ func workspaceTrustMenu(snapshot, source, kind string) (string, bool) {
 			break
 		}
 	}
-	if start < 0 || end < 0 || end-start > 25 || !codexInteractionHasActiveTail(lines[end+1:]) {
+	if start < 0 || end < 0 || end-start > 25 {
+		return "", false
+	}
+	if kind == "antigravity" {
+		for _, tail := range lines[end+1:] {
+			tail = strings.TrimSpace(tail)
+			if tail != "" && !strings.Contains(tail, " · ") {
+				return "", false
+			}
+		}
+	} else if !codexInteractionHasActiveTail(lines[end+1:]) {
 		return "", false
 	}
 	if isCodexFamily(kind) && metadata.cursorLine >= 0 && (metadata.cursorLine < start || metadata.cursorLine > end) {
@@ -229,7 +251,7 @@ func (rt *RuntimeSession) autoTrustWorkspaceLocked() bool {
 // output only requests a snapshot; it never authorizes a keypress itself.
 func (rt *RuntimeSession) scheduleWorkspaceTrustProbeLocked(chunk []byte) {
 	kind := agentKindForCommand(rt.session.LastAgentStartCommand, rt.session.LastAgentKind)
-	if rt.manager == nil || rt.session.LastMode != SessionModeAgent || (kind != "claude" && !isCodexFamily(kind)) {
+	if rt.manager == nil || rt.session.LastMode != SessionModeAgent || (kind != "claude" && kind != "antigravity" && !isCodexFamily(kind)) {
 		return
 	}
 	text := rt.workspaceTrustProbeTail + string(chunk)

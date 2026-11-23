@@ -104,6 +104,13 @@ func main() {
 }
 
 func run() error {
+	if session.IsAntigravityStopInvocation(os.Args[1:]) {
+		if err := session.RunAntigravityStopHook(os.Stdin); err != nil {
+			log.Printf("Antigravity Stop callback failed: %v", err)
+		}
+		fmt.Println("{}")
+		return nil
+	}
 	if session.IsCodexNotifyInvocation(os.Args[1:]) {
 		if err := session.RunCodexNotify(os.Args[2:]); err != nil {
 			log.Printf("Codex notify callback failed: %v", err)
@@ -528,6 +535,8 @@ func loadConfig(path string) Config {
 		cfg.AgentName = "Aiden X Claude Code"
 	case "traecli":
 		cfg.AgentName = "TRAE CLI"
+	case "antigravity":
+		cfg.AgentName = "Antigravity CLI"
 	case "custom":
 		if strings.TrimSpace(cfg.AgentName) == "" {
 			cfg.AgentName = "自定义 Agent"
@@ -618,6 +627,9 @@ func migrateAgentDefinitions(cfg Config) (Config, bool) {
 	if agentConfigByID(agents, "traecli").ID == "" {
 		agents = append(agents, session.AgentConfig{ID: "traecli", Name: "TRAE CLI", Kind: "traecli", Command: session.TraeAgentCommand})
 	}
+	if agentConfigByID(agents, "antigravity").ID == "" {
+		agents = append(agents, session.AgentConfig{ID: "antigravity", Name: "Antigravity CLI", Kind: "antigravity", Command: session.AntigravityAgentCommand})
+	}
 	normalized := make([]session.AgentConfig, 0, len(agents))
 	seen := map[string]bool{}
 	for _, agent := range agents {
@@ -643,10 +655,13 @@ func migrateAgentDefinitions(cfg Config) (Config, bool) {
 		if agent.ID == "traecli" {
 			agent.Name, agent.Kind, agent.Command = "TRAE CLI", "traecli", session.TraeAgentCommand
 		}
+		if agent.ID == "antigravity" {
+			agent.Name, agent.Kind, agent.Command = "Antigravity CLI", "antigravity", session.AntigravityAgentCommand
+		}
 		if agent.ID == "" || seen[agent.ID] || agent.Name == "" || agent.Command == "" {
 			continue
 		}
-		if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "aiden" && agent.Kind != "aiden-codex" && agent.Kind != "aiden-claude" && agent.Kind != "traecli" && agent.Kind != "custom" {
+		if agent.Kind != "codex" && agent.Kind != "claude" && agent.Kind != "aiden" && agent.Kind != "aiden-codex" && agent.Kind != "aiden-claude" && agent.Kind != "traecli" && agent.Kind != "antigravity" && agent.Kind != "custom" {
 			continue
 		}
 		seen[agent.ID] = true
@@ -656,7 +671,7 @@ func migrateAgentDefinitions(cfg Config) (Config, bool) {
 	cfg.DefaultAgentID = strings.ToLower(strings.TrimSpace(cfg.DefaultAgentID))
 	if cfg.DefaultAgentID == "" {
 		switch legacyKind {
-		case "codex", "claude", "aiden", "aiden-codex", "aiden-claude", "traecli":
+		case "codex", "claude", "aiden", "aiden-codex", "aiden-claude", "traecli", "antigravity":
 			cfg.DefaultAgentID = legacyKind
 		case "custom":
 			cfg.DefaultAgentID = legacyCustomID
@@ -695,6 +710,8 @@ func validateAgentList(agents []session.AgentConfig) ([]session.AgentConfig, err
 			agent.Name, agent.Kind, agent.Command = "Aiden X Claude Code", "aiden-claude", session.AidenClaudeAgentCommand
 		} else if agent.ID == "traecli" {
 			agent.Name, agent.Kind, agent.Command = "TRAE CLI", "traecli", session.TraeAgentCommand
+		} else if agent.ID == "antigravity" {
+			agent.Name, agent.Kind, agent.Command = "Antigravity CLI", "antigravity", session.AntigravityAgentCommand
 		} else if agent.Kind != "custom" {
 			return nil, errors.New("自定义 Agent 类型无效")
 		}
@@ -763,7 +780,7 @@ func autoSelectFirstUseAgent(cfg Config, options []session.AgentOption) (Config,
 		return cfg, false
 	}
 	for _, option := range options {
-		if option.Kind != "codex" && option.Kind != "claude" && option.Kind != "aiden" && option.Kind != "aiden-codex" && option.Kind != "aiden-claude" && option.Kind != "traecli" {
+		if option.Kind != "codex" && option.Kind != "claude" && option.Kind != "aiden" && option.Kind != "aiden-codex" && option.Kind != "aiden-claude" && option.Kind != "traecli" && option.Kind != "antigravity" {
 			continue
 		}
 		cfg.AgentKind = option.Kind
@@ -1006,6 +1023,7 @@ func (s *appConfigService) UpdateRuntimeConfig(req httpapi.RuntimeConfig) (httpa
 				{ID: "aiden-codex", Name: "Aiden X Codex", Kind: "aiden-codex", Command: session.AidenCodexAgentCommand},
 				{ID: "aiden-claude", Name: "Aiden X Claude Code", Kind: "aiden-claude", Command: session.AidenClaudeAgentCommand},
 				{ID: "traecli", Name: "TRAE CLI", Kind: "traecli", Command: session.TraeAgentCommand},
+				{ID: "antigravity", Name: "Antigravity CLI", Kind: "antigravity", Command: session.AntigravityAgentCommand},
 				{ID: "custom", Name: req.AgentName, Kind: "custom", Command: req.AgentCommand},
 			}
 			req.DefaultAgentID = "custom"

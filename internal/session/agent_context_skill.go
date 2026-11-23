@@ -51,7 +51,7 @@ func EnsureAgentContextSkills() error {
 	}
 	var errs []error
 	for name, content := range map[string]string{"iris-feishu-context": irisFeishuContextSkill, "iris-feishu-mention": irisFeishuMentionSkill} {
-		for _, dir := range []string{".agents", ".claude"} {
+		for _, dir := range []string{".agents", ".claude", filepath.Join(".gemini", "config")} {
 			target := filepath.Join(home, dir, "skills", name, "SKILL.md")
 			if err := writeManagedAgentSkill(target, content); err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", target, err))

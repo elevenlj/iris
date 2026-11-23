@@ -228,6 +228,9 @@ func checkAgentCompletionHook(cfg RuntimeConfig) *EnvironmentCheckStep {
 	path := ""
 	marker := ""
 	switch kind {
+	case "antigravity":
+		path = filepath.Join(home, ".gemini", "config", "hooks.json")
+		marker = "--antigravity-stop"
 	case "codex":
 		path = filepath.Join(home, ".codex", "config.toml")
 		marker = "--codex-notify"
@@ -262,6 +265,8 @@ func environmentAgentKind(cfg RuntimeConfig) string {
 	command := strings.ToLower(filepath.Base(firstEnvironmentCommand(cfg.AgentCommand)))
 	command = strings.TrimSuffix(command, ".exe")
 	switch command {
+	case "agy":
+		return "antigravity"
 	case "codex":
 		return "codex"
 	case "traecli", "traex":

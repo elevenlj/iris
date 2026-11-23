@@ -405,6 +405,14 @@ func agentLaunchInfo(argv []string) (agentInfo, bool) {
 		return info, ok
 	case "claude", "claude-code":
 		return claudeAgentInfo(argv[0], args)
+	case "agy":
+		if hasAnyArg(args, "--help", "-h", "--version", "-v", "--print", "-p", "--prompt", "--continue", "-c") {
+			return agentInfo{}, false
+		}
+		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			return agentInfo{}, false
+		}
+		return agentInfo{Kind: "antigravity", ResumeCommand: joinShellCommand(argv)}, true
 	case "aiden":
 		if len(args) >= 2 && args[0] == "x" && args[1] == "codex" {
 			return codexAgentInfoWithPrefix([]string{argv[0], "x", "codex"}, args[2:])
@@ -787,6 +795,10 @@ func codexResumeThreadID(command string) string {
 func exactAgentResumeCommand(sess Session) string {
 	command := strings.TrimSpace(sess.LastAgentResumeCommand)
 	switch strings.ToLower(strings.TrimSpace(sess.LastAgentKind)) {
+	case "antigravity":
+		if antigravityConversationID(command) != "" {
+			return command
+		}
 	case "codex", "traecli":
 		if !codexResumeUsesLast(command) && codexResumeThreadID(command) != "" {
 			return command

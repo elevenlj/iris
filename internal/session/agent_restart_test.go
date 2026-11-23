@@ -276,6 +276,7 @@ func TestRestartAgentStartsFreshAidenSessions(t *testing.T) {
 		command     string
 	}{
 		{name: "native", agentID: "aiden", runtimeKind: "aiden", command: AidenAgentCommand},
+		{name: "antigravity", agentID: "antigravity", runtimeKind: "antigravity", command: AntigravityAgentCommand},
 		{name: "claude", agentID: "aiden-claude", runtimeKind: "claude", command: AidenClaudeAgentCommand},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -305,7 +306,7 @@ func TestRestartAgentStartsFreshAidenSessions(t *testing.T) {
 				t.Fatalf("restart writes = %#v", writes)
 			}
 			got := rt.Snapshot()
-			if got.LastAgentKind != test.runtimeKind || (test.agentID == "aiden" && strings.Join(shellFields(got.LastAgentResumeCommand), " ") != AidenAgentCommand) || (test.agentID != "aiden" && !strings.Contains(got.LastAgentResumeCommand, "--continue")) {
+			if got.LastAgentKind != test.runtimeKind || (test.agentID == "aiden" && strings.Join(shellFields(got.LastAgentResumeCommand), " ") != AidenAgentCommand) || (test.runtimeKind == "claude" && !strings.Contains(got.LastAgentResumeCommand, "--continue")) || (test.agentID == "antigravity" && strings.Join(shellFields(got.LastAgentResumeCommand), " ") != test.command) {
 				t.Fatalf("restart state = %#v", got)
 			}
 		})

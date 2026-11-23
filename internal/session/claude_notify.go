@@ -39,6 +39,9 @@ func EnsureAgentCompletionHooks(executable string) error {
 	if err := EnsureTraeNotify(executable); err != nil {
 		errs = append(errs, fmt.Errorf("TRAE notify: %w", err))
 	}
+	if err := EnsureAntigravityStopHook(executable); err != nil {
+		errs = append(errs, fmt.Errorf("Antigravity Stop hook: %w", err))
+	}
 	if err := EnsureAgentContextSkills(); err != nil {
 		errs = append(errs, fmt.Errorf("Agent Feishu context skills: %w", err))
 	}
